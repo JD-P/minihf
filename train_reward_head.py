@@ -32,10 +32,10 @@ class RewardHead(nn.Module):
         self.linear2 = nn.Linear(2048, 1)
 
     def forward(self, x):
-        out = self.linear1(x)
-        out = self.gaussian1(x)
-        out = self.linear2(x)
-        return out
+        x = self.linear1(x)
+        x = self.gaussian1(x)
+        x = self.linear2(x)
+        return x
 
 reward_head = RewardHead().to("cuda")
 reward_head.train()
