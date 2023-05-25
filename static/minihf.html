@@ -46,12 +46,14 @@
     }
 
     .response .reroll {
+	font-size: 1.3em;
 	cursor: pointer;
 	height: 25px;
 	padding-left: 0.75rem;
     }
     
     .thumbs {
+      font-size: 1.3em;
       cursor: pointer;
       height: 25px;
       opacity: 0.3;
@@ -63,6 +65,7 @@
     }
 
     .chosen {
+	font-size: 1.3em;
 	opacity: 1;
     }
 
@@ -281,7 +284,9 @@
 
       const branchScoreSpan = document.createElement('span');
       branchScoreSpan.classList.add('reward-score');
-      branchScoreSpan.textContent = response["nodes"].at(-1).score.toFixed(3);
+      const score = response["nodes"].at(-1).score;
+      const prob = 1 / (Math.exp(-score) + 1);
+      branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
 
       branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 

@@ -45,6 +45,8 @@ class ZippedConversationsDataSet:
         self.training_items = []
         zip_ = zipfile.ZipFile(zip_file)
         for file_ in zip_.namelist():
+            if not file_.endswith("json"): # Mac OS X adds garbage to zips
+                continue
             with zip_.open(file_) as infile:
                 conversation = json.load(infile)
                 for id_ in conversation["responseDict"]:
