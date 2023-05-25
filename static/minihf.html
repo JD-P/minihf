@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM Interface</title>
+  <style>
+
+
+    body {
+      font-family: sans-serif;
+      display: flex;
+    }
+
+#settings-pane {
+    width: 25%;
+}
+
+#narrative-pane {
+    width: 25%;
+    margin-left: 2em;
+}
+
+#responses {
+    width:800px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 1rem;
+      margin-bottom: 10em;
+    }
+
+    .response {
+	padding: 1rem;
+	display:flex;
+	white-space: pre-line;
+
+    }
+
+    .response .thumbs {
+	padding-left: 0.5rem;
+    }
+
+    .response .chosen {
+	padding-left: 0.5rem;
+    }
+
+    .response .reroll {
+	cursor: pointer;
+	height: 25px;
+	padding-left: 0.75rem;
+    }
+    
+    .thumbs {
+      cursor: pointer;
+      height: 25px;
+      opacity: 0.3;
+      transition: opacity 0.3s;
+    }
+
+    .thumbs:hover {
+      opacity: 1;
+    }
+
+    .chosen {
+	opacity: 1;
+    }
+
+.branch-controls {
+    display: flex;
+    flex-direction: column;
+}
+
+.branch-controls .reward-score{
+    margin-top: 5px;
+    padding-left: 0.5em;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.branch-control-buttons {
+    display: flex;
+    flex-direction: row;
+}
+    
+    #controls {
+    background-color: white;
+    justify-content: center;
+	position: fixed;
+    margin-top: auto;
+    margin-left: auto;
+    margin-right: auto;
+    width: 800px;
+    bottom: 0;
+    display:flex;
+    flex-direction: row;
+    }
+
+#controls-form {
+    width: 800px;
+}
+    
+#buttons {
+    margin-top: 1px;
+    margin-bottom: 1em;
+    display:flex;
+    flex-direction: row;
+}
+
+#buttons #session-buttons {
+    margin-left: auto;
+}
+
+    #prompt {
+	border: none;
+	height: 8em;
+	width: 100%;
+	resize: none;
+    border: black 1px solid;
+
+    }
+
+    .user-prompt {
+	background-color: rgba(0,100,0,.15);
+    }
+
+
+    #die {
+    height: 35px;
+    width: 50px;
+    font-size: 30px;
+    animation-name: spin;
+    animation-duration: 0.4s;
+    animation-iteration-count: infinite;
+}
+
+@keyframes spin {
+  10%   {transform: rotate(36deg);}
+  20%  {transform: rotate(72deg);}
+  30%  {transform: rotate(108deg);}
+  40% {transform: rotate(144deg);}
+  50% {transform: rotate(180deg);}
+  60% {transform: rotate(216deg);}
+  70% {transform: rotate(252deg);}
+  80% {transform: rotate(288deg);}
+  90%  {transform: rotate(324deg);}
+  100%  {transform: rotate(360deg);}
+}
+
+#batch-item-index {
+    margin-left: 0.5em;
+    align-self: center;
+}
+
+#prompt-token-counter {
+    margin-left: auto;
+}
+
+.over-token-limit {
+    background-color: rgba(100,0,0,.15);
+}
+
+  </style>
+</head>
+<body>
+  <div id="settings-pane">
+    <form>
+      <label for="newTokens">Tokens Per Gen:</label>
+      <input type="text" id="newTokens" name="newTokens" value="256">
+    </form>
+  </div>
+  <div id="narrative-pane">
+    <div id="responses"></div>
+    <div id="controls">
+      <div id="dice-holder"></div>
+      <div id="controls-form">
+	<textarea id="prompt" placeholder="Your prompt goes here"></textarea>
+	<div id="buttons">
+	  <div id="rotate-buttons">
+	    <button id="rotateLeft">Prev. Branch</button>
+	    <button id="rotateRight">Next Branch</button>
+	  </div>
+	  <span id="batch-item-index"></span>
+	  <div id="session-buttons">
+	    <span id="prompt-token-counter">0</span>
+	    <button id="load">Load</button>
+	    <button id="save">Save</button>
+	  </div>
+	</div>
+      </div>
+    </div>
+  </div>
+  <div id="ideas-pane"></div>
+  <script>
+    const settingNewTokens = document.getElementById('newTokens')
+    const responsesContainer = document.getElementById('responses');
+    const rotateLeftBtn = document.getElementById('rotateLeft');
+    const rotateRightBtn = document.getElementById('rotateRight');
+    rotateLeftBtn.disabled = true; // Prevent user from rotating with no batches
+    rotateRightBtn.disabled = true;
+    const promptField = document.getElementById('prompt');
+    const promptTokenCounter = document.getElementById('prompt-token-counter');
+    const saveBtn = document.getElementById('save');
+    const loadBtn = document.getElementById('load');
+
+    let responseDict = {};
+    let responseBatches = [];
+    let selectedResponseIndices = [];
+
+    function renderResponse(id) {
+      const response = responseDict[id];
+      var leftThumbClass = 'thumbs'	
+      var rightThumbClass = 'thumbs'
+      if (response.rating) {
+	  leftThumbClass = 'chosen'
+      }
+      else if (response.rating == false) {
+	  rightThumbClass = 'chosen'
+      }
+	const selection = selectedResponseIndices.at(-1)
+	const batchLimit = responseBatches.at(-1).length - 1
+      if (selection < batchLimit && selection > 0) {
+	  rotateLeftBtn.disabled = false;
+	  rotateRightBtn.disabled = false;
+      }
+      else if (batchLimit == 0) {
+	  rotateLeftBtn.disabled = true;
+	  rotateRightBtn.disabled = true;
+      }
+      else if (selection == batchLimit) {
+	  rotateLeftBtn.disabled = false;
+	  rotateRightBtn.disabled = true;
+      }
+      else if (selection == 0) {
+	  rotateLeftBtn.disabled = true;
+	  rotateRightBtn.disabled = false;
+      }
+
+      const responseElem = document.createElement('div');
+      responseElem.classList.add('response');
+      responseElem.id = id;
+
+      const textSpan = document.createElement('span');
+      textSpan.classList.add('text');
+
+      const userPromptSpan = document.createElement('span');
+      userPromptSpan.classList.add('user-prompt');
+      userPromptSpan.textContent = response.prompt;
+
+      textSpan.append(userPromptSpan);
+      textSpan.append(document.createTextNode(" " + response.text));
+
+      const branchControlsDiv = document.createElement('div');
+      branchControlsDiv.classList.add('branch-controls');
+
+      const branchControlButtonsDiv = document.createElement('div');
+      branchControlButtonsDiv.classList.add('branch-control-buttons');
+
+      const leftThumbSpan = document.createElement('span');
+      leftThumbSpan.classList.add(leftThumbClass);
+      leftThumbSpan.textContent = "👍";
+      leftThumbSpan.onclick = () => thumbsUp(id);
+
+      const rightThumbSpan = document.createElement('span');
+      rightThumbSpan.classList.add(rightThumbClass);
+      rightThumbSpan.textContent = "👎";
+      rightThumbSpan.onclick = () => thumbsDown(id);
+
+      branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
+
+      const batchIndexMarker = document.getElementById("batch-item-index");
+      batchIndexMarker.textContent = `${selection + 1}/${responseBatches.at(-1).length}`;
+
+      if (responseBatches.at(-1)[selectedResponseIndices.at(-1)] == id) {
+          const rerollSpan = document.createElement('span');
+          rerollSpan.classList.add('reroll');
+          rerollSpan.textContent = "🔄";
+          rerollSpan.onclick = () => reroll(id);
+          branchControlButtonsDiv.append(rerollSpan);
+      }
+
+      const branchScoreSpan = document.createElement('span');
+      branchScoreSpan.classList.add('reward-score');
+      branchScoreSpan.textContent = response["nodes"].at(-1).score.toFixed(3);
+
+      branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+
+      responseElem.append(textSpan, branchControlsDiv);
+
+      return responseElem;
+
+    }
+
+    function renderResponses() {
+      responsesContainer.innerHTML = '';
+      for (var i = 0; i < selectedResponseIndices.length; i++) {
+	  const id = responseBatches[i][selectedResponseIndices[i]]
+	  responsesContainer.appendChild(renderResponse(id))
+      }
+    }
+
+    function rotate(direction) {
+      const selection = selectedResponseIndices.pop();
+      if (direction === 'left') {
+	  selectedResponseIndices.push(selection - 1);
+      }
+      else if (direction === 'right') { 
+	  selectedResponseIndices.push(selection + 1)
+      }
+      renderResponses();
+    }
+
+    async function getResponses(prompt, offset = 0) {
+	var context = ""
+	for (var i = 0; i < selectedResponseIndices.length - offset; i++) {
+	    const canonicalResponseIndex = selectedResponseIndices[i]
+	    const responseId = responseBatches[i][canonicalResponseIndex]
+	    context += responseDict[responseId].text
+	}
+	r = await fetch("/weave", {
+	    method: "POST",
+	    body: JSON.stringify({
+		context: context,
+		prompt: prompt,
+		new_tokens: settingNewTokens.value,
+	    }),
+	    headers: {
+		"Content-type": "application/json; charset=UTF-8"
+	    }
+	});
+	batch = await r.json();
+	return batch;
+    }
+
+    function thumbsUp(id) {
+	responseDict[id].rating = true;
+	renderedResponse = document.getElementById(id)
+	thumbUp = renderedResponse.children.item(1).children.item(0).children.item(0)
+	thumbUp.classList = ['chosen']
+	thumbDown = renderedResponse.children.item(1).children.item(0).children.item(1)
+	thumbDown.classList = ['thumbs']
+    }
+
+    function thumbsDown(id) {
+	responseDict[id].rating = false;
+	renderedResponse = document.getElementById(id)
+	thumbUp = renderedResponse.children.item(1).children.item(0).children.item(0)
+	thumbUp.classList = ['thumbs']
+	thumbDown = renderedResponse.children.item(1).children.item(0).children.item(1)
+	thumbDown.classList = ['chosen']
+    }
+
+    async function reroll(id) {
+      const prompt = responseDict[responseBatches.at(-1)[0]]['prompt']
+      promptField.readOnly = true;
+      const diceHolder = document.getElementById("dice-holder");
+      const die = document.createElement("p");
+      die.innerText = '🎲';
+      die.id = 'die';
+      diceHolder.appendChild(die);
+      const newResponses = await getResponses(prompt, 1);
+      var currentBatch = responseBatches.at(-1);
+      newResponses.forEach(response => {    
+        responseDict[response.id] = { ...response, rating: null };
+        currentBatch.push(response.id);
+      });
+      promptField.readOnly = false;
+      die.remove();
+      selectedResponseIndices.pop();
+      selectedResponseIndices.push(currentBatch.length - 1);
+      renderResponses();
+    };
+    
+    rotateLeftBtn.addEventListener('click', () => rotate('left'));
+    rotateRightBtn.addEventListener('click', () => rotate('right'));
+
+    promptField.addEventListener('keydown', async (e) => {
+      if (e.key != "Enter") {
+	const prompt = promptField.value;
+	if (!(prompt.length % 8)) {
+	    const r = await fetch("/check-tokens", {
+		method: "POST",
+		body: JSON.stringify({
+		    text: prompt,
+		}),
+		headers: {
+		    "Content-type": "application/json; charset=UTF-8",
+		}
+	    });
+	    const tokens = await r.json();
+	    if (tokens > (4096 - settingNewTokens.value)) {
+		promptTokenCounter.classList = ['over-token-limit']
+	    }
+	    else {
+		promptTokenCounter.classList = []
+	    }
+	    promptTokenCounter.innerText = tokens;
+	}
+	return null;
+      }
+      else if (e.shiftKey) {
+	  return null
+      }
+      const prompt = promptField.value;	
+      promptField.readOnly = true;
+      const diceHolder = document.getElementById("dice-holder");
+      const die = document.createElement("p");
+      die.innerText = '🎲';
+      die.id = 'die';
+      diceHolder.appendChild(die);
+	
+      const newResponses = await getResponses(prompt);
+      const newBatch = [];
+      newResponses.forEach(response => {    
+        responseDict[response.id] = { ...response, rating: null };
+        newBatch.push(response.id);
+      });
+      promptField.value = "";
+      promptField.setSelectionRange(0,0);
+      promptField.readOnly = false;
+      die.remove();
+      responseBatches.push(newBatch);
+      selectedResponseIndices.push(0);
+      renderResponses();
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const data = JSON.stringify({
+        responseDict,
+        responseBatches,
+        selectedResponseIndices,
+      });
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'conversation.json';
+      a.click();
+    });
+
+    loadBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'application/json';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const data = JSON.parse(e.target.result);
+            responseDict = data.responseDict;
+            responseBatches = data.responseBatches;
+            selectedResponseIndices = data.selectedResponseIndices;
+            renderResponses();
+          };
+          reader.readAsText(file);
+        }
+      };
+      input.click();
+    });
+
+    // Expose functions to the global scope for use in inline event handlers
+    window.thumbsUp = thumbsUp;
+    window.thumbsDown = thumbsDown;
+  </script>
+</body>
+</html>
