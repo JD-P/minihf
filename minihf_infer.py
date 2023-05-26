@@ -295,6 +295,8 @@ def train_reward_head(zip_file):
         avgloss = sum(losses) / len(losses)
         pbar.set_description(f"Training (Train | Loss: {round(avgloss,5)})")
     # TODO: Safe tensors
+    if not os.path.exists("reward_heads/"):
+        os.mkdir("reward_heads/")
     torch.save({'model':reward_head.state_dict(), 'optimizer':optimizer.state_dict()},
                "reward_heads/default.pkl")
 
