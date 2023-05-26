@@ -171,6 +171,11 @@
       <label for="newTokens">Tokens Per Gen:</label>
       <input type="text" id="newTokens" name="newTokens" value="256">
     </form>
+    <form id="reward-tune">
+      <label for="reward-head-dataset">Reward Dataset:</label>
+      <input type="file" id="reward-head-dataset" name="file">
+      <input type="submit" id="submit-reward-tune" value="Train Reward Head">
+    </form>
   </div>
   <div id="narrative-pane">
     <div id="responses"></div>
@@ -195,11 +200,13 @@
   </div>
   <div id="ideas-pane"></div>
   <script>
-    const settingNewTokens = document.getElementById('newTokens')
+    const settingNewTokens = document.getElementById('newTokens');
+    const rewardHeadDataset = document.getElementById('reward-head-dataset');
+    const rewardTune = document.getElementById('reward-tune');
     const responsesContainer = document.getElementById('responses');
     const rotateLeftBtn = document.getElementById('rotateLeft');
     const rotateRightBtn = document.getElementById('rotateRight');
-    rotateLeftBtn.disabled = true; // Prevent user from rotating with no batches
+    rotateLeftBtn.disabled = true; // Prevent user from rotating with no branches
     rotateRightBtn.disabled = true;
     const promptField = document.getElementById('prompt');
     const promptTokenCounter = document.getElementById('prompt-token-counter');
@@ -355,6 +362,21 @@
 	thumbDown.classList = ['chosen']
     }
 
+    function diceSetup() {
+      promptField.readOnly = true;
+      const diceHolder = document.getElementById("dice-holder");
+      const die = document.createElement("p");
+      die.innerText = '🎲';
+      die.id = 'die';
+      diceHolder.appendChild(die);
+    }
+
+    function diceTeardown() {
+	promptField.readOnly = false;
+	const die = document.getElementById('die');
+	die.remove();
+    }
+    
     async function reroll(id) {
       const prompt = responseDict[responseBatches.at(-1)[0]]['prompt']
       promptField.readOnly = true;
@@ -464,6 +486,15 @@
       input.click();
     });
 
+    rewardTune.onsubmit = async (e) => {
+	e.preventDefault();
+	diceSetup();
+	r = await fetch("/train-reward-model", {
+	    method: 'POST',
+	    body: new FormData(rewardTune),
+	})
+	diceTeardown();
+    };
     // Expose functions to the global scope for use in inline event handlers
     window.thumbsUp = thumbsUp;
     window.thumbsDown = thumbsDown;

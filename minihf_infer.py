@@ -1,35 +1,28 @@
 import os
 import json
+import random
 import hashlib
+import zipfile
 from flask import Flask, request, jsonify, make_response
+from tqdm import tqdm
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
+from reward_head import RewardHead
 
 tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
 tokenizer.truncation_side = "left"
 model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-neox-20b", device_map="auto", load_in_8bit=True, torch_dtype=torch.float16)
 
 reward_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-1b-deduped")
+reward_tokenizer.pad_token = reward_tokenizer.eos_token
 reward_tokenizer.truncation_side = "left"
 reward_model_base = AutoModelForCausalLM.from_pretrained("EleutherAI/pythia-1b-deduped",
                                              device_map="auto",
                                              load_in_8bit=True,
                                              torch_dtype=torch.float16)
 reward_model_base.config.output_hidden_states = True
-
-class RewardHead(nn.Module):
-    def __init__(self):
-        super(RewardHead, self).__init__()
-        self.linear1 = nn.Linear(2048, 2048)
-        self.gaussian1 = nn.GELU()
-        self.linear2 = nn.Linear(2048, 1)
-
-    def forward(self, x):
-        x = self.linear1(x)
-        x = self.gaussian1(x)
-        x = self.linear2(x)
-        return x
+reward_model_base.requires_grad_(False)
 
 reward_head = RewardHead()
 if os.path.exists("reward_heads/default.pkl"):
@@ -237,6 +230,92 @@ def check_tokens():
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
+class ZippedConversationsDataSet:
+    def __init__(self, zip_file):
+        self.training_items = []
+        zip_ = zipfile.ZipFile(zip_file)
+        for file_ in zip_.namelist():
+            if not file_.endswith("json"): # Mac OS X adds garbage to zips
+                continue
+            with zip_.open(file_) as infile:
+                conversation = json.load(infile)
+                for id_ in conversation["responseDict"]:
+                    branch = conversation["responseDict"][id_]
+                    if branch["rating"] == None: # Skip unrated entries
+                        continue
+                    text = ''
+                    label = 1 if branch["rating"] else 0
+                    for node in branch["nodes"]:
+                        text += node["text"]
+                        self.training_items.append((text, label))
+        random.shuffle(self.training_items)
+
+    def __len__(self):
+        return len(self.training_items)
+        
+    def __next__(self):
+        return random.sample(self.training_items, 1)[0]
+
+def train_reward_head(zip_file):
+    reward_head = RewardHead().to("cuda")
+    reward_head.train()
+
+    optimizer = torch.optim.Adam(reward_head.parameters(), lr=0.001)
+    criterion = torch.nn.BCEWithLogitsLoss()
+
+    losses = []
+
+    dataset = ZippedConversationsDataSet(zip_file)
+
+    batch_size = 4
+    steps = round(len(dataset) / 2)
+
+    pbar = tqdm(total=steps, desc="Training")
+
+    for i in range(steps):
+        batch = [next(dataset) for i in range(batch_size)]
+        batch_texts = [x[0] for x in batch]
+        batch_labels = torch.tensor([x[1] for x in batch]).to("cuda")
+        inputs = reward_tokenizer(batch_texts,
+                                  return_tensors="pt",
+                                  padding=True,
+                                  truncation=True,
+                                  max_length=4096).to("cuda")
+        activations = reward_model_base(input_ids=inputs.input_ids)
+        penultimate_activations = activations["hidden_states"][-1]
+        embeddings = torch.mean(penultimate_activations, 1)
+        optimizer.zero_grad()
+        with torch.cuda.amp.autocast():
+            outs = reward_head(embeddings).squeeze(1)
+        loss = criterion(outs, batch_labels.half())
+        loss.backward()
+        losses.append(loss.item())
+        optimizer.step()
+        pbar.update(1)
+        avgloss = sum(losses) / len(losses)
+        pbar.set_description(f"Training (Train | Loss: {round(avgloss,5)})")
+    # TODO: Safe tensors
+    torch.save({'model':reward_head.state_dict(), 'optimizer':optimizer.state_dict()},
+               "reward_heads/default.pkl")
+
+@app.route("/train-reward-model", methods=["OPTIONS", "POST"])
+def train_reward_model():
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "*")
+        response.headers.add("Access-Control-Allow-Methods", "*")
+        return response
+    if request.method =='POST':
+        file_ = request.files['file']
+        train_reward_head(file_)
+        # TODO: Safe tensors
+        reward_head_state = torch.load("reward_heads/default.pkl")["model"]
+        reward_head.load_state_dict(reward_head_state)
+        response = make_response("training complete")
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
+    
 @app.route("/")
 def index():
     return app.send_static_file("minihf.html")
