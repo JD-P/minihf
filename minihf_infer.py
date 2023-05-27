@@ -146,7 +146,7 @@ def weave_tree_search(tree: TreeNode, n: int, temperature: float = 1.0,
         chosen_branch_text = chosen.branch_text(include_root=True)
         for i in range(expand_samples):
             text = generate_output(chosen_branch_text, gen_tokens)[0]
-            text_score = score_output(text)
+            text_score = score_output(chosen_branch_text + text)
             new_child = TreeNode(chosen, text)
             new_child.score = text_score
             chosen.children.append(new_child)
