@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import random
 import hashlib
 import zipfile
@@ -69,6 +70,10 @@ def generate_output(text, new_tokens):
     )
     return [tokenizer.decode(t, skip_special_tokens=True) for t in tokens[:, inputs.input_ids.shape[1] :]]
 
+def gumbelvariate(loc: float = 0.0, scale: float = 1.0):
+    """Gumbel distribution."""
+    return loc - scale * math.log(random.expovariate(1.0) + 1e-16)
+
 class TreeNode:
     def __init__(self, parent, text):
         if parent == None:
@@ -81,6 +86,7 @@ class TreeNode:
         self.children = []
         self.text = text
         self.score = None
+        self.gumbel = None
 
     def branch_text(self, include_root=False):
         branch_texts = [self.text]
@@ -120,16 +126,20 @@ class TreeNode:
             node_list.extend(child.nodes())
         return node_list
     
-        
+    def priority(self, temperature: float = 1.0):
+        return self.score + temperature * self.gumbel
+
 def weave_tree_search(tree: TreeNode, n: int, temperature: float = 1.0,
                       budget: int = 32, gen_tokens: int = 32,
-                      expand_samples: int = 4, top_k: int = 4):
+                      expand_samples: int = 4, top_k: int = 4,
+                      top_k_temperature: float = 1.0):
     """Tree search algorithm to find the top_k branches for a n token
     length completion given a fixed budget of gen_tokens length generations
     to explore for the whole tree."""
     # Make sure we've been given the root node
     assert tree.parent == None
     assert tree.root == tree
+    tree.gumbel = gumbelvariate()
     max_depth = n / gen_tokens
     while budget: # Expand tree until budget is consumed
         # Selection - Select the node to expand
@@ -137,11 +147,8 @@ def weave_tree_search(tree: TreeNode, n: int, temperature: float = 1.0,
                           if (node.depth < max_depth) and not node.children]
         if not eligible_nodes: # Stop if all branches at max depth
             break
-        node_scores = torch.tensor([node.score for node in eligible_nodes],
-                                   dtype=torch.float32)
-        node_scores = node_scores / temperature
-        choice = torch.multinomial(torch.softmax(node_scores, 0), 1)
-        chosen = eligible_nodes[choice]
+        eligible_nodes.sort(key=lambda x: x.priority(temperature), reverse=True)
+        chosen = eligible_nodes[0]
         # Expansion - Expand the selected node
         chosen_branch_text = chosen.branch_text(include_root=True)
         for i in range(expand_samples):
@@ -149,11 +156,12 @@ def weave_tree_search(tree: TreeNode, n: int, temperature: float = 1.0,
             text_score = score_output(text)
             new_child = TreeNode(chosen, text)
             new_child.score = text_score
+            new_child.gumbel = gumbelvariate()
             chosen.children.append(new_child)
         budget -= expand_samples
     nodes = tree.nodes()
-    nodes.sort(key=lambda x: x.score)
-    return nodes[-top_k:]
+    nodes.sort(key=lambda x: x.priority(temperature * top_k_temperature), reverse=True)
+    return nodes[:top_k]
 
 @app.route("/generate", methods=['OPTIONS', 'POST'])
 def generate():
@@ -200,7 +208,7 @@ def weave():
         new_tokens = int(params['new_tokens'])
         outs = weave_tree_search(tree=tree, n=new_tokens, temperature=1.0,
                                  budget=32, gen_tokens=32, expand_samples=4,
-                                 top_k=4)
+                                 top_k=4, top_k_temperature=1.0)
         batch = []
         for out in outs:
             out_text = out.branch_text()
