@@ -282,7 +282,7 @@ def train_reward_head(zip_file):
                                   truncation=True,
                                   max_length=4096).to("cuda")
         activations = reward_model_base(input_ids=inputs.input_ids)
-        penultimate_activations = activations["hidden_states"][-1]
+        penultimate_activations = activations["hidden_states"][-1].float()
         embeddings = torch.sum(penultimate_activations * inputs.attention_mask[:, :, None], 1)
         embeddings = embeddings / torch.sum(inputs.attention_mask, 1)[:, None]
         optimizer.zero_grad()
