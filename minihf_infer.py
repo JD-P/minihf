@@ -235,6 +235,8 @@ class ZippedConversationsDataSet:
         self.training_items = []
         zip_ = zipfile.ZipFile(zip_file)
         for file_ in zip_.namelist():
+            if file_.endswith("/"): # Skip directories
+                continue
             if file_.startswith("__MACOSX"): # Mac OS X adds garbage to zips
                 continue
             with zip_.open(file_) as infile:
