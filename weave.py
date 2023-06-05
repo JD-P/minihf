@@ -265,10 +265,12 @@ class TreeNode:
         type(self).max_id += 1
         self.text = text
         if parent is None:
+            self.root = self
             self.depth = 0
             self.committed = True
             self.gumbel = 0.0
         else:
+            self.root = parent.root
             self.depth = parent.depth + 1
             self.committed = False
             self.gumbel = gumbelvariate()
@@ -394,10 +396,12 @@ def weave_tree_search(
             )
 
             # Expansion - Expand the selected node
-            chosen_branch_text = chosen.branch_text(include_root=True)
             n_expand_cur = min(n_expand, budget, round_budget_remaining)
-            texts = generate_fn(chosen_branch_text, n=n_expand_cur)
-            scores = evaluate_fn([(chosen_branch_text, text) for text in texts])
+            texts = generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
+            scores = evaluate_fn(
+                [(chosen.root.text, chosen.branch_text(include_root=False) + text)
+                for text in texts]
+            )
             for text, score in zip(texts, scores):
                 new_child = TreeNode(text, chosen)
                 chosen.children.append(new_child)
