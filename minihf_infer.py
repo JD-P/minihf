@@ -8,9 +8,14 @@ from flask import Flask, request, jsonify, make_response
 from tqdm import tqdm
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
+import peft
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import StoppingCriteria, StoppingCriteriaList
+from transformers import BitsAndBytesConfig
 from weave import weave_tree_search, generate_outputs, evaluate_outputs
 from weave import make_score_prompt_fn, TreeNode
+from lora_tune import lora_tune_evaluator
+from dataset import ZippedConversationsDataset
 
 def load_generator():
     # model_name = "EleutherAI/gpt-neox-20b"
@@ -30,27 +35,51 @@ def load_generator():
     return tokenizer, model
 
 def load_evaluator():
-    model_name = "tiiuae/falcon-7b-instruct"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.truncation_side = "left"
-    tokenizer.padding_side = "left"
-    tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        device_map="auto",
-        # load_in_4bit=True,
-        load_in_8bit=True,
-        torch_dtype=torch.float16,
-        trust_remote_code=True,
-    )
+    if os.path.exists("reward_models/default/"):
+        peft_model_name = "./reward_models/default/"
+        peft_config = peft.PeftConfig.from_pretrained(peft_model_name)
+        tokenizer = AutoTokenizer.from_pretrained(peft_config.base_model_name_or_path)
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"
+        bnb_config = BitsAndBytesConfig()
+        model = AutoModelForCausalLM.from_pretrained(
+            peft_config.base_model_name_or_path,
+            device_map="sequential",
+            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
+    else:
+        model = peft.PeftModel.from_pretrained(model_base, peft_model_name)
+        model_name = "tiiuae/falcon-7b-instruct"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.truncation_side = "left"
+        tokenizer.padding_side = "left"
+        tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map="auto",
+            # load_in_4bit=True,
+            load_in_8bit=True,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
     return tokenizer, model
 
-generator = load_generator()
-evaluator = load_evaluator()
 
-generate_fn = partial(generate_outputs, generator, batch_size=4)
-evaluate_fn = partial(evaluate_outputs, evaluator)
+def load_models():
+    global generator
+    generator = load_generator()
+    global evaluator
+    evaluator = load_evaluator()
 
+    global generate_fn
+    generate_fn = partial(generate_outputs, generator, batch_size=4)
+    global evaluate_fn
+    evaluate_fn = partial(evaluate_outputs, evaluator)
+
+load_models()
+    
 app = Flask(__name__)
 
 @app.route("/generate", methods=['OPTIONS', 'POST'])
@@ -142,79 +171,7 @@ def check_tokens():
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
-class ZippedConversationsDataSet:
-    def __init__(self, zip_file):
-        self.training_items = []
-        zip_ = zipfile.ZipFile(zip_file)
-        for file_ in zip_.namelist():
-            if file_.endswith("/"): # Skip directories
-                continue
-            if file_.startswith("__MACOSX"): # Mac OS X adds garbage to zips
-                continue
-            with zip_.open(file_) as infile:
-                conversation = json.load(infile)
-                for id_ in conversation["responseDict"]:
-                    branch = conversation["responseDict"][id_]
-                    if branch["rating"] == None: # Skip unrated entries
-                        continue
-                    text = ''
-                    label = 1 if branch["rating"] else 0
-                    for node in branch["nodes"]:
-                        text += node["text"]
-                        self.training_items.append((text, label))
-        random.shuffle(self.training_items)
-
-    def __len__(self):
-        return len(self.training_items)
-        
-    def __next__(self):
-        return random.sample(self.training_items, 1)[0]
-
-def train_reward_head(zip_file):
-    reward_head = RewardHead().to("cuda")
-    reward_head.train()
-
-    optimizer = torch.optim.Adam(reward_head.parameters(), lr=0.001)
-    criterion = torch.nn.BCEWithLogitsLoss()
-
-    losses = []
-
-    dataset = ZippedConversationsDataSet(zip_file)
-
-    batch_size = 4
-    steps = round(len(dataset) / 2)
-
-    pbar = tqdm(total=steps, desc="Training")
-
-    for i in range(steps):
-        batch = [next(dataset) for i in range(batch_size)]
-        batch_texts = [x[0] for x in batch]
-        batch_labels = torch.tensor([x[1] for x in batch]).to("cuda")
-        inputs = reward_tokenizer(batch_texts,
-                                  return_tensors="pt",
-                                  padding=True,
-                                  truncation=True,
-                                  max_length=4096).to("cuda")
-        activations = reward_model_base(input_ids=inputs.input_ids)
-        penultimate_activations = activations["hidden_states"][-1].float()
-        embeddings = torch.sum(penultimate_activations * inputs.attention_mask[:, :, None], 1)
-        embeddings = embeddings / torch.sum(inputs.attention_mask, 1)[:, None]
-        optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
-            outs = reward_head(embeddings).squeeze(1)
-        loss = criterion(outs, batch_labels.half())
-        loss.backward()
-        losses.append(loss.item())
-        optimizer.step()
-        pbar.update(1)
-        avgloss = sum(losses) / len(losses)
-        pbar.set_description(f"Training (Train | Loss: {round(avgloss,5)})")
-    # TODO: Safe tensors
-    if not os.path.exists("reward_heads/"):
-        os.mkdir("reward_heads/")
-    torch.save({'model':reward_head.state_dict(), 'optimizer':optimizer.state_dict()},
-               "reward_heads/default.pkl")
-
+    
 @app.route("/train-reward-model", methods=["OPTIONS", "POST"])
 def train_reward_model():
     if request.method == 'OPTIONS':
@@ -225,10 +182,18 @@ def train_reward_model():
         return response
     if request.method =='POST':
         file_ = request.files['file']
-        train_reward_head(file_)
-        # TODO: Safe tensors
-        reward_head_state = torch.load("reward_heads/default.pkl")["model"]
-        reward_head.load_state_dict(reward_head_state)
+        # Deload models
+        global generator
+        del(generator)
+        global evaluator
+        del(evaluator)
+        global generate_fn
+        del(generate_fn)
+        global evaluate_fn
+        del(evaluate_fn)
+        data = ZippedConversationsDataset(file_)
+        lora_tune_evaluator(data)
+        load_models()
         response = make_response("training complete")
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
