@@ -21,7 +21,7 @@ def lora_tune_evaluator(data, continue_from=None):
         tokenizer = AutoTokenizer.from_pretrained(peft_config.base_model_name_or_path)
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
-        bnb_config = BitsAndBytesConfig()
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
         model_base = AutoModelForCausalLM.from_pretrained(
             peft_config.base_model_name_or_path,
             device_map="sequential",
@@ -37,14 +37,16 @@ def lora_tune_evaluator(data, continue_from=None):
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
         print(f"Loading model: {model_name}", file=sys.stderr)
-        bnb_config = BitsAndBytesConfig()
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
         model_base = AutoModelForCausalLM.from_pretrained(
             model_name,
-            device_map="sequential",
+            device_map="auto",
             quantization_config=bnb_config,
             torch_dtype=torch.float16,
             trust_remote_code=True,
         )
+        model_base.gradient_checkpointing_enable()
+        model_base.enable_input_require_grads()
         peft_config = peft.LoraConfig(
             peft.TaskType.CAUSAL_LM,
             inference_mode=False,
@@ -72,7 +74,7 @@ def lora_tune_evaluator(data, continue_from=None):
                            truncation=True,
                            max_length=4096).to("cuda")
         opt.zero_grad()
-        outputs = model(inputs.input_ids[:, :-1], attention_mask=inputs.attention_mask[:, :-1])
+        outputs = model(inputs.input_ids[:, :-1], attention_mask=inputs.attention_mask[:, :-1], use_cache=False)
         losses = criterion(outputs.logits.transpose(-1, -2), inputs.input_ids[:, 1:])
         loss = torch.sum(losses * inputs.attention_mask[:, :-1]) / torch.sum(inputs.attention_mask[:, :-1])
         loss.backward()
