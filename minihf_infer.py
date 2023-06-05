@@ -42,15 +42,15 @@ def load_evaluator():
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
         bnb_config = BitsAndBytesConfig()
-        model = AutoModelForCausalLM.from_pretrained(
+        model_base = AutoModelForCausalLM.from_pretrained(
             peft_config.base_model_name_or_path,
             device_map="sequential",
             quantization_config=bnb_config,
             torch_dtype=torch.float16,
             trust_remote_code=True,
         )
-    else:
         model = peft.PeftModel.from_pretrained(model_base, peft_model_name)
+    else:
         model_name = "tiiuae/falcon-7b-instruct"
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.truncation_side = "left"

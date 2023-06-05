@@ -31,7 +31,7 @@ def lora_tune_evaluator(data, continue_from=None):
         )
         model = peft.PeftModel.from_pretrained(model_base, peft_model_name)
     else:
-        model_name = "tiiuae/falcon-7b"
+        model_name = "tiiuae/falcon-7b-instruct"
         print(f"Loading tokenizer: {model_name}", file=sys.stderr)
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.pad_token = tokenizer.eos_token
