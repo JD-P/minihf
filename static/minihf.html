@@ -72,6 +72,7 @@
 .branch-controls {
     display: flex;
     flex-direction: column;
+    margin-top: auto;
 }
 
 .branch-controls .reward-score{
@@ -507,6 +508,9 @@ make it so that the text is becoming or has become a wedding party?</textarea>
             responseDict = data.responseDict;
             responseBatches = data.responseBatches;
             selectedResponseIndices = data.selectedResponseIndices;
+	    evaluationPromptField.value =
+	      responseDict[responseBatches.at(-1)[selectedResponseIndices.at(-1)]]
+	      .evaluationPrompt;
             renderResponses();
           };
           reader.readAsText(file);
