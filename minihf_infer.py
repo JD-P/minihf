@@ -39,8 +39,9 @@ def load_evaluator():
         peft_model_name = "./reward_models/default/"
         peft_config = peft.PeftConfig.from_pretrained(peft_model_name)
         tokenizer = AutoTokenizer.from_pretrained(peft_config.base_model_name_or_path)
-        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.truncation_side = "left"
         tokenizer.padding_side = "left"
+        tokenizer.pad_token = tokenizer.eos_token
         bnb_config = BitsAndBytesConfig()
         model_base = AutoModelForCausalLM.from_pretrained(
             peft_config.base_model_name_or_path,
@@ -124,7 +125,8 @@ def weave():
         full_prompt = context + " " + prompt
         tree = TreeNode(full_prompt)
         new_tokens = int(params['new_tokens'])
-        score_prompt_fn = partial(make_score_prompt_fn, evaluation_prompt)
+        score_prompt_fn = partial(make_score_prompt_fn, evaluator)
+        score_prompt_fn = partial(score_prompt_fn, evaluation_prompt)
         # Falcon suffix
         score_prompt_fn = partial(score_prompt_fn, "\n")
         # Change name to avoid overwriting global baseline evaluate_fn partial

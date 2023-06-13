@@ -180,7 +180,8 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
 
     outputs = torch.cat(outputs)
     out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in outputs]
-    return [out_text[len(text) :] for out_text in out_texts]
+    in_length = len(tokenizer.decode(inputs.input_ids[0], skip_special_tokens=True))
+    return [out_text[in_length:] for out_text in out_texts]
 
 
 def generate_outputs_openai(text, n_tokens, n=1):
@@ -207,7 +208,28 @@ template = """Answer yes or no and only yes or no. If the story is not actually 
 
 make the reader feel like crying?"""
 
-def make_score_prompt_fn(template, suffix, prompt, response):
+def make_score_prompt_fn(evaluator, template, suffix, prompt, response):
+    tokenizer, model = evaluator
+    template_toks = tokenizer(template,
+                              return_tensors="pt",
+                              padding=True,
+                              truncation=True,
+                              max_length=2048)
+    template_length = len(template_toks.input_ids[0])
+    response_toks = tokenizer(response,
+                              return_tensors="pt",
+                              padding=True,
+                              truncation=True,
+                              max_length=2048 - template_length)
+    response_length = len(response_toks.input_ids[0])
+    prompt_toks = tokenizer(prompt,
+                            return_tensors="pt",
+                            padding=True,
+                            truncation=True,
+                            max_length=2048 - template_length - response_length)
+    response = tokenizer.decode(response_toks.input_ids[0], skip_special_tokens=True)
+    prompt = tokenizer.decode(prompt_toks.input_ids[0], skip_special_tokens=True)
+    
     return template.format(prompt = prompt, response = response) + suffix
 
 score_prompt_fn = partial(make_score_prompt_fn, template)
