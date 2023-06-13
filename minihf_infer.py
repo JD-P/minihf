@@ -42,10 +42,10 @@ def load_evaluator():
         tokenizer.truncation_side = "left"
         tokenizer.padding_side = "left"
         tokenizer.pad_token = tokenizer.eos_token
-        bnb_config = BitsAndBytesConfig()
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
         model_base = AutoModelForCausalLM.from_pretrained(
             peft_config.base_model_name_or_path,
-            device_map="sequential",
+            device_map="auto",
             quantization_config=bnb_config,
             torch_dtype=torch.float16,
             trust_remote_code=True,
@@ -60,8 +60,8 @@ def load_evaluator():
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             device_map="auto",
-            # load_in_4bit=True,
-            load_in_8bit=True,
+            load_in_4bit=True,
+            # load_in_8bit=False,
             torch_dtype=torch.float16,
             trust_remote_code=True,
         )
