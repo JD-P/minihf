@@ -193,8 +193,10 @@ def train_reward_model():
         del(generate_fn)
         global evaluate_fn
         del(evaluate_fn)
+        torch.cuda.empty_cache()
         data = ZippedConversationsDataset(file_)
         lora_tune_evaluator(data)
+        torch.cuda.empty_cache()
         load_models()
         response = make_response("training complete")
         response.headers.add("Access-Control-Allow-Origin", "*")

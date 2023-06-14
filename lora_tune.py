@@ -83,6 +83,7 @@ def lora_tune_evaluator(data, continue_from=None):
         pbar.set_description(f"Training (Train | Loss: {round(loss.item(),5)})")
     model.save_pretrained(continue_from if continue_from else "reward_models/default/",
                           safe_serialization=True)
+    del(model)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
