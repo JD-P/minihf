@@ -45,7 +45,7 @@
 	padding-left: 0.5rem;
     }
 
-    .response .reroll {
+    .reroll {
 	font-size: 1.3em;
 	cursor: pointer;
 	height: 25px;
@@ -86,7 +86,12 @@
     display: flex;
     flex-direction: row;
 }
-    
+
+#prompt-branch-controls {
+    margin-top: initial;
+    margin-left: 1em;
+}
+
     #controls {
     background-color: white;
     justify-content: center;
@@ -264,13 +269,14 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
       const textSpan = document.createElement('span');
       textSpan.classList.add('text');
-
+	    
       const userPromptSpan = document.createElement('span');
       userPromptSpan.classList.add('user-prompt');
       userPromptSpan.textContent = response.prompt;
-
+	  
       textSpan.append(userPromptSpan);
-      textSpan.append(document.createTextNode(" " + response.text));
+
+      // textSpan.append(document.createTextNode(" " + response.text));
 
       const branchControlsDiv = document.createElement('div');
       branchControlsDiv.classList.add('branch-controls');
@@ -290,13 +296,13 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
       branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
 
-      if (response.parent) {
+      /* if (response.parent) {
           const rerollSpan = document.createElement('span');
           rerollSpan.classList.add('reroll');
           rerollSpan.textContent = "🔄";
           rerollSpan.onclick = () => reroll(id);
           branchControlButtonsDiv.append(rerollSpan);
-      }
+      } */
 
       const branchScoreSpan = document.createElement('span');
 	branchScoreSpan.classList.add('reward-score');
@@ -320,7 +326,9 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       var next = focus;
       while (next.parent) {
 	  next = responseDict[next.parent];
-	  responsesContainer.appendChild(renderResponse(next.id));
+	  if (next.text == "") {
+	      responsesContainer.prepend(renderResponse(next.id));
+	  }
       }
 
       const parent = responseDict[focus.parent]
@@ -349,21 +357,69 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       promptField.value = focus.text;
 
       const controls = document.getElementById('controls');
+
+      const oldBranchControlsDiv = document.getElementById('prompt-branch-controls');
+      if (oldBranchControlsDiv) {
+	  oldBranchControlsDiv.innerHTML = '';
+	  oldBranchControlsDiv.remove();
+      }
+	
+      const branchControlsDiv = document.createElement('div');
+      branchControlsDiv.id = "prompt-branch-controls";
+      branchControlsDiv.classList.add('branch-controls');
+
+      const branchControlButtonsDiv = document.createElement('div');
+      branchControlButtonsDiv.classList.add('branch-control-buttons');
+
+      var leftThumbClass = 'thumbs'	
+      var rightThumbClass = 'thumbs'
+      if (focus.rating) {
+	  leftThumbClass = 'chosen'
+      }
+      else if (focus.rating == false) {
+	  rightThumbClass = 'chosen'
+      }
+	
+      const leftThumbSpan = document.createElement('span');
+      leftThumbSpan.classList.add(leftThumbClass);
+      leftThumbSpan.textContent = "👍";
+      leftThumbSpan.onclick = () => thumbsUp(focus.id);
+
+      const rightThumbSpan = document.createElement('span');
+      rightThumbSpan.classList.add(rightThumbClass);
+      rightThumbSpan.textContent = "👎";
+      rightThumbSpan.onclick = () => thumbsDown(focus.id);
+
+      branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
+	
       const rerollSpan = document.createElement('span');
       rerollSpan.classList.add('reroll');
       rerollSpan.textContent = "🔄";
       rerollSpan.onclick = () => reroll(focus.id);
-      controls.append(rerollSpan);
+      branchControlButtonsDiv.append(rerollSpan);
+
+      const branchScoreSpan = document.createElement('span');
+      branchScoreSpan.classList.add('reward-score');
+      try {
+	  const score = focus["nodes"].at(-1).score;
+	  const prob = 1 / (Math.exp(-score) + 1);
+	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
+      } catch (error) {
+	  branchScoreSpan.textContent = "100%";
+      }
+      branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+	
+      controls.append(branchControlsDiv);
     }
 
     function rotate(direction) {
       const parent = responseDict[focus.parent];
       const selection = parent.children.indexOf(focus.id)
       if (direction === 'left') {
-	  focus = parent.children[selection - 1];
+	  focus = responseDict[parent.children[selection - 1]];
       }
       else if (direction === 'right') { 
-	  focus = parent.children[selection + 1];
+	  focus = responseDict[parent.children[selection + 1]];
       }
       renderResponses();
     }
@@ -443,8 +499,8 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 				      children: []};
         parent.children.push(response.id);
       });
+      focus = responseDict[newResponses[0].id];
       diceTeardown();
-      
       renderResponses();
     };
     
