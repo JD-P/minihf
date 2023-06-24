@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import random
 import hashlib
 import zipfile
@@ -121,6 +122,10 @@ def weave():
         params = request.get_json()
         prompt = params['prompt']
         context = params['context']
+        if 'prompt_node' in params:
+            prompt_node = params['prompt_node']
+        else:
+            prompt_node = False
         evaluation_prompt = params['evaluationPrompt']
         full_prompt = context + " " + prompt
         tree = TreeNode(full_prompt)
@@ -141,13 +146,24 @@ def weave():
                                  max_lookahead=3,
                                  temperature=0.25)
         batch = []
+        if prompt_node:
+            timestamp = str(time.time())
+            id_ = hashlib.md5((prompt + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt":prompt,
+                          "evaluationPrompt":evaluation_prompt,
+                          "text":"",
+                          "timestamp":timestamp,
+                          "nodes":[]})
         for branch in branches:
             branch_text = branch.branch_text()
-            id_ = hashlib.md5(branch_text.encode("UTF-8")).hexdigest()
+            timestamp = str(time.time())
+            id_ = hashlib.md5((branch_text + timestamp).encode("UTF-8")).hexdigest()
             batch.append({"id":id_,
                           "prompt": prompt,
                           "evaluationPrompt": evaluation_prompt,
                           "text":branch_text,
+                          "timestamp":timestamp,
                           "nodes":branch.serialize_branch()})
         # TODO: Proper CORS
         response = jsonify(batch)

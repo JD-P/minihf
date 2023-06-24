@@ -45,7 +45,7 @@
 	padding-left: 0.5rem;
     }
 
-    .response .reroll {
+    .reroll {
 	font-size: 1.3em;
 	cursor: pointer;
 	height: 25px;
@@ -86,7 +86,12 @@
     display: flex;
     flex-direction: row;
 }
-    
+
+#prompt-branch-controls {
+    margin-top: initial;
+    margin-left: 1em;
+}
+
     #controls {
     background-color: white;
     justify-content: center;
@@ -177,6 +182,10 @@
     width: 200px;
 }
 
+.nav-mode {
+    box-shadow: 0 0 15px blue;
+}
+
   </style>
 </head>
 <body>
@@ -201,6 +210,8 @@
 	  <div id="rotate-buttons">
 	    <button id="rotateLeft">Prev. Branch</button>
 	    <button id="rotateRight">Next Branch</button>
+	    <button id="depthUp">Parent Up</button>
+	    <button id="depthDown">Child Down</button>
 	  </div>
 	  <span id="batch-item-index"></span>
 	  <div id="session-buttons">
@@ -234,6 +245,8 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     const responsesContainer = document.getElementById('responses');
     const rotateLeftBtn = document.getElementById('rotateLeft');
     const rotateRightBtn = document.getElementById('rotateRight');
+    const depthUpBtn = document.getElementById('depthUp');
+    const depthDownBtn = document.getElementById('depthDown');
     rotateLeftBtn.disabled = true; // Prevent user from rotating with no branches
     rotateRightBtn.disabled = true;
     const promptField = document.getElementById('prompt');
@@ -245,6 +258,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     let responseDict = {};
     let responseBatches = [];
     let selectedResponseIndices = [];
+    focus = null;
 
     function renderResponse(id) {
       const response = responseDict[id];
@@ -256,24 +270,6 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       else if (response.rating == false) {
 	  rightThumbClass = 'chosen'
       }
-	const selection = selectedResponseIndices.at(-1)
-	const batchLimit = responseBatches.at(-1).length - 1
-      if (selection < batchLimit && selection > 0) {
-	  rotateLeftBtn.disabled = false;
-	  rotateRightBtn.disabled = false;
-      }
-      else if (batchLimit == 0) {
-	  rotateLeftBtn.disabled = true;
-	  rotateRightBtn.disabled = true;
-      }
-      else if (selection == batchLimit) {
-	  rotateLeftBtn.disabled = false;
-	  rotateRightBtn.disabled = true;
-      }
-      else if (selection == 0) {
-	  rotateLeftBtn.disabled = true;
-	  rotateRightBtn.disabled = false;
-      }
 
       const responseElem = document.createElement('div');
       responseElem.classList.add('response');
@@ -281,13 +277,14 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
       const textSpan = document.createElement('span');
       textSpan.classList.add('text');
-
+	    
       const userPromptSpan = document.createElement('span');
       userPromptSpan.classList.add('user-prompt');
       userPromptSpan.textContent = response.prompt;
-
+	  
       textSpan.append(userPromptSpan);
-      textSpan.append(document.createTextNode(" " + response.text));
+
+      // textSpan.append(document.createTextNode(" " + response.text));
 
       const branchControlsDiv = document.createElement('div');
       branchControlsDiv.classList.add('branch-controls');
@@ -307,23 +304,23 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
       branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
 
-      const batchIndexMarker = document.getElementById("batch-item-index");
-      batchIndexMarker.textContent = `${selection + 1}/${responseBatches.at(-1).length}`;
-
-      if (responseBatches.at(-1)[selectedResponseIndices.at(-1)] == id) {
+      /* if (response.parent) {
           const rerollSpan = document.createElement('span');
           rerollSpan.classList.add('reroll');
           rerollSpan.textContent = "🔄";
           rerollSpan.onclick = () => reroll(id);
           branchControlButtonsDiv.append(rerollSpan);
-      }
+      } */
 
       const branchScoreSpan = document.createElement('span');
-      branchScoreSpan.classList.add('reward-score');
-      const score = response["nodes"].at(-1).score;
-      const prob = 1 / (Math.exp(-score) + 1);
-      branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
-
+	branchScoreSpan.classList.add('reward-score');
+      try {
+	  const score = response["nodes"].at(-1).score;
+	  const prob = 1 / (Math.exp(-score) + 1);
+	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
+      } catch (error) {
+	  branchScoreSpan.textContent = "100%";
+      }
       branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 
       responseElem.append(textSpan, branchControlsDiv);
@@ -334,35 +331,146 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
     function renderResponses() {
       responsesContainer.innerHTML = '';
-      for (var i = 0; i < selectedResponseIndices.length; i++) {
-	  const id = responseBatches[i][selectedResponseIndices[i]]
-	  responsesContainer.appendChild(renderResponse(id))
+      var next = focus;
+      while (next.parent) {
+	  next = responseDict[next.parent];
+	  if (next.text == "") {
+	      responsesContainer.prepend(renderResponse(next.id));
+	  }
       }
+
+      const parent = responseDict[focus.parent]
+      const selection = parent.children.indexOf(focus.id)
+      const batchLimit = parent.children.length - 1
+      if (selection < batchLimit && selection > 0) {
+	  rotateLeftBtn.disabled = false;
+	  rotateRightBtn.disabled = false;
+      }
+      else if (batchLimit == 0) {
+	  rotateLeftBtn.disabled = true;
+	  rotateRightBtn.disabled = true;
+      }
+      else if (selection == batchLimit) {
+	  rotateLeftBtn.disabled = false;
+	  rotateRightBtn.disabled = true;
+      }
+      else if (selection == 0) {
+	  rotateLeftBtn.disabled = true;
+	  rotateRightBtn.disabled = false;
+      }
+
+      const batchIndexMarker = document.getElementById("batch-item-index");
+      batchIndexMarker.textContent = `${selection + 1}/${parent.children.length}`;
+
+      if (focus.text) {
+	  promptField.value = focus.text;
+      }
+      else {
+	  promptField.value = focus.prompt;
+      }
+      promptField.setSelectionRange(0,0);
+	
+      const controls = document.getElementById('controls');
+
+      const oldBranchControlsDiv = document.getElementById('prompt-branch-controls');
+      if (oldBranchControlsDiv) {
+	  oldBranchControlsDiv.innerHTML = '';
+	  oldBranchControlsDiv.remove();
+      }
+	
+      const branchControlsDiv = document.createElement('div');
+      branchControlsDiv.id = "prompt-branch-controls";
+      branchControlsDiv.classList.add('branch-controls');
+
+      const branchControlButtonsDiv = document.createElement('div');
+      branchControlButtonsDiv.classList.add('branch-control-buttons');
+
+      var leftThumbClass = 'thumbs'	
+      var rightThumbClass = 'thumbs'
+      if (focus.rating) {
+	  leftThumbClass = 'chosen'
+      }
+      else if (focus.rating == false) {
+	  rightThumbClass = 'chosen'
+      }
+	
+      const leftThumbSpan = document.createElement('span');
+      leftThumbSpan.classList.add(leftThumbClass);
+      leftThumbSpan.textContent = "👍";
+      leftThumbSpan.onclick = () => promptThumbsUp(focus.id);
+
+      const rightThumbSpan = document.createElement('span');
+      rightThumbSpan.classList.add(rightThumbClass);
+      rightThumbSpan.textContent = "👎";
+      rightThumbSpan.onclick = () => promptThumbsDown(focus.id);
+
+      branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
+	
+      const rerollSpan = document.createElement('span');
+      rerollSpan.classList.add('reroll');
+      rerollSpan.textContent = "🔄";
+      rerollSpan.onclick = () => reroll(focus.id);
+      branchControlButtonsDiv.append(rerollSpan);
+
+      const branchScoreSpan = document.createElement('span');
+      branchScoreSpan.classList.add('reward-score');
+      try {
+	  const score = focus["nodes"].at(-1).score;
+	  const prob = 1 / (Math.exp(-score) + 1);
+	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
+      } catch (error) {
+	  branchScoreSpan.textContent = "100%";
+      }
+      branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+	
+      controls.append(branchControlsDiv);
     }
 
     function rotate(direction) {
-      const selection = selectedResponseIndices.pop();
-      if (direction === 'left') {
-	  selectedResponseIndices.push(selection - 1);
+      const parent = responseDict[focus.parent];
+      const selection = parent.children.indexOf(focus.id)
+      if (direction === 'left' && selection > 0) {
+	  focus = responseDict[parent.children[selection - 1]];
       }
-      else if (direction === 'right') { 
-	  selectedResponseIndices.push(selection + 1)
+      else if (direction === 'right' && selection < (parent.children.length - 1)) { 
+	  focus = responseDict[parent.children[selection + 1]];
       }
       renderResponses();
     }
 
-    async function getResponses(prompt, evaluationPrompt, offset = 0) {
+    function changeDepth(direction) {
+      const parent = responseDict[focus.parent];
+      const child = responseDict[focus.children.at(-1)];
+      if (direction == "up" && parent) {
+	focus = parent;
+      }
+      else if (direction == "down" && child) {
+	focus = child;
+      }
+      renderResponses();  
+    }
+	    
+    
+    async function getResponses(prompt, evaluationPrompt, focusId = null, include_prompt = false) {
 	var context = ""
-	for (var i = 0; i < selectedResponseIndices.length - offset; i++) {
-	    const canonicalResponseIndex = selectedResponseIndices[i]
-	    const responseId = responseBatches[i][canonicalResponseIndex]
-	    context += responseDict[responseId].text
+	if (focusId) {
+	    var next = responseDict[focusId];
+	    while (next.parent) {
+		next = responseDict[next.parent];
+		if (next.text) {
+		  context += next.text;
+		}
+		else {
+		  context += next.prompt;
+		}
+	    }
 	}
 	r = await fetch("/weave", {
 	    method: "POST",
 	    body: JSON.stringify({
 		context: context,
 		prompt: prompt,
+		prompt_node: include_prompt,
 		evaluationPrompt: evaluationPrompt,
 		new_tokens: settingNewTokens.value,
 	    }),
@@ -392,6 +500,24 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	thumbDown.classList = ['chosen']
     }
 
+    function promptThumbsUp(id) {
+	responseDict[id].rating = true;
+	promptBranchControls = document.getElementById("prompt-branch-controls")
+	thumbUp = promptBranchControls.children.item(0).children.item(0)
+	thumbUp.classList = ['chosen']
+	thumbDown = promptBranchControls.children.item(0).children.item(1)
+	thumbDown.classList = ['thumbs']
+    }
+
+    function promptThumbsDown(id) {
+	responseDict[id].rating = false;
+	promptBranchControls = document.getElementById("prompt-branch-controls")
+	thumbUp = promptBranchControls.children.item(0).children.item(0)
+	thumbUp.classList = ['thumbs']
+	thumbDown = promptBranchControls.children.item(0).children.item(1)
+	thumbDown.classList = ['chosen']
+    }
+    
     function diceSetup() {
       promptField.readOnly = true;
       const diceHolder = document.getElementById("dice-holder");
@@ -408,29 +534,31 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     }
     
     async function reroll(id) {
-      const prompt = responseDict[responseBatches.at(-1)[0]]['prompt'];
-      const evaluationPromptV = responseDict[responseBatches.at(-1)[0]]['evaluationPrompt'];	
-      promptField.readOnly = true;
-      const diceHolder = document.getElementById("dice-holder");
-      const die = document.createElement("p");
-      die.innerText = '🎲';
-      die.id = 'die';
-      diceHolder.appendChild(die);
-      const newResponses = await getResponses(prompt, evaluationPromptV, 1);
-      var currentBatch = responseBatches.at(-1);
+      const rerollFocus = responseDict[id];
+      const parent = responseDict[rerollFocus.parent];
+      const prompt = rerollFocus['prompt'];
+      const evaluationPromptV = rerollFocus['evaluationPrompt'];	
+      diceSetup();
+      const newResponses = await getResponses(prompt,
+					      evaluationPromptV,
+					      focusId = parent.id);
       newResponses.forEach(response => {    
-        responseDict[response.id] = { ...response, rating: null };
-        currentBatch.push(response.id);
+        responseDict[response.id] = { ...response,
+				      rating: null,
+				      parent: parent.id,
+				      children: []};
+        parent.children.push(response.id);
       });
-      promptField.readOnly = false;
-      die.remove();
-      selectedResponseIndices.pop();
-      selectedResponseIndices.push(currentBatch.length - 1);
+      focus = responseDict[newResponses[0].id];
+      diceTeardown();
       renderResponses();
     };
     
     rotateLeftBtn.addEventListener('click', () => rotate('left'));
     rotateRightBtn.addEventListener('click', () => rotate('right'));
+
+    depthUpBtn.addEventListener('click', () => changeDepth('up'));
+    depthDownBtn.addEventListener('click', () => changeDepth('down'));
 
     promptField.addEventListener('keydown', async (e) => {
       if (e.key != "Enter") {
@@ -467,26 +595,50 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       die.id = 'die';
       diceHolder.appendChild(die);
 	
-      const newResponses = await getResponses(prompt, evaluationPromptField.value);
-      const newBatch = [];
-      newResponses.forEach(response => {    
-        responseDict[response.id] = { ...response, rating: null };
-        newBatch.push(response.id);
+      let focusId;
+      if (focus) {
+	  focusId = focus.id;
+      }
+      else {
+	  focusId = null;
+      }
+      const newResponses = await getResponses(prompt,
+					      evaluationPromptField.value,
+					      focusId = focusId,
+					      include_prompt = true);
+      let focusParentId;
+      if (focus) {
+	focusParentId = focus.parent;
+      }
+      else {
+	focusParentId = null;
+      }
+      responseDict[newResponses[0].id] = {...newResponses[0],
+					  rating: true,
+					  parent: focusParentId,
+					  children: []};
+      if (focus) {
+	responseDict[focus.parent].children.push(newResponses[0].id);
+      }
+      focus = responseDict[newResponses[0].id];
+      newResponses.slice(1).forEach(response => {    
+          responseDict[response.id] = { ...response,
+					rating: null,
+					parent: focus.id,
+					children: []};
+          focus.children.push(response.id);
       });
-      promptField.value = "";
+      focus = responseDict[newResponses[1].id];
       promptField.setSelectionRange(0,0);
       promptField.readOnly = false;
       die.remove();
-      responseBatches.push(newBatch);
-      selectedResponseIndices.push(0);
       renderResponses();
     });
 
     saveBtn.addEventListener('click', () => {
       const data = JSON.stringify({
         responseDict,
-        responseBatches,
-        selectedResponseIndices,
+        "focusId": focus.id,
       });
       const blob = new Blob([data], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -507,11 +659,8 @@ make it so that the text is becoming or has become a wedding party?</textarea>
           reader.onload = (e) => {
             const data = JSON.parse(e.target.result);
             responseDict = data.responseDict;
-            responseBatches = data.responseBatches;
-            selectedResponseIndices = data.selectedResponseIndices;
-	    evaluationPromptField.value =
-	      responseDict[responseBatches.at(-1)[selectedResponseIndices.at(-1)]]
-	      .evaluationPrompt;
+            focus = responseDict[data.focusId];
+	    evaluationPromptField.value = focus.evaluationPrompt;
             renderResponses();
           };
           reader.readAsText(file);
@@ -532,6 +681,44 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     // Expose functions to the global scope for use in inline event handlers
     window.thumbsUp = thumbsUp;
     window.thumbsDown = thumbsDown;
+
+// TODO: Figure out why this ends up activating when you shift-up in the text editor
+/*
+    window.addEventListener('keydown', async (e) => {
+      if (e.shiftKey) {
+        if (window.navMode) {
+	    window.navMode = null;
+	    const rotateButtons = document.getElementById("rotate-buttons");
+	    rotateButtons.classList.remove("nav-mode");
+	}
+	else if (window.navMode == false) {
+	    window.navMode = true;
+	    const rotateButtons = document.getElementById("rotate-buttons");
+	    rotateButtons.classList.add("nav-mode");
+	}
+	else {
+	    setTimeout(() => {
+	      if (window.navMode == false) {
+	        window.navMode = null;
+	      }
+	    }, 300);
+	    window.navMode = false;
+	}
+      }
+      if (e.key == "ArrowUp" && window.navMode == true) {
+	changeDepth("up");
+      }
+      if (e.key == "ArrowDown" && window.navMode == true) {
+	changeDepth("down");
+      }
+      if (e.key == "ArrowLeft" && window.navMode == true) {
+	rotate("left");
+      }
+      if (e.key == "ArrowRight" && window.navMode == true) {
+        rotate("right");
+      }
+    });	
+*/	    
   </script>
 </body>
 </html>
