@@ -281,10 +281,17 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       const userPromptSpan = document.createElement('span');
       userPromptSpan.classList.add('user-prompt');
       userPromptSpan.textContent = response.prompt;
-	  
-      textSpan.append(userPromptSpan);
 
-      // textSpan.append(document.createTextNode(" " + response.text));
+      if (id == focus.id) {
+	userPromptSpan.classList.remove('user-prompt');
+      }
+
+      if (response.text) {
+        textSpan.append(document.createTextNode(response.text));
+      }
+      else {
+        textSpan.append(userPromptSpan);
+      }
 
       const branchControlsDiv = document.createElement('div');
       branchControlsDiv.classList.add('branch-controls');
@@ -323,8 +330,12 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       }
       branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 
-      responseElem.append(textSpan, branchControlsDiv);
-
+      if (id == focus.id) {
+        responseElem.append(textSpan);
+      }
+      else {
+	responseElem.append(textSpan, branchControlsDiv);
+      }
       return responseElem;
 
     }
@@ -332,6 +343,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     function renderResponses() {
       responsesContainer.innerHTML = '';
       var next = focus;
+      responsesContainer.prepend(renderResponse(next.id));
       while (next.parent) {
 	  next = responseDict[next.parent];
 	  if (next.text == "") {
@@ -465,6 +477,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 		}
 	    }
 	}
+	context.split("").reverse().join("");
 	r = await fetch("/weave", {
 	    method: "POST",
 	    body: JSON.stringify({
