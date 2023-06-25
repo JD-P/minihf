@@ -129,22 +129,35 @@ def weave():
         evaluation_prompt = params['evaluationPrompt']
         full_prompt = context + " " + prompt
         tree = TreeNode(full_prompt)
-        new_tokens = int(params['new_tokens'])
         score_prompt_fn = partial(make_score_prompt_fn, evaluator)
         score_prompt_fn = partial(score_prompt_fn, evaluation_prompt)
         # Falcon suffix
         score_prompt_fn = partial(score_prompt_fn, "\n")
         # Change name to avoid overwriting global baseline evaluate_fn partial
         score_fn = partial(evaluate_fn, score_prompt_fn)
+        weave_param_defaults = {"weave_n_tokens":32, "weave_budget":72,
+                                "weave_round_budget":24, "weave_n_expand":8,
+                                "weave_beam_width":1, "weave_max_lookahead":3,
+                                "weave_temperature":0.25}
+        wp = {}
+        for key in weave_param_defaults.keys():
+            if key in params:
+                try:
+                    wp[key] = int(params[key])
+                except ValueError:
+                    wp[key] = float(params[key])
+            else:
+                wp[key] = weave_param_defaults[key]
         branches = weave_tree_search(tree=tree,
-                                 generate_fn=partial(generate_fn, n_tokens=32),
-                                 evaluate_fn=score_fn,
-                                 budget=72,
-                                 round_budget=24,
-                                 n_expand=8,
-                                 beam_width=1,
-                                 max_lookahead=3,
-                                 temperature=0.25)
+                                     generate_fn=partial(generate_fn,
+                                                         n_tokens=wp["weave_n_tokens"]),
+                                     evaluate_fn=score_fn,
+                                     budget=wp["weave_budget"],
+                                     round_budget=wp["weave_round_budget"],
+                                     n_expand=wp["weave_n_expand"],
+                                     beam_width=wp["weave_beam_width"],
+                                     max_lookahead=wp["weave_max_lookahead"],
+                                     temperature=wp["weave_temperature"])
         batch = []
         if prompt_node:
             timestamp = str(time.time())

@@ -16,6 +16,17 @@
     width: 25%;
 }
 
+#settings-pane form {
+    display: flex;
+    flex-direction: column;
+    width: 50%;
+}
+
+#settings-pane form label {
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
 #narrative-pane {
     width: 25%;
     margin-left: 2em;
@@ -191,8 +202,23 @@
 <body>
   <div id="settings-pane">
     <form>
-      <label for="newTokens">Tokens Per Gen:</label>
-      <input type="text" id="newTokens" name="newTokens" value="256">
+      <p>Weave Generator Settings</p>
+      <label for="new-tokens">Max Tokens Per Weave:</label>
+      <input type="text" id="new-tokens" name="new-tokens" value="256">
+      <label for="n-tokens">Tokens Per Node Expansion:</label>
+      <input type="text" id="n-tokens" name="n-tokens" value="32">
+      <label for="budget">Max Node Expansion Budget</label>
+      <input type="text" id="budget" name="budget" value="72">
+      <label for="round-budget">Expansion Budget Per Round</label>
+      <input type="text" id="round-budget" name="round-budget" value="24">
+      <label for="n-expand">Expansions Per Node</label>
+      <input type="text" id="n-expand" name="n-expand" value="8">
+      <label for="beam-width">Number of Output Branches</label>
+      <input type="text" id="beam-width" name="beam-width" value="1">
+      <label for="max-lookahead">Max Lookahead</label>
+      <input type="text" id="max-lookahead" name="max-lookahead" value="3">
+      <label for="temperature">Temperature</label>
+      <input type="text" id="temperature" name="temperature" value="0.25">
     </form>
     <form id="reward-tune">
       <label for="reward-head-dataset">Reward Dataset:</label>
@@ -239,7 +265,14 @@
 make it so that the text is becoming or has become a wedding party?</textarea>
   </div>
   <script>
-    const settingNewTokens = document.getElementById('newTokens');
+    const settingNewTokens = document.getElementById('new-tokens');
+    const settingNTokens = document.getElementById('n-tokens');
+    const settingBudget = document.getElementById('budget');
+    const settingRoundBudget = document.getElementById('round-budget');
+    const settingNExpand = document.getElementById('n-expand');
+    const settingBeamWidth = document.getElementById('beam-width');
+    const settingMaxLookahead = document.getElementById('max-lookahead');
+    const settingTemperature = document.getElementById('temperature');
     const rewardHeadDataset = document.getElementById('reward-head-dataset');
     const rewardTune = document.getElementById('reward-tune');
     const responsesContainer = document.getElementById('responses');
@@ -351,9 +384,16 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	  }
       }
 
-      const parent = responseDict[focus.parent]
-      const selection = parent.children.indexOf(focus.id)
-      const batchLimit = parent.children.length - 1
+      if (focus.parent) {
+	const parent = responseDict[focus.parent]
+	const selection = parent.children.indexOf(focus.id)
+	const batchLimit = parent.children.length - 1
+      }
+      else {
+	const selection = 0;
+	const batchLimit = 0;
+      }
+
       if (selection < batchLimit && selection > 0) {
 	  rotateLeftBtn.disabled = false;
 	  rotateRightBtn.disabled = false;
@@ -485,7 +525,15 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 		prompt: prompt,
 		prompt_node: include_prompt,
 		evaluationPrompt: evaluationPrompt,
-		new_tokens: settingNewTokens.value,
+		// new_tokens: settingNewTokens.value,
+		weave_n_tokens: settingNTokens.value,
+		weave_budget: settingBudget.value,
+		weave_round_budget: settingRoundBudget.value,
+		weave_n_expand: settingNExpand.value,
+		weave_beam_width: settingBeamWidth.value,
+		weave_max_lookahead: settingMaxLookahead.value,
+		weave_temperature: settingTemperature.value
+		
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
