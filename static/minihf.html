@@ -384,14 +384,17 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	  }
       }
 
+      let parent;
+      let selection;
+      let batchLimit;
       if (focus.parent) {
-	const parent = responseDict[focus.parent]
-	const selection = parent.children.indexOf(focus.id)
-	const batchLimit = parent.children.length - 1
+	parent = responseDict[focus.parent]
+	selection = parent.children.indexOf(focus.id)
+	batchLimit = parent.children.length - 1
       }
       else {
-	const selection = 0;
-	const batchLimit = 0;
+	selection = 0;
+	batchLimit = 0;
       }
 
       if (selection < batchLimit && selection > 0) {
@@ -412,7 +415,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       }
 
       const batchIndexMarker = document.getElementById("batch-item-index");
-      batchIndexMarker.textContent = `${selection + 1}/${parent.children.length}`;
+      batchIndexMarker.textContent = `${selection + 1}/${batchLimit + 1}`;
 
       if (focus.text) {
 	  promptField.value = focus.text;
