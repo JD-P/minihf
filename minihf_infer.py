@@ -88,7 +88,6 @@ app = Flask(__name__)
 def generate():
     if request.method == 'OPTIONS':
         response = make_response()
-        # TODO: Have the interface served by the server on GET request
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add("Access-Control-Allow-Headers", "*")
         response.headers.add("Access-Control-Allow-Methods", "*")
@@ -99,11 +98,16 @@ def generate():
         context = params['context']
         full_prompt = context + " " + prompt
         new_tokens = int(params['new_tokens'])
-        outs = generate_output(full_prompt, new_tokens)
+        outs = generate_fn(full_prompt, new_tokens)
         batch = []
         for out in outs:
-          id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
-          batch.append({"id":id_, "prompt": prompt, "text":out})
+            timestamp = str(time.time())
+            id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt": prompt,
+                          "text":out,
+                          "timestamp":timestamp,
+                          "nodes":[]})
         # TODO: Proper CORS
         response = jsonify(batch)
         response.headers.add("Access-Control-Allow-Origin", "*")

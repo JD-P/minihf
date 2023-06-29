@@ -359,7 +359,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	  const prob = 1 / (Math.exp(-score) + 1);
 	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
       } catch (error) {
-	  branchScoreSpan.textContent = "100%";
+	  branchScoreSpan.textContent = "N.A.";
       }
       branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 
@@ -461,12 +461,18 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 
       branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
 	
-      const rerollSpan = document.createElement('span');
-      rerollSpan.classList.add('reroll');
-      rerollSpan.textContent = "🔄";
-      rerollSpan.onclick = () => reroll(focus.id);
-      branchControlButtonsDiv.append(rerollSpan);
+      const quickRollSpan = document.createElement('span');
+      quickRollSpan.classList.add('reroll');
+      quickRollSpan.textContent = "🖍️";
+      quickRollSpan.onclick = () => reroll(focus.id, false);
+      branchControlButtonsDiv.append(quickRollSpan);
 
+      const weaveRollSpan = document.createElement('span');
+      weaveRollSpan.classList.add('reroll');
+      weaveRollSpan.textContent = "🖋️";
+      weaveRollSpan.onclick = () => reroll(focus.id, true);
+      branchControlButtonsDiv.append(weaveRollSpan);
+	
       const branchScoreSpan = document.createElement('span');
       branchScoreSpan.classList.add('reward-score');
       try {
@@ -474,7 +480,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	  const prob = 1 / (Math.exp(-score) + 1);
 	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
       } catch (error) {
-	  branchScoreSpan.textContent = "100%";
+	  branchScoreSpan.textContent = "N.A.";
       }
       branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 	
@@ -506,7 +512,10 @@ make it so that the text is becoming or has become a wedding party?</textarea>
     }
 	    
     
-    async function getResponses(prompt, evaluationPrompt, focusId = null, include_prompt = false) {
+    async function getResponses({prompt, evaluationPrompt,
+				 weave = true, weaveParams = {},
+				 focusId = null, includePrompt = false}) {
+	let wp = weaveParams;
 	var context = ""
 	if (focusId) {
 	    var next = responseDict[focusId];
@@ -521,22 +530,28 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	    }
 	}
 	context.split("").reverse().join("");
-	r = await fetch("/weave", {
+	let endpoint;
+	if (weave) {
+	  endpoint = "/weave";
+	}
+	else {
+	  endpoint = "/generate";
+	}
+	r = await fetch(endpoint, {
 	    method: "POST",
 	    body: JSON.stringify({
-		context: context,
-		prompt: prompt,
-		prompt_node: include_prompt,
-		evaluationPrompt: evaluationPrompt,
-		// new_tokens: settingNewTokens.value,
-		weave_n_tokens: settingNTokens.value,
-		weave_budget: settingBudget.value,
-		weave_round_budget: settingRoundBudget.value,
-		weave_n_expand: settingNExpand.value,
-		weave_beam_width: settingBeamWidth.value,
-		weave_max_lookahead: settingMaxLookahead.value,
-		weave_temperature: settingTemperature.value
-		
+	    context: context,
+	    prompt: prompt,
+	    prompt_node: includePrompt,
+	    evaluationPrompt: evaluationPrompt,
+	    new_tokens: wp["newTokens"],
+	    weave_n_tokens: wp["nTokens"],
+	    weave_budget: wp["budget"],
+	    weave_round_budget: wp["roundBudget"],
+	    weave_n_expand: wp["nExpand"],
+	    weave_beam_width: wp["beamWidth"],
+	    weave_max_lookahead: wp["maxLookahead"],
+	    weave_temperature: wp["temperature"]
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
@@ -597,20 +612,34 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 	die.remove();
     }
     
-    async function reroll(id) {
+    async function reroll(id, weave=true) {
       const rerollFocus = responseDict[id];
       const parent = responseDict[rerollFocus.parent];
       const prompt = rerollFocus['prompt'];
-      const evaluationPromptV = rerollFocus['evaluationPrompt'];	
+      const evaluationPromptV = rerollFocus['evaluationPrompt'];
+      const wp = {"newTokens": settingNewTokens.value,
+		  "nTokens": settingNTokens.value,
+		  "budget": settingBudget.value,
+		  "roundBudget": settingRoundBudget.value,
+		  "nExpand": settingNExpand.value,
+		  "beamWidth": settingBeamWidth.value,
+		  "maxLookahead": settingMaxLookahead.value,
+		  "temperature": settingTemperature.value
+		 }
       diceSetup();
-      const newResponses = await getResponses(prompt,
-					      evaluationPromptV,
-					      focusId = parent.id);
+      const newResponses = await getResponses({prompt: prompt,
+					       evaluationPrompt: evaluationPromptV,
+					       weave: weave,
+					       weaveParams: wp,
+					       focusId: parent.id});
       newResponses.forEach(response => {    
         responseDict[response.id] = { ...response,
 				      rating: null,
 				      parent: parent.id,
 				      children: []};
+        if (!response["evaluationPrompt"]) {
+	  responseDict[response.id]["evaluationPrompt"] = evaluationPromptField.value;
+        }
         parent.children.push(response.id);
       });
       focus = responseDict[newResponses[0].id];
@@ -666,10 +695,20 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       else {
 	  focusId = null;
       }
-      const newResponses = await getResponses(prompt,
-					      evaluationPromptField.value,
-					      focusId = focusId,
-					      include_prompt = true);
+      const wp = {"newTokens": settingNewTokens.value,
+		  "nTokens": settingNTokens.value,
+		  "budget": settingBudget.value,
+		  "roundBudget": settingRoundBudget.value,
+		  "nExpand": settingNExpand.value,
+		  "beamWidth": settingBeamWidth.value,
+		  "maxLookahead": settingMaxLookahead.value,
+		  "temperature": settingTemperature.value
+		 };
+      const newResponses = await getResponses({prompt: prompt,
+					       evaluationPrompt: evaluationPromptField.value,
+					       focusId: focusId,
+					       weaveParams: wp,
+					       includePrompt: true});
       let focusParentId;
       if (focus) {
 	focusParentId = focus.parent;
@@ -681,7 +720,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 					  rating: true,
 					  parent: focusParentId,
 					  children: []};
-      if (focus) {
+      if (focus && focusParentId) {
 	responseDict[focus.parent].children.push(newResponses[0].id);
       }
       focus = responseDict[newResponses[0].id];
