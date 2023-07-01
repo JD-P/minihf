@@ -203,6 +203,10 @@
   <div id="settings-pane">
     <form>
       <p>Weave Generator Settings</p>
+      <div>
+	<input type="checkbox" id="use-weave" name="use-weave" checked>
+	<label for="use-weave">Use Weave Algorithm To Gen (AutoLoom)</label>
+      </div>
       <label for="new-tokens">Max Tokens Per Weave:</label>
       <input type="text" id="new-tokens" name="new-tokens" value="256">
       <label for="n-tokens">Tokens Per Node Expansion:</label>
@@ -265,6 +269,7 @@
 make it so that the text is becoming or has become a wedding party?</textarea>
   </div>
   <script>
+    const settingUseWeave = document.getElementById('use-weave');
     const settingNewTokens = document.getElementById('new-tokens');
     const settingNTokens = document.getElementById('n-tokens');
     const settingBudget = document.getElementById('budget');
@@ -707,6 +712,7 @@ make it so that the text is becoming or has become a wedding party?</textarea>
       const newResponses = await getResponses({prompt: prompt,
 					       evaluationPrompt: evaluationPromptField.value,
 					       focusId: focusId,
+					       weave: settingUseWeave.checked,
 					       weaveParams: wp,
 					       includePrompt: true});
       let focusParentId;
@@ -729,6 +735,9 @@ make it so that the text is becoming or has become a wedding party?</textarea>
 					rating: null,
 					parent: focus.id,
 					children: []};
+	  if (!response["evaluationPrompt"]) {
+	    responseDict[response.id]["evaluationPrompt"] = evaluationPromptField.value;
+          }
           focus.children.push(response.id);
       });
       focus = responseDict[newResponses[1].id];

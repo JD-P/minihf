@@ -95,11 +95,23 @@ def generate():
     if request.method =='POST':
         params = request.get_json()
         prompt = params['prompt']
+        if 'prompt_node' in params:
+            prompt_node = params['prompt_node']
+        else:
+            prompt_node = False
         context = params['context']
         full_prompt = context + " " + prompt
         new_tokens = int(params['new_tokens'])
         outs = generate_fn(full_prompt, new_tokens)
         batch = []
+        if prompt_node:
+            timestamp = str(time.time())
+            id_ = hashlib.md5((prompt + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt":prompt,
+                          "text":"",
+                          "timestamp":timestamp,
+                          "nodes":[]})
         for out in outs:
             timestamp = str(time.time())
             id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
