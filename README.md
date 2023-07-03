@@ -20,10 +20,42 @@ does it for you. Simply pick a canonical entry from the top k nodes found by wea
 
 ## Setup
 
-pip install the requirements.txt and run with flask on a gpu with lots of VRAM
+### DataCrunch
 
-If your GPU does not have lots of VRAM go into the inference server source and
-replace NeoX with a smaller model such as StableLM or Pythia.
+If you want to use MiniHF with a large amount of VRAM, https://datacrunch.io/ is
+a good option. Provision an A6000, A6000 Ada, etc from their selection with
+the `Ubuntu + Cuda + Docker` image and more than the default amount of storage
+(I found it worked with 1tb, but you can probably make do with less, **the default
+40gb is not enough**). Once you have it running SSH in with a listener on port 5000:
+
+```
+ssh root@IP_ADDRESS -L 5000:localhost:5000
+```
+
+Once you're in clone the repo and change directories to it:
+
+```
+git clone https://github.com/JD-P/minihf.git
+cd minihf
+```
+
+Then run:
+
+```
+bash setup.sh
+```
+
+You should see the script update the server packages, install python dependencies
+from pip, download the models, and then finally start the inference server. At
+this point you can start using MiniHF by visiting http://localhost:5000/ in your
+browser. You can change which models you're using in the `minihf_infer.py` file.
+Later on we'll add a configuration file to change these settings.
+
+To start the server yourself on subsequent logins use the command:
+
+```
+flask --app minihf_infer run
+```
 
 ## Tuning Dataset
 
