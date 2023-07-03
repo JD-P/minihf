@@ -37,6 +37,7 @@ Once you're in clone the repo and change directories to it:
 ```
 git clone https://github.com/JD-P/minihf.git
 cd minihf
+git checkout eval
 ```
 
 Then run:
@@ -51,9 +52,11 @@ this point you can start using MiniHF by visiting http://localhost:5000/ in your
 browser. You can change which models you're using in the `minihf_infer.py` file.
 Later on we'll add a configuration file to change these settings.
 
-To start the server yourself on subsequent logins use the command:
+To start the server yourself on subsequent logins use the commands:
 
 ```
+cd minihf
+source env_minihf/bin/activate
 flask --app minihf_infer run
 ```
 
