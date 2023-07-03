@@ -102,7 +102,8 @@ def generate():
         context = params['context']
         full_prompt = context + " " + prompt
         new_tokens = int(params['new_tokens'])
-        outs = generate_fn(full_prompt, new_tokens)
+        n_outputs = int(params['weave_beam_width'])
+        outs = generate_fn(full_prompt, new_tokens, n=n_outputs)
         batch = []
         if prompt_node:
             timestamp = str(time.time())
