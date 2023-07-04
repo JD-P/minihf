@@ -115,6 +115,13 @@ get_scores_from_logits_llama = partial(
 )
 
 
+get_scores_from_logits_openllama = partial(
+    get_scores_from_logits,
+    pos_tokens=[4583, 6464, 9257, 12075, 27214],
+    neg_tokens=[697, 1398, 3976, 5258, 9332, 14928],
+)
+
+
 get_scores_from_logits_falcon = partial(
     get_scores_from_logits,
     pos_tokens=[4879, 5007, 5159, 9109, 31792, 41489],
@@ -249,6 +256,8 @@ def evaluate_outputs(evaluator, score_prompt_fn, texts):
         get_scores_from_logits = get_scores_from_logits_neox
     elif tokenizer.vocab["yes"] == 3582:
         get_scores_from_logits = get_scores_from_logits_llama
+    elif tokenizer.vocab["yes"] == 9257:
+        get_scores_from_logits = get_scores_from_logits_openllama
     elif tokenizer.vocab["yes"] == 9109:
         get_scores_from_logits = get_scores_from_logits_falcon
     else:
