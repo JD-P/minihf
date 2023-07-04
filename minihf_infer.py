@@ -1,165 +1,93 @@
 import os
 import json
+import time
 import random
 import hashlib
 import zipfile
+from functools import partial
 from flask import Flask, request, jsonify, make_response
 from tqdm import tqdm
 import torch
 import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
-from reward_head import RewardHead
+import peft
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import StoppingCriteria, StoppingCriteriaList
+from transformers import BitsAndBytesConfig
+from weave import weave_tree_search, generate_outputs, evaluate_outputs
+from weave import make_score_prompt_fn, TreeNode
+from lora_tune import lora_tune_evaluator
+from dataset import ZippedConversationsDataset
 
-tokenizer = AutoTokenizer.from_pretrained("EleutherAI/gpt-neox-20b")
-tokenizer.truncation_side = "left"
-model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-neox-20b", device_map="auto", load_in_8bit=True, torch_dtype=torch.float16)
-
-reward_tokenizer = AutoTokenizer.from_pretrained("EleutherAI/pythia-1b-deduped")
-reward_tokenizer.pad_token = reward_tokenizer.eos_token
-reward_tokenizer.truncation_side = "left"
-reward_model_base = AutoModelForCausalLM.from_pretrained("EleutherAI/pythia-1b-deduped",
-                                             device_map="auto",
-                                             load_in_8bit=True,
-                                             torch_dtype=torch.float16)
-reward_model_base.config.output_hidden_states = True
-reward_model_base.requires_grad_(False)
-
-reward_head = RewardHead()
-if os.path.exists("reward_heads/default.pkl"):
-    print("Loading reward head...")
-    # TODO: Safe tensors
-    reward_head_state = torch.load("reward_heads/default.pkl")["model"]
-    reward_head.load_state_dict(reward_head_state)
-reward_head.to("cuda")
-    
-def score_output(text):
-    with torch.cuda.amp.autocast():
-        inputs = reward_tokenizer([text] * 1, return_tensors="pt", truncation=True, max_length=4096).to("cuda")
-        try:
-            activations = reward_model_base(input_ids=inputs.input_ids)
-        except:
-            import pdb
-            pdb.set_trace()
-        penultimate_activation = activations["hidden_states"][-1]
-        embedding = torch.mean(penultimate_activation, 1)
-        score = reward_head(embedding)
-        return float(score)
-
-class StopOnTokens(StoppingCriteria):
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        stop_ids = [50278, 50279, 50277, 1, 0]
-        for stop_id in stop_ids:
-            if input_ids[0][-1] == stop_id:
-                return True
-        return False
-
-app = Flask(__name__)
-
-def generate_output(text, new_tokens):
-    inputs = tokenizer([text] * 1, return_tensors="pt", truncation=True, max_length=(4096 - new_tokens)).to("cuda")
-    input_length = inputs['input_ids'][0].shape[0]
-    tokens = model.generate(
-        inputs.input_ids,
-        min_new_tokens=2,
-        max_new_tokens=new_tokens,
-        temperature=0.95,
-        do_sample=True,
-        stopping_criteria=StoppingCriteriaList([StopOnTokens()]),
-        pad_token_id=0,
+def load_generator():
+    # model_name = "EleutherAI/gpt-neox-20b"
+    model_name = "EleutherAI/gpt-j-6B"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer.truncation_side = "left"
+    tokenizer.padding_side = "left"
+    tokenizer.pad_token = tokenizer.eos_token
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        device_map="auto",
+        # load_in_4bit=False,
+        load_in_8bit=True,
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
     )
-    return [tokenizer.decode(t, skip_special_tokens=True) for t in tokens[:, inputs.input_ids.shape[1] :]]
+    return tokenizer, model
 
-class TreeNode:
-    def __init__(self, parent, text):
-        if parent == None:
-            self.root = self
-            self.depth = 0
-        else:
-            self.root = parent.root
-            self.depth = parent.depth + 1
-        self.parent = parent
-        self.children = []
-        self.text = text
-        self.score = None
+def load_evaluator():
+    if os.path.exists("reward_models/default/"):
+        peft_model_name = "./reward_models/default/"
+        peft_config = peft.PeftConfig.from_pretrained(peft_model_name)
+        tokenizer = AutoTokenizer.from_pretrained(peft_config.base_model_name_or_path)
+        tokenizer.truncation_side = "left"
+        tokenizer.padding_side = "left"
+        tokenizer.pad_token = tokenizer.eos_token
+        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+        model_base = AutoModelForCausalLM.from_pretrained(
+            peft_config.base_model_name_or_path,
+            device_map="auto",
+            quantization_config=bnb_config,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
+        model = peft.PeftModel.from_pretrained(model_base, peft_model_name)
+    else:
+        model_name = "tiiuae/falcon-7b-instruct"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.truncation_side = "left"
+        tokenizer.padding_side = "left"
+        tokenizer.pad_token = tokenizer.eos_token
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            device_map="auto",
+            load_in_4bit=True,
+            # load_in_8bit=False,
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
+    return tokenizer, model
 
-    def branch_text(self, include_root=False):
-        branch_texts = [self.text]
-        node = self
-        while node.parent:
-            node = node.parent
-            branch_texts.append(node.text)
-        if include_root:
-            return " ".join(reversed(branch_texts))
-        else:
-            return " ".join(reversed(branch_texts[:-1]))
 
-    def serialize_branch(self):
-        branch_nodes = [{"depth": self.depth,
-                         "text": self.text,
-                         "score": self.score,
-                         }]
-        node = self
-        while node.parent:
-            node = node.parent
-            serial_node = {"depth": node.depth,
-                           "text": node.text,
-                           "score": node.score,
-                           }
-            branch_nodes.append(serial_node)
-        branch_nodes.reverse()
-        return branch_nodes
+def load_models():
+    global generator
+    generator = load_generator()
+    global evaluator
+    evaluator = load_evaluator()
+
+    global generate_fn
+    generate_fn = partial(generate_outputs, generator, batch_size=4)
+    global evaluate_fn
+    evaluate_fn = partial(evaluate_outputs, evaluator)
+
+load_models()
     
-    def add_child(self, text):
-        child = TreeNode(self, text)
-        self.children.append(child)
-        return child
-        
-    def nodes(self):
-        node_list = [self]
-        for child in self.children:
-            node_list.extend(child.nodes())
-        return node_list
-    
-        
-def weave_tree_search(tree: TreeNode, n: int, temperature: float = 1.0,
-                      budget: int = 32, gen_tokens: int = 32,
-                      expand_samples: int = 4, top_k: int = 4):
-    """Tree search algorithm to find the top_k branches for a n token
-    length completion given a fixed budget of gen_tokens length generations
-    to explore for the whole tree."""
-    # Make sure we've been given the root node
-    assert tree.parent == None
-    assert tree.root == tree
-    max_depth = n / gen_tokens
-    while budget: # Expand tree until budget is consumed
-        # Selection - Select the node to expand
-        eligible_nodes = [node for node in tree.nodes()
-                          if (node.depth < max_depth) and not node.children]
-        if not eligible_nodes: # Stop if all branches at max depth
-            break
-        node_scores = torch.tensor([node.score for node in eligible_nodes],
-                                   dtype=torch.float32)
-        node_scores = node_scores / temperature
-        choice = torch.multinomial(torch.softmax(node_scores, 0), 1)
-        chosen = eligible_nodes[choice]
-        # Expansion - Expand the selected node
-        chosen_branch_text = chosen.branch_text(include_root=True)
-        for i in range(expand_samples):
-            text = generate_output(chosen_branch_text, gen_tokens)[0]
-            text_score = score_output(chosen_branch_text + text)
-            new_child = TreeNode(chosen, text)
-            new_child.score = text_score
-            chosen.children.append(new_child)
-        budget -= expand_samples
-    nodes = tree.nodes()
-    nodes.sort(key=lambda x: x.score)
-    return nodes[-top_k:]
+app = Flask(__name__)
 
 @app.route("/generate", methods=['OPTIONS', 'POST'])
 def generate():
     if request.method == 'OPTIONS':
         response = make_response()
-        # TODO: Have the interface served by the server on GET request
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add("Access-Control-Allow-Headers", "*")
         response.headers.add("Access-Control-Allow-Methods", "*")
@@ -167,14 +95,32 @@ def generate():
     if request.method =='POST':
         params = request.get_json()
         prompt = params['prompt']
+        if 'prompt_node' in params:
+            prompt_node = params['prompt_node']
+        else:
+            prompt_node = False
         context = params['context']
         full_prompt = context + " " + prompt
         new_tokens = int(params['new_tokens'])
-        outs = generate_output(full_prompt, new_tokens)
+        n_outputs = int(params['weave_beam_width'])
+        outs = generate_fn(full_prompt, new_tokens, n=n_outputs)
         batch = []
+        if prompt_node:
+            timestamp = str(time.time())
+            id_ = hashlib.md5((prompt + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt":prompt,
+                          "text":"",
+                          "timestamp":timestamp,
+                          "nodes":[]})
         for out in outs:
-          id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
-          batch.append({"id":id_, "prompt": prompt, "text":out})
+            timestamp = str(time.time())
+            id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt": prompt,
+                          "text":out,
+                          "timestamp":timestamp,
+                          "nodes":[]})
         # TODO: Proper CORS
         response = jsonify(batch)
         response.headers.add("Access-Control-Allow-Origin", "*")
@@ -193,20 +139,62 @@ def weave():
         params = request.get_json()
         prompt = params['prompt']
         context = params['context']
+        if 'prompt_node' in params:
+            prompt_node = params['prompt_node']
+        else:
+            prompt_node = False
+        evaluation_prompt = params['evaluationPrompt']
         full_prompt = context + " " + prompt
-        root_score = score_output(full_prompt)
-        tree = TreeNode(None, full_prompt)
-        tree.score = root_score
-        new_tokens = int(params['new_tokens'])
-        outs = weave_tree_search(tree=tree, n=new_tokens, temperature=1.0,
-                                 budget=32, gen_tokens=32, expand_samples=4,
-                                 top_k=4)
+        tree = TreeNode(full_prompt)
+        score_prompt_fn = partial(make_score_prompt_fn, evaluator)
+        score_prompt_fn = partial(score_prompt_fn, evaluation_prompt)
+        # Falcon suffix
+        score_prompt_fn = partial(score_prompt_fn, "\n")
+        # Change name to avoid overwriting global baseline evaluate_fn partial
+        score_fn = partial(evaluate_fn, score_prompt_fn)
+        weave_param_defaults = {"weave_n_tokens":32, "weave_budget":72,
+                                "weave_round_budget":24, "weave_n_expand":8,
+                                "weave_beam_width":1, "weave_max_lookahead":3,
+                                "weave_temperature":0.25}
+        wp = {}
+        for key in weave_param_defaults.keys():
+            if key in params:
+                try:
+                    wp[key] = int(params[key])
+                except ValueError:
+                    wp[key] = float(params[key])
+            else:
+                wp[key] = weave_param_defaults[key]
+        branches = weave_tree_search(tree=tree,
+                                     generate_fn=partial(generate_fn,
+                                                         n_tokens=wp["weave_n_tokens"]),
+                                     evaluate_fn=score_fn,
+                                     budget=wp["weave_budget"],
+                                     round_budget=wp["weave_round_budget"],
+                                     n_expand=wp["weave_n_expand"],
+                                     beam_width=wp["weave_beam_width"],
+                                     max_lookahead=wp["weave_max_lookahead"],
+                                     temperature=wp["weave_temperature"])
         batch = []
-        for out in outs:
-            out_text = out.branch_text()
-            id_ = hashlib.md5(out_text.encode("UTF-8")).hexdigest()
-            batch.append({"id":id_, "prompt": prompt,
-                          "text":out_text, "nodes":out.serialize_branch()})
+        if prompt_node:
+            timestamp = str(time.time())
+            id_ = hashlib.md5((prompt + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt":prompt,
+                          "evaluationPrompt":evaluation_prompt,
+                          "text":"",
+                          "timestamp":timestamp,
+                          "nodes":[]})
+        for branch in branches:
+            branch_text = branch.branch_text()
+            timestamp = str(time.time())
+            id_ = hashlib.md5((branch_text + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt": prompt,
+                          "evaluationPrompt": evaluation_prompt,
+                          "text":branch_text,
+                          "timestamp":timestamp,
+                          "nodes":branch.serialize_branch()})
         # TODO: Proper CORS
         response = jsonify(batch)
         response.headers.add("Access-Control-Allow-Origin", "*")
@@ -224,85 +212,14 @@ def check_tokens():
     if request.method =='POST':    
         params = request.get_json()
         text = params['text']
+        tokenizer, model = generator
         inputs = tokenizer([text] * 1, return_tensors="pt", truncation=True, max_length=4096).to("cuda")
         # TODO: Proper CORS
         response = jsonify(inputs['input_ids'][0].shape[0])
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
-class ZippedConversationsDataSet:
-    def __init__(self, zip_file):
-        self.training_items = []
-        zip_ = zipfile.ZipFile(zip_file)
-        for file_ in zip_.namelist():
-            if file_.endswith("/"): # Skip directories
-                continue
-            if file_.startswith("__MACOSX"): # Mac OS X adds garbage to zips
-                continue
-            with zip_.open(file_) as infile:
-                conversation = json.load(infile)
-                for id_ in conversation["responseDict"]:
-                    branch = conversation["responseDict"][id_]
-                    if branch["rating"] == None: # Skip unrated entries
-                        continue
-                    text = ''
-                    label = 1 if branch["rating"] else 0
-                    for node in branch["nodes"]:
-                        text += node["text"]
-                        self.training_items.append((text, label))
-        random.shuffle(self.training_items)
-
-    def __len__(self):
-        return len(self.training_items)
-        
-    def __next__(self):
-        return random.sample(self.training_items, 1)[0]
-
-def train_reward_head(zip_file):
-    reward_head = RewardHead().to("cuda")
-    reward_head.train()
-
-    optimizer = torch.optim.Adam(reward_head.parameters(), lr=0.001)
-    criterion = torch.nn.BCEWithLogitsLoss()
-
-    losses = []
-
-    dataset = ZippedConversationsDataSet(zip_file)
-
-    batch_size = 4
-    steps = round(len(dataset) / 2)
-
-    pbar = tqdm(total=steps, desc="Training")
-
-    for i in range(steps):
-        batch = [next(dataset) for i in range(batch_size)]
-        batch_texts = [x[0] for x in batch]
-        batch_labels = torch.tensor([x[1] for x in batch]).to("cuda")
-        inputs = reward_tokenizer(batch_texts,
-                                  return_tensors="pt",
-                                  padding=True,
-                                  truncation=True,
-                                  max_length=4096).to("cuda")
-        activations = reward_model_base(input_ids=inputs.input_ids)
-        penultimate_activations = activations["hidden_states"][-1].float()
-        embeddings = torch.sum(penultimate_activations * inputs.attention_mask[:, :, None], 1)
-        embeddings = embeddings / torch.sum(inputs.attention_mask, 1)[:, None]
-        optimizer.zero_grad()
-        with torch.cuda.amp.autocast():
-            outs = reward_head(embeddings).squeeze(1)
-        loss = criterion(outs, batch_labels.half())
-        loss.backward()
-        losses.append(loss.item())
-        optimizer.step()
-        pbar.update(1)
-        avgloss = sum(losses) / len(losses)
-        pbar.set_description(f"Training (Train | Loss: {round(avgloss,5)})")
-    # TODO: Safe tensors
-    if not os.path.exists("reward_heads/"):
-        os.mkdir("reward_heads/")
-    torch.save({'model':reward_head.state_dict(), 'optimizer':optimizer.state_dict()},
-               "reward_heads/default.pkl")
-
+    
 @app.route("/train-reward-model", methods=["OPTIONS", "POST"])
 def train_reward_model():
     if request.method == 'OPTIONS':
@@ -313,10 +230,20 @@ def train_reward_model():
         return response
     if request.method =='POST':
         file_ = request.files['file']
-        train_reward_head(file_)
-        # TODO: Safe tensors
-        reward_head_state = torch.load("reward_heads/default.pkl")["model"]
-        reward_head.load_state_dict(reward_head_state)
+        # Deload models
+        global generator
+        del(generator)
+        global evaluator
+        del(evaluator)
+        global generate_fn
+        del(generate_fn)
+        global evaluate_fn
+        del(evaluate_fn)
+        torch.cuda.empty_cache()
+        data = ZippedConversationsDataset(file_)
+        lora_tune_evaluator(data)
+        torch.cuda.empty_cache()
+        load_models()
         response = make_response("training complete")
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
