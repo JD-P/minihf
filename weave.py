@@ -15,7 +15,9 @@ import random
 from rich import print as rprint
 from rich.traceback import install
 import torch
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers.generation.streamers import BaseStreamer
 
 
 def logsumexp(xs):
@@ -48,6 +50,30 @@ def log1pexp(a):
 
 def gumbelvariate(loc=0.0, scale=1.0):
     return loc - scale * math.log(random.expovariate(1))
+
+
+class ProgressBarStreamer(BaseStreamer):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.kwargs = kwargs
+        self.kwargs.setdefault("unit", "tok")
+        self.next_tokens_are_prompt = True
+        self.pbar = None
+
+    def __enter__(self):
+        self.pbar = tqdm(**self.kwargs)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.pbar.close()
+
+    def put(self, value):
+        if not self.next_tokens_are_prompt:
+            self.pbar.update(value.numel())
+        self.next_tokens_are_prompt = False
+
+    def end(self):
+        self.next_tokens_are_prompt = True
 
 
 def load_generator():
@@ -168,22 +194,24 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
     ).to("cuda")
 
     outputs = []
-    for i in range(0, n, batch_size):
-        n_batch = min(batch_size, n - i)
-        input_ids = inputs.input_ids.tile((n_batch, 1))
-        attention_mask = inputs.attention_mask.tile((n_batch, 1))
-        outputs_batch = model.generate(
-            input_ids,
-            attention_mask=attention_mask,
-            do_sample=True,
-            temperature=0.9,
-            top_k=50,
-            repetition_penalty=1.02,
-            min_new_tokens=n_tokens,
-            max_new_tokens=n_tokens,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-        outputs.append(outputs_batch)
+    with ProgressBarStreamer(total=n_tokens * n) as pbar:
+        for i in range(0, n, batch_size):
+            n_batch = min(batch_size, n - i)
+            input_ids = inputs.input_ids.tile((n_batch, 1))
+            attention_mask = inputs.attention_mask.tile((n_batch, 1))
+            outputs_batch = model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                do_sample=True,
+                temperature=0.9,
+                top_k=50,
+                repetition_penalty=1.02,
+                min_new_tokens=n_tokens,
+                max_new_tokens=n_tokens,
+                pad_token_id=tokenizer.eos_token_id,
+                streamer=pbar,
+            )
+            outputs.append(outputs_batch)
 
     outputs = torch.cat(outputs)
     out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in outputs]
