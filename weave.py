@@ -398,7 +398,7 @@ def weave_tree_search(
 
     print("====== Generating with Weave ======")
     if tree.logit == float("-inf"):
-        root_score = evaluate_fn([tree.text])[0]
+        root_score = evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))])[0]
         tree.set_score(root_score, temperature)
     beam = [tree]
     round = 0
