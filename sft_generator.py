@@ -76,7 +76,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch-size", type=int, default=4, help="microbatch size")
     parser.add_argument(
-        "--bits", type=int, choices=[4, 8, 16], default=16, help="quantization bits"
+        "--bits", type=int, choices=[4, 8, 16], default=4, help="quantization bits"
     )
     parser.add_argument("--pretraining-dataset",
                         default="togethercomputer/RedPajama-Data-1T-Sample",
