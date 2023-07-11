@@ -182,14 +182,16 @@ def main():
             for i in range(64):
                 pretraining_texts.append(next(pt_iter))
             pretraining_texts = [i[0] for i in pretraining_texts]
-            pretraining_preprocessed += batch_to_tensors(pretraining_texts,
-                                                         tokenizer,
-                                                         args.context)
-            pretraining_tokens = (sum([len(i[0])
-                                       for i in pretraining_preprocessed]) * args.context)
+            pretraining_preprocessed.append(batch_to_tensors(pretraining_texts,
+                                                             tokenizer,
+                                                             args.context))
+            pretraining_tokens = sum([i[0].shape[0] * i[0].shape[1]
+                                      for i in pretraining_preprocessed])
 
-    preprocessed = (torch.cat((user_preprocessed[0], pretraining_preprocessed[0])),
-                    torch.cat((user_preprocessed[1], pretraining_preprocessed[1])))
+    pt_inputs = torch.cat([i[0] for i in pretraining_preprocessed])
+    pt_masks = torch.cat([i[1] for i in pretraining_preprocessed])
+    preprocessed = (torch.cat((user_preprocessed[0], pt_inputs)),
+                    torch.cat((user_preprocessed[1], pt_masks)))
     preprocessed = zip([i for i in preprocessed[0]],
                        [i for i in preprocessed[1]])
     preprocessed = [i for i in preprocessed]
