@@ -91,7 +91,7 @@ foundation model such as [GPT-J](https://huggingface.co/EleutherAI/gpt-j-6b),
 Furthermore each model has two kinds of tuning, self-supervised finetuning (SFT) and
 reinforcement learning from AI feedback (RLAIF).
 
-![A diagram of the training flow chart for the models and tuning scripts in MiniHF](minihf_training_diagram.png)
+![A diagram of the training flow chart for the models and tuning scripts in MiniHF](static/minihf_training_diagram.png)
 
 ### Preparing The Tuning Dataset
 
