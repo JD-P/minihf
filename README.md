@@ -112,7 +112,7 @@ will soon. In the meantime you can make your own evaluator on bulk pretraining d
 with the `sft_evaluator.py` script:
 
 ```
-python make_evaluator.py --output-dir example
+python sft_evaluator.py --output-dir example
 ```
 
 ### RLAIF Tuning The Generator
