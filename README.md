@@ -11,6 +11,9 @@ To make this possible MiniHF provides several powerful features:
 * Lightweight web interface and inference server that lets you easily branch your
 session with the model into multiple completion chains and pick the best ones
 
+* Make your own feedback dataset by writing with local
+language models such as StableLM and NeoX 20b.
+
 * A monte carlo tree search (MCTS) based inference algorithm, Weave, which rejection
 samples from the model to improve output quality
 
@@ -21,19 +24,6 @@ reward LoRa used for the tree search on your own custom dataset
 learning from AI feedback (RLAIF)
 
 * Easy install with minimal dependencies
-
-## Features
-
-- **Human Feedback**: Make your own feedback dataset by writing with local
-language models such as StableLM and NeoX 20b.
-
-- **Train A Reward Head**: Use your dataset to train a reward head on text embeddings.
-The reward head allows you to automatically give your opinion on pieces of text.
-
-- **AutoLoom**: Use your reward head to search over many possible completions
-in the vein of [Janus's loom](https://generative.ink/posts/loom-interface-to-the-multiverse/).
-The user does not have to manage the tree themselves, MiniHF's weave algorithm
-does it for you. Simply pick a canonical entry from the top k nodes found by weave.
 
 ## Setup
 
