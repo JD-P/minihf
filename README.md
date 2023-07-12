@@ -1,9 +1,26 @@
-# MiniHF
+![vector art logo of the brain patterned in the style of a pictorial history of
+Portuguese textiles, painted in the 1700s. With the logotext "MiniHF"](static/minihf_logo_text.png)
 
-MiniHF intends to be a complete human feedback pipeline for the StableLM
-language models with minimal complication and dependencies. It will allow
-the user to create a document context and prompt within it. Currently only
-partially implemented (including the better StableLM, which is forthcoming).
+MiniHF is an inference, human preference data collection, and fine-tuning tool
+for local language models. It is intended to help the user develop their prompts
+into full models. Normally when we prompt a language model we're forced to think
+in that models latent space. MiniHF lets you go the other direction: Imagine the
+ideal context in which your prompt could take place and then add it to the model.
+To make this possible MiniHF provides several powerful features:
+
+* Lightweight web interface and inference server that lets you easily branch your
+session with the model into multiple completion chains and pick the best ones
+
+* A monte carlo tree search (MCTS) based inference algorithm, Weave, which rejection
+samples from the model to improve output quality
+
+* The ability to finetune both the underlying generator LoRa and the evaluator
+reward LoRa used for the tree search on your own custom dataset
+
+* Easy bootstrapping of new document contexts and models using reinforcement
+learning from AI feedback (RLAIF)
+
+* Easy install with minimal dependencies
 
 ## Features
 
@@ -60,11 +77,57 @@ source env_minihf/bin/activate
 flask --app minihf_infer run
 ```
 
-## Tuning Dataset
+## Tuning Models
 
-The tuning dataset should consist of a zip file containing one or more json
-conversations exported from MiniHF. You make this zip file yourself and then
-upload it to the MiniHF inference server to tune the reward head.
+MiniHF lets you tune two model types, both of which are LoRa tunes on an underlying
+foundation model such as [GPT-J](https://huggingface.co/EleutherAI/gpt-j-6b),
+[NeoX](https://github.com/EleutherAI/gpt-neox),
+[OpenLlama](https://huggingface.co/openlm-research/open_llama_7b_v2), or [falcon-40b](https://huggingface.co/tiiuae/falcon-40b):
+
+1. **Generator LoRa** - Generates the text that the user or Weave algorithm evaluates.
+
+2. **Evaluator LoRa** - Reward model that selects between branches in the Weave tree search. 
+
+Furthermore each model has two kinds of tuning, self-supervised finetuning (SFT) and
+reinforcement learning from AI feedback (RLAIF).
+
+![A diagram of the training flow chart for the models and tuning scripts in MiniHF](minihf_training_diagram.png)
+
+### Preparing The Tuning Dataset
+
+The tuning dataset should consist of a zip file containing one or more plaintext
+files or json conversations exported from MiniHF. Because the model might not be
+adapted to your style or document context yet, it might be more efficient to write
+out the first drafts of what you want in text files and then start using MiniHF
+after you've tuned the generator on them.
+
+### Tuning The Generator
+
+Once you have the tuning dataset it's easy to make a generator LoRa from it with
+the `sft_generator.py` script:
+
+```
+python3 sft_generator.py --user-dataset data.zip --model "EleutherAI/gpt-j-6b" --output example
+```
+
+Keep in mind that if your data is under 10 megabytes of tokens or so, other bulk
+pretraining data [from the RedPajama
+dataset](https://huggingface.co/datasets/togethercomputer/RedPajama-Data-1T-Sample)
+will be used to prevent overfitting.
+
+### Tuning The Evaluator
+
+MiniHF doesn't currently support using the user data to tune the evaluator, but it
+will soon. In the meantime you can make your own evaluator on bulk pretraining data
+with the `sft_evaluator.py` script:
+
+```
+python make_evaluator.py --output-dir example
+```
+
+### RLAIF Tuning The Generator
+
+Coming soon.
 
 ## Philosophy
 
@@ -169,10 +232,10 @@ from each generation. The user repeatedly sorts through the branches to choose
 the best one and iteratively assemble a document. While this approach does make
 the model stronger, it involves a heavy cognitive burden from the user and an
 even heavier UX challenge for the developer. How should all these trees be
-represented? We believe the UX challenge is hard because it's unnatural for
-people to be managing the branches at all.
+represented? We believe the UX challenge is hard because managing the branches
+is unnatural to people's intuition.
 
-Instead of manual branch management MiniHF does a tree search in inference using
+In addition to manual branch management MiniHF does a tree search in inference using
 the same reward model that ranks the data during finetuning. If you already have
 a reward model that tells you the goodness of a response you can reuse it for
 inference too. This provides a faster feedback loop than only being able to tune
@@ -276,12 +339,6 @@ pipeline based on an ensemble of evaluator principle prompts.
 ## Planned Features
 
 In the future we plan to add more features to MiniHF, including:
-
-- **Weave Hyperparameters**: Tune the parameters of the weave algorithm to tailor
-your experience to your needs.
-
-- **Tune The Base Model**: Use lora tuning to put your writing with MiniHF
-into the underlying base model.
 
 - **Bayesian Learning**: Collect feedback on the least redundant items using Bayesian active learning.
 
