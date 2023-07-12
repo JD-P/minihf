@@ -46,7 +46,7 @@ def load_models():
     global evaluator, evaluate_fn, generator, generate_fn
     evaluator = generator = load_generator_evaluator()
 
-    generate_fn = generator[1].disable_adapter()(partial(generate_outputs, generator, batch_size=4))
+    generate_fn = generator[1].disable_adapter()(partial(generate_outputs, generator, batch_size=1))
     evaluate_fn = partial(evaluate_outputs, evaluator)
 
 load_models()
