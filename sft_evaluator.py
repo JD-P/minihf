@@ -130,10 +130,17 @@ def main():
 
     # Dataset helper functions
     def combine_flan(row):
-        return row["inputs"] + "<|end|>" + row["targets"]
+        return row["inputs"] + "<|end|>" + row["targets"] + tokenizer.eos_token
 
     def combine_dolly(row):
-        return row["context"] + "\n\n" + row["instruction"] + "<|end|>" + row["response"]
+        return (
+            row["context"]
+            + "\n\n"
+            + row["instruction"]
+            + "<|end|>"
+            + row["response"]
+            + tokenizer.eos_token
+        )
 
     def to_tokens(combine_fn, row):
         return tokenizer(combine_fn(row))

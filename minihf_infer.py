@@ -19,7 +19,7 @@ from lora_tune import lora_tune_evaluator
 from dataset import ZippedConversationsDataset
 
 def load_generator_evaluator():
-    evaluator_adapter_name = "./evaluator_1"
+    evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
     peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
     model_name = peft_config.base_model_name_or_path
     tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
