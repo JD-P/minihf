@@ -25,6 +25,8 @@ learning from AI feedback (RLAIF)
 
 * Easy install with minimal dependencies
 
+If you want to discuss MiniHF with other users, [we have a discord server](https://discord.gg/Tfa6MabKVF).
+
 ## Setup
 
 ### DataCrunch
