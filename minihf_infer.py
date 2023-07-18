@@ -10,7 +10,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import peft
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from transformers import StoppingCriteria, StoppingCriteriaList
 from transformers import BitsAndBytesConfig
 from weave import weave_tree_search, generate_outputs, evaluate_outputs
@@ -18,66 +18,35 @@ from weave import make_score_prompt_fn, TreeNode
 from lora_tune import lora_tune_evaluator
 from dataset import ZippedConversationsDataset
 
-def load_generator():
-    # model_name = "EleutherAI/gpt-neox-20b"
-    model_name = "EleutherAI/gpt-j-6B"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+def load_generator_evaluator():
+    evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
+    peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
+    model_name = peft_config.base_model_name_or_path
+    tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
     tokenizer.pad_token = tokenizer.eos_token
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+    )
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map="auto",
-        # load_in_4bit=False,
-        load_in_8bit=True,
+        quantization_config=bnb_config,
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
+    model = peft.PeftModel.from_pretrained(model, evaluator_adapter_name)
     return tokenizer, model
-
-def load_evaluator():
-    if os.path.exists("reward_models/default/"):
-        peft_model_name = "./reward_models/default/"
-        peft_config = peft.PeftConfig.from_pretrained(peft_model_name)
-        tokenizer = AutoTokenizer.from_pretrained(peft_config.base_model_name_or_path)
-        tokenizer.truncation_side = "left"
-        tokenizer.padding_side = "left"
-        tokenizer.pad_token = tokenizer.eos_token
-        bnb_config = BitsAndBytesConfig(load_in_8bit=True)
-        model_base = AutoModelForCausalLM.from_pretrained(
-            peft_config.base_model_name_or_path,
-            device_map="auto",
-            quantization_config=bnb_config,
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        )
-        model = peft.PeftModel.from_pretrained(model_base, peft_model_name)
-    else:
-        model_name = "tiiuae/falcon-7b-instruct"
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        tokenizer.truncation_side = "left"
-        tokenizer.padding_side = "left"
-        tokenizer.pad_token = tokenizer.eos_token
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map="auto",
-            load_in_4bit=True,
-            # load_in_8bit=False,
-            torch_dtype=torch.float16,
-            trust_remote_code=True,
-        )
-    return tokenizer, model
-
 
 def load_models():
-    global generator
-    generator = load_generator()
-    global evaluator
-    evaluator = load_evaluator()
+    global evaluator, evaluate_fn, generator, generate_fn
+    evaluator = generator = load_generator_evaluator()
 
-    global generate_fn
-    generate_fn = partial(generate_outputs, generator, batch_size=4)
-    global evaluate_fn
+    generate_fn = generator[1].disable_adapter()(partial(generate_outputs, generator, batch_size=1))
     evaluate_fn = partial(evaluate_outputs, evaluator)
 
 load_models()
@@ -148,8 +117,8 @@ def weave():
         tree = TreeNode(full_prompt)
         score_prompt_fn = partial(make_score_prompt_fn, evaluator)
         score_prompt_fn = partial(score_prompt_fn, evaluation_prompt)
-        # Falcon suffix
-        score_prompt_fn = partial(score_prompt_fn, "\n")
+        # MiniHF evaluator LoRA suffix
+        score_prompt_fn = partial(score_prompt_fn, "<|end|>")
         # Change name to avoid overwriting global baseline evaluate_fn partial
         score_fn = partial(evaluate_fn, score_prompt_fn)
         weave_param_defaults = {"weave_n_tokens":32, "weave_budget":72,

@@ -32,7 +32,7 @@ nvidia-cusparse-cu11==11.7.4.91
 nvidia-nccl-cu11==2.14.3
 nvidia-nvtx-cu11==11.7.91
 packaging==23.1
-peft==0.3.0
+peft==0.4.0
 psutil==5.9.5
 Pygments==2.15.1
 PyYAML==6.0
