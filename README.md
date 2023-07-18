@@ -46,7 +46,6 @@ Once you're in clone the repo and change directories to it:
 ```
 git clone https://github.com/JD-P/minihf.git
 cd minihf
-git checkout eval
 ```
 
 Then run:
