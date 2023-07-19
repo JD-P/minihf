@@ -4,6 +4,7 @@ import time
 import random
 import hashlib
 import zipfile
+from contextlib import contextmanager
 from functools import partial
 from flask import Flask, request, jsonify, make_response
 from tqdm import tqdm
@@ -18,8 +19,22 @@ from weave import make_score_prompt_fn, TreeNode
 from lora_tune import lora_tune_evaluator
 from dataset import ZippedConversationsDataset
 
+@contextmanager
+def set_adapter(model, adapter_name):
+    old_adapter_name = model.active_adapter
+    try:
+        if adapter_name is not None:
+            model.set_adapter(adapter_name)
+            yield model
+        else:
+            with model.disable_adapter():
+                yield model
+    finally:
+        model.set_adapter(old_adapter_name)
+
 def load_generator_evaluator():
     evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
+    generator_adapter_name = ""
     peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
     model_name = peft_config.base_model_name_or_path
     tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
@@ -39,15 +54,18 @@ def load_generator_evaluator():
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
-    model = peft.PeftModel.from_pretrained(model, evaluator_adapter_name)
+    model = peft.PeftModel.from_pretrained(model, evaluator_adapter_name, "evaluator")
+    if generator_adapter_name:
+        model.load_adapter(generator_adapter_name, "generator")
     return tokenizer, model
 
 def load_models():
     global evaluator, evaluate_fn, generator, generate_fn
     evaluator = generator = load_generator_evaluator()
 
-    generate_fn = generator[1].disable_adapter()(partial(generate_outputs, generator, batch_size=1))
-    evaluate_fn = partial(evaluate_outputs, evaluator)
+    adapter_name = "generator" if "generator" in generator[1].peft_config else None
+    generate_fn = set_adapter(generator[1], adapter_name)(partial(generate_outputs, generator, batch_size=1))
+    evaluate_fn = set_adapter(evaluator[1], "evaluator")(partial(evaluate_outputs, evaluator))
 
 load_models()
     
