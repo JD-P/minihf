@@ -131,6 +131,11 @@ itself according to a value set without compromising those values. The evaluator
 is frozen while the generator is trained, preventing self updating from collapsing
 to a positive feedback loop.
 
+Please note that the RLAIF tuning is still not robust, and if you tune too long the
+model converges to saying 'yes' with the current Yes/No zero-shot evaluator setup
+the model uses. This problem can hopefully be mitigated and then properly solved
+in future releases.
+
 See the hermes directory for an example constitution and prompt set. In a future
 release you'll be able to use your MiniHF user dataset as a prompt database in
 addition to text files.
