@@ -118,7 +118,22 @@ python sft_evaluator.py --output-dir example
 
 ### RLAIF Tuning The Generator
 
-Coming soon.
+Once you've finetuned your generator LoRa to narrow the hypothesis space (this
+step is optional, you can RL tune a base model directly to bootstrap if you don't have
+any training data) you can use RLAIF tuning to distill goals from the base models
+latent space into your generator [using a value constitution](https://arxiv.org/abs/2212.08073).
+
+`python rlaif_generator.py --resume hermes --output-path hermes_rl --kl-weight 1.0 --constitution hermes/hermes_constitution.txt --prompts hermes/hermes_prompts.txt --length 256 --batch-size 2 --grad-accum-steps 8`
+
+Because both the generator and evaluator are separate LoRa models, it becomes
+possible for the base model to simultaneously hold two perspectives and update
+itself according to a value set without compromising those values. The evaluator
+is frozen while the generator is trained, preventing self updating from collapsing
+to a positive feedback loop.
+
+See the hermes directory for an example constitution and prompt set. In a future
+release you'll be able to use your MiniHF user dataset as a prompt database in
+addition to text files.
 
 ## Philosophy
 
