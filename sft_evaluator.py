@@ -2,7 +2,10 @@
 
 """Train a MiniHF evaluator model (instruction tuned LoRA)."""
 
+import random
 import argparse
+import json
+import zipfile
 from functools import partial
 import os
 from pathlib import Path
@@ -23,6 +26,58 @@ from tqdm import tqdm
 
 print = tqdm.external_write_mode()(print)
 
+def make_score_prompt_fn(tokenizer, template, suffix, prompt, response):
+    template_toks = tokenizer(template,
+                              return_tensors="pt",
+                              padding=True,
+                              truncation=True,
+                              max_length=2045)
+    template_length = len(template_toks.input_ids[0])
+    response_toks = tokenizer(response,
+                              return_tensors="pt",
+                              padding=True,
+                              truncation=True,
+                              max_length=2045 - template_length)
+    response_length = len(response_toks.input_ids[0])
+    prompt_toks = tokenizer(prompt,
+                            return_tensors="pt",
+                            padding=True,
+                            truncation=True,
+                            max_length=2045 - template_length - response_length)
+    response = tokenizer.decode(response_toks.input_ids[0], skip_special_tokens=True)
+    prompt = tokenizer.decode(prompt_toks.input_ids[0], skip_special_tokens=True)
+    
+    return template.format(prompt = prompt, response = response) + suffix
+
+class ZippedConversationsDataset:
+    def __init__(self, zip_file, tokenizer, context=2048):
+        self.training_items = []
+        zip_ = zipfile.ZipFile(zip_file)
+        for file_ in zip_.namelist():
+            if file_.endswith("/"): # Skip directories
+                continue
+            if file_.startswith("__MACOSX"): # Mac OS X adds garbage to zips
+                continue
+            with zip_.open(file_) as infile:
+                conversation = json.load(infile)
+                score_prompt_fn = partial(make_score_prompt_fn, tokenizer)
+                for id_ in conversation["responseDict"]:
+                    branch = conversation["responseDict"][id_]
+                    if branch["rating"] == None: # Skip unrated entries
+                        continue
+                    label = "Yes" if branch["rating"] else "No"
+                    # Don't reuse score_prompt_fn or partials gum up loop
+                    score_prompt_fn_ = partial(score_prompt_fn, branch["evaluationPrompt"])
+                    score_prompt_fn_ = partial(score_prompt_fn_, "<|end|>")
+                    text = score_prompt_fn_(branch["prompt"], branch["text"]) + label
+                    self.training_items.append(text)
+        random.shuffle(self.training_items)
+
+    def __len__(self):
+        return len(self.training_items)
+        
+    def __next__(self):
+        return random.sample(self.training_items, 1)[0]
 
 def batch_to_tensors(batch, device="cpu"):
     batch = [item["input_ids"] for item in batch]
@@ -59,6 +114,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    parser.add_argument("--user-dataset", type=str, help="zipped user dataset")
     parser.add_argument("--batch-size", type=int, default=4, help="batch size per process")
     parser.add_argument("--examples", type=int, default=100000, help="train for n examples")
     parser.add_argument("--output-dir", type=Path, default="evaluator", help="output directory")
@@ -142,6 +198,9 @@ def main():
             + tokenizer.eos_token
         )
 
+    def combine_user(text):
+        return text + tokenizer.eos_token
+    
     def to_tokens(combine_fn, row):
         return tokenizer(combine_fn(row))
 
@@ -153,11 +212,28 @@ def main():
     with accelerator.main_process_first():
         dataset_1 = datasets.load_dataset("Muennighoff/flan", streaming=True)
         dataset_2 = datasets.load_dataset("databricks/databricks-dolly-15k", streaming=True)
+        if args.user_dataset:
+            dataset_3 = ZippedConversationsDataset(args.user_dataset,
+                                                   tokenizer,
+                                                   context=max_len)
     accelerator.wait_for_everyone()
     dataset_1 = dataset_1["train"].map(partial(to_tokens, combine_flan))
     dataset_2 = dataset_2["train"].map(partial(to_tokens, combine_dolly))
+    if args.user_dataset:
+        def user_dataset_gen():
+            token_combine = partial(to_tokens, combine_user)
+            for i in map(token_combine, dataset_3.training_items):
+                yield {"input_ids": i['input_ids'],
+                       "attention_mask": i['attention_mask'],
+                       "token_type_ids": i["token_type_ids"],}
+        user_dataset = datasets.IterableDataset.from_generator(user_dataset_gen)
+        tuning_sets = [dataset_1, dataset_2, user_dataset]
+        tuning_weights = [0.85, 0.1, 0.05]
+    else:
+        tuning_sets = [dataset_1, dataset_2]
+        tuning_weights = [0.9, 0.1]
     dataset = (
-        datasets.interleave_datasets([dataset_1, dataset_2], probabilities=[0.9, 0.1])
+        datasets.interleave_datasets(tuning_sets, probabilities=tuning_weights)
         .filter(exclude_too_long)
         .shuffle(seed=dataset_seed)
         .select_columns(["input_ids"])
