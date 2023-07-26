@@ -32,7 +32,7 @@ class ZippedConversationsDataset:
                 continue
             with zip_.open(file_) as infile:
                 if file_.endswith(".txt"):
-                    self.training_items.append(infile.read())
+                    self.training_items.append(infile.read().decode('UTF-8'))
                 else:
                     conversation = json.load(infile)
                     for id_ in conversation["responseDict"]:
