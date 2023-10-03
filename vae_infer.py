@@ -441,9 +441,9 @@ def main():
                     output_ids = router.generate(z * 0.5 + prompt_embed * 0.5,
                                                  context_ids,
                                                  context_mask,
-                                                 256,
+                                                 128,
                                                  tau=0.9)
-                    intermediate_embed_ids = output_ids[:,-128:]
+                    intermediate_embed_ids = output_ids[:,-64:]
                     intermediate_embed_mask = context_mask.new_ones(
                         [1, intermediate_embed_ids.shape[1]]
                     )
@@ -452,11 +452,11 @@ def main():
                 output_ids = router.generate((sum(embeds) / n_avg * 0.7) + prompt_embed * 0.3,
                                              context_ids,
                                              context_mask,
-                                             256,
+                                             128,
                                              tau=0.9)
                 context_ids = torch.cat([context_ids, embed_ids], dim=1)
                 context_mask = torch.cat([context_mask, embed_mask], dim=1)
-                embed_ids = output_ids[:,-256:-128]
+                embed_ids = output_ids[:,-128:-64]
                 embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
             out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
             return out_texts    
