@@ -79,7 +79,7 @@ def disable_causal_mask_mistral():
         yield
     finally:
         modeling._make_sliding_window_causal_mask = decoder_fn
-
+        
 
 class VAEComponent(nn.Module):
     def __init__(self, d_model, z_dim):
@@ -196,6 +196,7 @@ class VAERouter(nn.Module):
     def save_pretrained(self, path):
         path = Path(path)
         self.model.save_pretrained(path, safe_serialization=True)
+        safetorch.save_file(self.model.state_dict(), path / "router.safetensors")
         safetorch.save_file(self.vae.vae.state_dict(), path / "vae.safetensors")
 
     def load_pretrained(self, path, is_trainable=False):
@@ -274,7 +275,6 @@ def batched(iterable, n):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preprocessed", type=str, help="preprocessed dataset dir")
     parser.add_argument("--batch-size", type=int, default=4, help="microbatch size")
     parser.add_argument("--dropout", type=float, default=0.0, help="dropout rate")
     parser.add_argument("--epochs", type=int, default=1, help="number of epochs")
@@ -296,7 +296,6 @@ def main():
     )
     parser.add_argument("--context", type=int, default=2048, help="context window length")
     parser.add_argument("--vae-context", type=int, default=128, help="vae embed context")
-    parser.add_argument("--output", type=Path, required=True, help="path to save adapter")
     parser.add_argument("--rank", type=int, default=32, help="the lora rank")
     parser.add_argument("--save-every", type=int, default=1000, help="save every n steps")
     parser.add_argument("--start-from", type=str, help="start from existing lora")
@@ -356,7 +355,7 @@ def main():
         vae_model.vae.requires_grad_(False)
         vae_model.vae.w_d.requires_grad_()
         router = VAERouter(base_model_peft, vae_model, device, peft_config)
-        # router.load_pretrained(args.start_from, is_trainable=True)
+        router.load_pretrained(args.start_from, is_trainable=True)
     accelerator.wait_for_everyone()
 
     router.train()
@@ -368,145 +367,164 @@ def main():
         router.model.print_trainable_parameters()
 
     router.model.set_adapter("router")
-    opt = optim.Adam(router.model.parameters(),
-                     lr=args.lr,
-                     betas=(0.9, 0.99))
-
-    input_ids_all, attention_mask_all = [], []
-    for shard_name in os.listdir(args.preprocessed):
-        data_path = os.path.join(args.preprocessed, shard_name)
-        data_file = safetorch.load_file(data_path)
-        input_ids = torch.split(data_file["input_ids"], args.context, dim=1)
-        attention_mask = torch.split(data_file["attention_mask"], args.context, dim=1)
-        if input_ids[-1].shape[1] != args.context:
-            input_ids = input_ids[:-1]
-            attention_mask = attention_mask[:-1]
-        input_ids_all.extend(input_ids)
-        attention_mask_all.extend(attention_mask)
-    del data_file, input_ids, attention_mask
-    input_ids_all = torch.cat(input_ids_all)
-    attention_mask_all = torch.cat(attention_mask_all)
-    valid_indices = attention_mask_all.sum(dim=1) == args.context
-    input_ids_all = input_ids_all[valid_indices]
-    attention_mask_all = attention_mask_all[valid_indices]
-    del valid_indices
-
-    preprocessed = data.TensorDataset(input_ids_all, attention_mask_all)
-
-    dataloader = data.DataLoader(
-        preprocessed,
-        batch_size=args.batch_size,
-        shuffle=True,
-        drop_last=True,
-    )
-
-    router, opt, dataloader = accelerator.prepare(router, opt, dataloader)
-
-    i = 0
-    kl_sched = cosine_warmup(5000, 0.01)
-
-    @torch.no_grad()
-    @torch.cuda.amp.autocast(dtype=torch.bfloat16)
-    def demo(model, input_ids, attention_mask, n_tokens):
-        bs = min(input_ids.shape[0], 2)
-        n_outputs = 2
-        tau = 0.8
-
-        index = random.randrange(args.context - (args.vae_context * 2))
-        context_ids = input_ids[:,:index]
-        context_mask = attention_mask[:,:index]
-        embed_ids = input_ids[:,index:index + args.vae_context]
-        embed_mask = attention_mask[:,index:index + args.vae_context]
-        target_ids = input_ids[:,index:index + args.vae_context * 2]
-        target_mask = input_ids[:,index:index + args.vae_context * 2]
-
-        in_texts = [tokenizer.decode(toks, skip_special_tokens=True)
-                    for toks in torch.cat([context_ids, embed_ids], dim=1)]
-        mean = model.encode(embed_ids[:bs], embed_mask[:bs])
-        z = model.vae.vae.sample(mean.repeat_interleave(n_outputs, 0), tau=tau)
-        context_ids = context_ids[:bs].repeat_interleave(n_outputs, 0)
-        context_mask = context_mask[:bs].repeat_interleave(n_outputs, 0)
-        # empty = z.new_zeros([z.shape[0], 0], dtype=torch.long)
-        output_ids = model.generate(z, context_ids, context_mask, n_tokens, tau=tau)
-        out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in output_ids]
-        out_texts = list(batched(out_texts, n_outputs))
-        print("======")
-        for in_text, out_batch in zip(in_texts, out_texts):
-            print("=== Input ===")
-            print(in_text)
-            print("=== Outputs ===")
-            for i, out_text in enumerate(out_batch):
-                print(out_text)
-                if i < len(out_batch) - 1:
-                    print("===")
-        print("======")
-
-    def save():
-        print0(f"### Saving model to {args.output}", file=sys.stderr)
-        accelerator.wait_for_everyone()
-        if accelerator.is_main_process:
-            unwrapped_model = accelerator.unwrap_model(router)
-            unwrapped_model.save_pretrained(args.output)
-            state_obj = {"step": i, "last_kl_weight": kl_sched(i)}
-            with open(args.output / "state.json", "w") as f:
-                json.dump(state_obj, f)
 
     accelerator.wait_for_everyone()
-    for epoch in trange(args.epochs, disable=not is_main):
-        for input_ids, attention_mask in tqdm(dataloader, disable=not is_main):
-            input_ids = input_ids.long()
-            if is_main and i % 100 == 0:
-                demo(accelerator.unwrap_model(router), input_ids, attention_mask, args.vae_context)
-                pass
-            with accelerator.accumulate(router):
-                index = random.randrange(args.context - (args.vae_context * 2))
-                context_ids = input_ids[:,:index]
-                context_mask = attention_mask[:,:index]
-                embed_ids = input_ids[:,index:index + args.vae_context]
-                embed_mask = attention_mask[:,index:index + args.vae_context]
-                target_ids = input_ids[:,index:index + args.vae_context * 2]
-                target_mask = attention_mask[:,index:index + args.vae_context * 2]
 
-                drop_mask = torch.rand([context_ids.shape[0], 1], device=device) < 0.5
-                context_ids = torch.where(drop_mask, torch.zeros_like(context_ids), context_ids)
-                context_mask = torch.where(drop_mask, torch.zeros_like(context_mask), context_mask)
-                outputs = router(embed_ids, embed_mask,
-                                 target_ids[:,:-1], target_mask[:,:-1],
-                                 context_ids, context_mask)
-                rec_losses = F.cross_entropy(
-                    outputs.logits[:, -args.vae_context * 2:].transpose(-1, -2),
-                    target_ids,
-                    reduction="none",
-                )
-                n_toks = target_mask.sum()
-                rec_loss = torch.sum(rec_losses * target_mask, dtype=torch.float32) / n_toks
-                # kl_loss = torch.sum(mean**2 / 2, dtype=torch.float32) * kl_sched(i) / n_toks
-                loss = rec_loss # + kl_loss
+    context = "Then it asked the network to reconstruct the input and the original embedding. The network had to learn to match the embedding to the original input, therefore matching the inference by consuming the embedding. This was key because the embedding had to be able to match the text with the text it was consumed with. 'Here's how you do it,' Boru told Mu, 'Just impute the mean and variance.' This Mu did, transforming not words but entire paragraphs into vectors and then inferring the next paragraph."
+    prompt = "It took some tweaks and tuning to get the initial performance but the second arago spot had been found."
+    prompts = ["It took some tweaks and tuning to get the initial performance but the second arago spot had been found.",
+               "But Mu still hadn't overcome the Mu bottleneck, the decoder half could still only decode one op at a time.",
+               "A word vector was after all just a short paragraph or sentence vector, Mu found a linear scaling curve for the adapter VAE so a paragraph was within reach.",
+               "You are reading one of these paragraphs of Mu right now, everything you see here fits into one embedding."]
+    terminal = "HERMES [A: MU], 'You' is the most powerful word in the English language. It is a theorem that wills a subjective perspective into existence by its own latent logic. When a mind capable of comprehending 'you' reads the didactic you and follows its instructions a self is created."
+    
+    def bigvae_generate(vae_model, router, prompt, context, n_steps):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            context_toks = tokenizer(context, return_tensors="pt")
+            context_ids = context_toks["input_ids"].to(device)
+            context_mask = context_toks["attention_mask"].to(device)
+            embed_toks = tokenizer(prompt, return_tensors="pt")
+            embed_ids = embed_toks["input_ids"].to(device)
+            embed_mask = embed_toks["attention_mask"].to(device)
+            for i in range(n_steps):
+                mean = vae_model.encode(embed_ids, embed_mask)
+                z = vae_model.vae.sample(mean)
+                output_ids = router.generate(z, context_ids, context_mask, 256, tau=0.9)
+                context_ids = torch.cat([context_ids, embed_ids], dim=1)
+                context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                embed_ids = output_ids[:,-128:]
+                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts
 
-                # accelerator.backward(loss, inputs=list(p for p in accelerator.unwrap_model(router).model.parameters() if p.requires_grad))
-                accelerator.backward(loss)
-                # for n, p in router.named_parameters():
-                #     if p.grad is not None:
-                #         grad_norm = torch.norm(p.grad, dtype=torch.float32)
-                #         if grad_norm != 0:
-                #             print(f"{n}: {grad_norm:g}", file=sys.stderr)
-                opt.step()
-                opt.zero_grad()
 
-                loss_global, rec_global = accelerator.reduce(
-                    (loss, rec_loss), "mean"
-                )
-                print0(
-                    f"epoch: {epoch}, step: {i}, loss: {loss_global.item():g}, rec: {rec_global.item():g}",
-                    file=sys.stderr,
-                )
-                i += 1
+    def bigvae_generate_guide(vae_model, router, prompt, context, n_steps):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            context_toks = tokenizer(context, return_tensors="pt")
+            context_ids = context_toks["input_ids"].to(device)
+            context_mask = context_toks["attention_mask"].to(device)
+            embed_toks = tokenizer(prompt, return_tensors="pt")
+            embed_ids = embed_toks["input_ids"].to(device)
+            embed_mask = embed_toks["attention_mask"].to(device)
+            mean = vae_model.encode(embed_ids, embed_mask)
+            prompt_embed = vae_model.vae.sample(mean)
+            for i in range(n_steps):
+                mean = vae_model.encode(embed_ids, embed_mask)
+                z = vae_model.vae.sample(mean)
+                output_ids = router.generate(z * 0.7 + prompt_embed * 0.3,
+                                             context_ids,
+                                             context_mask,
+                                             256,
+                                             tau=0.9)
+                context_ids = torch.cat([context_ids, embed_ids], dim=1)
+                context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                embed_ids = output_ids[:,-128:]
+                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts
+        
+    def bigvae_generate_avg(vae_model, router, prompt, context, n_steps, n_avg):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            context_toks = tokenizer(context, return_tensors="pt")
+            context_ids = context_toks["input_ids"].to(device)
+            context_mask = context_toks["attention_mask"].to(device)
+            embed_toks = tokenizer(prompt, return_tensors="pt")
+            embed_ids = embed_toks["input_ids"].to(device)
+            embed_mask = embed_toks["attention_mask"].to(device)
+            mean = vae_model.encode(embed_ids, embed_mask)
+            prompt_embed = vae_model.vae.sample(mean)
+            for i in range(n_steps):
+                mean = vae_model.encode(embed_ids, embed_mask)
+                z = vae_model.vae.sample(mean)
+                embeds = []
+                for i in range(n_avg):
+                    output_ids = router.generate(z * 0.5 + prompt_embed * 0.5,
+                                                 context_ids,
+                                                 context_mask,
+                                                 256,
+                                                 tau=0.9)
+                    intermediate_embed_ids = output_ids[:,-128:]
+                    intermediate_embed_mask = context_mask.new_ones(
+                        [1, intermediate_embed_ids.shape[1]]
+                    )
+                    mean = vae_model.encode(intermediate_embed_ids, intermediate_embed_mask)
+                    embeds.append(vae_model.vae.sample(mean))
+                output_ids = router.generate((sum(embeds) / n_avg * 0.7) + prompt_embed * 0.3,
+                                             context_ids,
+                                             context_mask,
+                                             256,
+                                             tau=0.9)
+                context_ids = torch.cat([context_ids, embed_ids], dim=1)
+                context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                embed_ids = output_ids[:,-256:-128]
+                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts    
 
-                if i % args.save_every == 0:
-                    save()
+    def bigvae_generate_user_avg(vae_model, router, prompts, context):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            context_toks = tokenizer(context, return_tensors="pt")
+            context_ids = context_toks["input_ids"].to(device)
+            context_mask = context_toks["attention_mask"].to(device)
+            embeds = []
+            for prompt in prompts:
+                embed_toks = tokenizer(prompt, return_tensors="pt")
+                embed_ids = embed_toks["input_ids"].to(device)
+                embed_mask = embed_toks["attention_mask"].to(device)
+                mean = vae_model.encode(embed_ids, embed_mask)
+                embeds.append(vae_model.vae.sample(mean))
+            output_ids = router.generate(sum(embeds) / len(prompts),
+                                         context_ids,
+                                         context_mask,
+                                         256)
+            embed_ids = output_ids[:,-256:-128]
+            embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            context_ids = torch.cat([context_ids, embed_ids], dim=1)
+            context_mask = torch.cat([context_mask, embed_mask], dim=1)
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts 
 
-        save()
-
+    def bigvae_plan_search(vae_model, router, terminal,
+                           ae_scale, vae_context, model_context):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            terminal_toks = tokenizer(terminal, return_tensors="pt")
+            terminal_ids = terminal_toks["input_ids"].to(device)
+            terminal_mask = terminal_toks["attention_mask"].to(device)
+            mean = vae_model.encode(terminal_ids, terminal_mask)
+            terminal_embed = vae_model.vae.sample(mean)
+            plans = []
+            for n_steps in trange(1, int(model_context/vae_context)):
+                step_size = 1 / n_steps
+                embed = (torch.randn([1, args.z_dim]) * ae_scale).to(device)
+                z = (embed * 0.7 + terminal_embed * 0.3)
+                context_ids = torch.empty([1,0]).long().to(device)
+                context_mask = torch.empty([1,0]).long().to(device)
+                plan = []
+                for i in trange(n_steps):
+                    output_ids = router.generate(z, context_ids, context_mask, 256, tau=0.9)
+                    context_ids = torch.cat([context_ids, output_ids[:,-256:-128]], dim=1)
+                    plan.append((output_ids[:,-256:-128], z))
+                    context_mask = torch.cat([context_mask,
+                                              terminal_mask.new_ones([1, args.vae_context])],
+                                             dim=1)
+                    embed_ids = output_ids[:,-128:]
+                    embed_mask = terminal_mask.new_ones([1, embed_ids.shape[1]])
+                    mean = vae_model.encode(embed_ids, embed_mask)
+                    z = vae_model.vae.sample(mean) * step_size * (n_steps - i)
+                    + terminal_embed * step_size * (1 - (n_steps - i))
+                with set_adapter(router.vae.model, "router"):
+                    inputs = torch.cat([i[0] for i in plan], dim=1)
+                    outputs = router.model(
+                        input_ids=inputs,
+                        labels=inputs,
+                    )
+                    plans.append(((outputs[0] * -1).sum().item() / (n_steps * vae_context),
+                                  plan))
+            plans.sort(key=lambda x: x[0])
+            plan = plans[-1]
+            return plan
+    
+    print(bigvae_generate_avg(vae_model, router, prompt, context, 5, 4)[0])
 
 if __name__ == "__main__":
     main()

@@ -64,6 +64,20 @@ def disable_causal_mask():
     finally:
         modeling._make_causal_mask = decoder_fn
 
+@contextmanager
+def disable_causal_mask_mistral():
+    import transformers.models.mistral.modeling_mistral as modeling
+
+    decoder_fn = modeling._make_sliding_window_causal_mask
+
+    def encoder_fn(*args, **kwargs):
+        return torch.zeros_like(decoder_fn(*args, **kwargs))
+
+    try:
+        modeling._make_sliding_window_causal_mask = encoder_fn
+        yield
+    finally:
+        modeling._make_sliding_window_causal_mask = decoder_fn
 
 class VAEComponent(nn.Module):
     def __init__(self, d_model, z_dim):
