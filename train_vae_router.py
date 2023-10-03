@@ -291,11 +291,11 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="openlm-research/open_llama_3b_v2",
+        default="mistralai/Mistral-7B-v0.1",
         help="model name",
     )
     parser.add_argument("--context", type=int, default=2048, help="context window length")
-    parser.add_argument("--vae-context", type=int, default=128, help="vae embed context")
+    parser.add_argument("--vae-context", type=int, default=64, help="vae embed context")
     parser.add_argument("--output", type=Path, required=True, help="path to save adapter")
     parser.add_argument("--rank", type=int, default=32, help="the lora rank")
     parser.add_argument("--save-every", type=int, default=1000, help="save every n steps")

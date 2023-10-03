@@ -156,7 +156,7 @@ class DecoderOnlyTransformerVAE(nn.Module):
         self.vae.load_state_dict(safetorch.load_file(path / "vae.safetensors"))
 
     def encode(self, input_ids, attention_mask):
-        with set_adapter(self.model, "encoder"), disable_causal_mask():
+        with set_adapter(self.model, "encoder"), disable_causal_mask_mistral():
             outputs = self.model(
                 input_ids=input_ids, attention_mask=attention_mask, use_cache=False
             )
@@ -241,7 +241,7 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="openlm-research/open_llama_3b_v2",
+        default="mistralai/Mistral-7B-v0.1",
         help="model name",
     )
     parser.add_argument("--context", type=int, default=64, help="context window length")
