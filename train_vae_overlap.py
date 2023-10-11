@@ -314,7 +314,7 @@ def main():
     model, opt, dataloader = accelerator.prepare(model, opt, dataloader)
 
     i = 0
-    kl_sched = cosine_warmup(5000, 0.01)
+    kl_sched = cosine_warmup(50000, 0.1)
 
     @torch.no_grad()
     @torch.cuda.amp.autocast(dtype=torch.bfloat16)
