@@ -370,7 +370,7 @@ def main():
 
     accelerator.wait_for_everyone()
 
-    context = "<s> The Mars colony was vast, a valley of geodesic domes and sleek robotics crisscrossing across the red savannah. I stared out the window of my shuttle in awe at what I was seeing. A fellow colonist tapped me on the shoulder to get my attention: 'Just like the VR tour, eh?,' but it wasn't like the VR tour, that had been close up and on the ground, dizzying and maze-like. Up here from a birds eye view the whole thing was revealed in its sheer scale, astonishing in its breadth."
+    context = "<s>The Mars colony was vast, a valley of geodesic domes and sleek robotics crisscrossing across the red savannah. I stared out the window of my shuttle in awe at what I was seeing. A fellow colonist tapped me on the shoulder to get my attention: 'Just like the VR tour, eh?,' but it wasn't like the VR tour, that had been close up and on the ground, dizzying and maze-like. Up here from a birds eye view the whole thing was revealed in its sheer scale, astonishing in its breadth."
     prompt = "I was so distracted by the enormity of what I was seeing that I failed to actually answer his question. 'Uh, kinda,' I awkwardly mumbled back. We began to descend and I got a brief glimpse into the details of some of the domes, aquaponics labs experimenting with Martian agriculture, fields of terrarium and little spherical forests housing visible wildlife."
     prompts = ["It took some tweaks and tuning to get the initial performance but the second arago spot had been found.",
                "But Mu still hadn't overcome the Mu bottleneck, the decoder half could still only decode one op at a time.",
@@ -400,56 +400,11 @@ def main():
 
     def bigvae_generate_guide(vae_model, router, prompt, context, n_steps):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            context_toks = tokenizer(context, return_tensors="pt")
+            context_toks = tokenizer(context,
+                                     return_tensors="pt",
+                                     add_special_tokens=False)
             context_ids = context_toks["input_ids"].to(device)
             context_mask = context_toks["attention_mask"].to(device)
-            embed_toks = tokenizer(prompt, return_tensors="pt")
-            embed_ids = embed_toks["input_ids"].to(device)
-            embed_mask = embed_toks["attention_mask"].to(device)
-            mean = vae_model.encode(embed_ids, embed_mask)
-            prompt_embed = vae_model.vae.sample(mean)
-            for i in range(n_steps):
-                mean = vae_model.encode(embed_ids, embed_mask)
-                z = vae_model.vae.sample(mean)
-                output_ids = router.generate(z * 0.7 + prompt_embed * 0.3,
-                                             context_ids,
-                                             context_mask,
-                                             256,
-                                             tau=0.9)
-                context_ids = torch.cat([context_ids, embed_ids], dim=1)
-                context_mask = torch.cat([context_mask, embed_mask], dim=1)
-                embed_ids = output_ids[:,-128:]
-                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
-            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
-            return out_texts
-
-
-    def bigvae_generate_task(vae_model, router, prompt, context=None, n_steps=5):
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            prose_sample_toks = [tokenizer(sample,
-                                           return_tensors="pt",
-                                           add_special_tokens=False)
-                                 for sample in prose_samples]
-            sample_ids = [s["input_ids"][:,-64:] for s in prose_sample_toks]
-            sample_mask = [s["attention_mask"][:,-64:] for s in prose_sample_toks]
-            prose_task_vector = torch.zeros(768).to(device)
-            if context:
-                context_toks = tokenizer(context, return_tensors="pt")
-                context_ids = context_toks["input_ids"].to(device)
-                context_mask = context_toks["attention_mask"].to(device)
-            else:
-                context_ids = torch.empty([1,0]).long().to(device)
-                context_mask = torch.empty([1,0]).long().to(device)
-            for batch_ids, batch_mask in zip(torch.split(torch.cat(sample_ids), 4),
-                                             torch.split(torch.cat(sample_mask), 4)):
-                batch_ids = batch_ids.to(device)
-                batch_mask = batch_mask.to(device)
-                batch_mean = vae_model.encode(batch_ids, batch_mask)
-                batch_z = vae_model.vae.sample(batch_mean)
-                for z in batch_z:
-                    prose_task_vector += z
-            prose_task_vector /= torch.cat(sample_ids).shape[0]
-            prose_task_vector *= (50 / prose_task_vector.norm().item())
             embed_toks = tokenizer(prompt,
                                    return_tensors="pt",
                                    add_special_tokens=False)
@@ -460,16 +415,116 @@ def main():
             for i in range(n_steps):
                 mean = vae_model.encode(embed_ids, embed_mask)
                 z = vae_model.vae.sample(mean)
-                z = z * 0.75 + prompt_embed * 0.1 + prose_task_vector * 0.15
-                if z.norm().item() < 50:
-                    z *= (50 / z.norm().item())
+                z_norm = z.norm().item()
+                z = z * 0.85 + prompt_embed * 0.15
+                z *= ((z_norm + prompt_embed.norm().item()) / 2) / z.norm().item()
                 output_ids = router.generate(z,
                                              context_ids,
                                              context_mask,
                                              128,
                                              tau=0.9)
-                context_ids = torch.cat([context_ids, embed_ids], dim=1)
-                context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                new_context = output_ids[:,-128:-64]
+                new_mask = context_mask.new_ones([1, new_context.shape[1]])
+                context_ids = torch.cat([context_ids, new_context], dim=1)
+                context_mask = torch.cat([context_mask, new_mask], dim=1)
+                embed_ids = output_ids[:,-64:]
+                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts[0]
+
+    def bigvae_generate_prose(vae_model, router, prompt, context, n_steps):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            context_toks = tokenizer(context,
+                                     return_tensors="pt",
+                                     add_special_tokens=False)
+            context_ids = context_toks["input_ids"].to(device)
+            context_mask = context_toks["attention_mask"].to(device)
+            embed_toks = tokenizer(prompt,
+                                   return_tensors="pt",
+                                   add_special_tokens=False)
+            embed_ids = embed_toks["input_ids"].to(device)
+            embed_mask = embed_toks["attention_mask"].to(device)
+            mean = vae_model.encode(embed_ids, embed_mask)
+            prompt_embed = vae_model.vae.sample(mean)
+            for i in range(n_steps):
+                mean = vae_model.encode(embed_ids, embed_mask)
+                z = vae_model.vae.sample(mean)
+                z_norm = z.norm().item()
+                z = z * 0.85 + prompt_embed * 0.15
+                z *= ((z_norm + prompt_embed.norm().item()) / 2) / z.norm().item()
+                output_ids = router.generate(z,
+                                             context_ids,
+                                             context_mask,
+                                             128,
+                                             tau=0.9)
+                new_context = output_ids[:,-128:-64]
+                new_mask = context_mask.new_ones([1, new_context.shape[1]])
+                context_ids = torch.cat([context_ids, new_context], dim=1)
+                context_mask = torch.cat([context_mask, new_mask], dim=1)
+                embed_ids = output_ids[:,-64:]
+                embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
+            break_context = tokenizer.decode(context_ids[0]).strip()
+            break_context = '.'.join(break_context.split(".")[:-1]) + "."
+            break_context += "\n\n"
+            break_toks = tokenizer(break_context,
+                                   return_tensors="pt",
+                                   add_special_tokens=False)
+            context_ids = break_toks["input_ids"].to(device)
+            context_mask = break_toks["attention_mask"].to(device)
+            embed_ids = context_ids[:,-64:]
+            embed_mask = context_mask[:,-64:]
+            context_ids = context_ids[:,:-64]
+            context_mask = context_mask[:,:-64]
+            mean = vae_model.encode(embed_ids, embed_mask)
+            z = vae_model.vae.sample(mean)
+            topic_ids = router.generate(z,
+                                        context_ids,
+                                        context_mask,
+                                        128,
+                                        tau=0.9)
+            new_context = topic_ids[:,-128:-64]
+            new_mask = context_mask.new_ones([1, new_context.shape[1]])
+            context_ids = torch.cat([context_ids, new_context], dim=1)
+            context_mask = torch.cat([context_mask, new_mask], dim=1)
+            topic_ids = topic_ids[:,-64:]
+            out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
+            return out_texts[0], tokenizer.decode(topic_ids[0])
+
+        
+    def bigvae_generate_task(vae_model, router, prompt, context=None, n_steps=5):
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            prose_task_vector = mk_task_vector(vae_model, prose_samples)
+            if context:
+                context_toks = tokenizer(context, return_tensors="pt")
+                context_ids = context_toks["input_ids"].to(device)
+                context_mask = context_toks["attention_mask"].to(device)
+            else:
+                context_ids = torch.empty([1,0]).long().to(device)
+                context_mask = torch.empty([1,0]).long().to(device)
+            embed_toks = tokenizer(prompt,
+                                   return_tensors="pt",
+                                   add_special_tokens=False)
+            embed_ids = embed_toks["input_ids"].to(device)
+            embed_mask = embed_toks["attention_mask"].to(device)
+            mean = vae_model.encode(embed_ids, embed_mask)
+            prompt_embed = vae_model.vae.sample(mean)
+            for i in range(n_steps):
+                mean = vae_model.encode(embed_ids, embed_mask)
+                z = vae_model.vae.sample(mean)
+                avg_norm = (z.norm().item()
+                            + prompt_embed.norm().item()
+                            + prose_task_vector.norm().item()) / 3
+                z = z * 0.75 + prompt_embed * 0.1 + prose_task_vector * 0.15
+                z *= avg_norm / z.norm().item()
+                output_ids = router.generate(z,
+                                             context_ids,
+                                             context_mask,
+                                             128,
+                                             tau=0.9)
+                new_context = output_ids[:,-128:-64]
+                new_mask = context_mask.new_ones([1, new_context.shape[1]])
+                context_ids = torch.cat([context_ids, new_context], dim=1)
+                context_mask = torch.cat([context_mask, new_mask], dim=1)
                 embed_ids = output_ids[:,-64:]
                 embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
             context_ids = torch.cat([context_ids, embed_ids], dim=1)
@@ -477,29 +532,32 @@ def main():
             return context_ids, context_mask
 
 
+    def mk_task_vector(vae_model, samples):
+        sample_toks = [tokenizer(sample,
+                                 return_tensors="pt",
+                                 add_special_tokens=False)
+                       for sample in samples]
+        sample_ids = [s["input_ids"][:,:64] for s in sample_toks]
+        sample_mask = [s["attention_mask"][:,:64] for s in sample_toks]
+        task_vector = torch.zeros(768).to(device)
+        total_norm = 0
+        for batch_ids, batch_mask in zip(torch.split(torch.cat(sample_ids), 4),
+                                         torch.split(torch.cat(sample_mask), 4)):
+            batch_ids = batch_ids.to(device)
+            batch_mask = batch_mask.to(device)
+            batch_z = vae_model.encode(batch_ids, batch_mask)
+            for z in batch_z:
+                task_vector += z
+                total_norm += z.norm().item()
+        task_vector /= torch.cat(sample_ids).shape[0]
+        avg_norm = total_norm / torch.cat(sample_ids).shape[0]
+        print(avg_norm)
+        task_vector *= (avg_norm / task_vector.norm().item())
+        return task_vector.unsqueeze(0)
+
     def bigvae_generate_paragraph_topic(vae_model, router, prompt, context=None, n_steps=5):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            prose_sample_toks = [tokenizer(sample,
-                                           return_tensors="pt",
-                                           add_special_tokens=False)
-                                 for sample in prose_samples]
-            sample_ids = [s["input_ids"][:,:64] for s in prose_sample_toks]
-            sample_mask = [s["attention_mask"][:,:64] for s in prose_sample_toks]
-            prose_task_vector = torch.zeros(768).to(device)
-            total_norm = 0
-            for batch_ids, batch_mask in zip(torch.split(torch.cat(sample_ids), 4),
-                                             torch.split(torch.cat(sample_mask), 4)):
-                batch_ids = batch_ids.to(device)
-                batch_mask = batch_mask.to(device)
-                batch_mean = vae_model.encode(batch_ids, batch_mask)
-                batch_z = vae_model.vae.sample(batch_mean)
-                for z in batch_z:
-                    prose_task_vector += z
-                    total_norm += z.norm().item()
-            prose_task_vector /= torch.cat(sample_ids).shape[0]
-            avg_norm = total_norm / torch.cat(sample_ids).shape[0]
-            print(avg_norm)
-            prose_task_vector *= (avg_norm / prose_task_vector.norm().item())
+            prose_task_vector = mk_task_vector(vae_model, prose_samples)
             if context:
                 context_toks = tokenizer(context,
                                          return_tensors="pt",
@@ -514,8 +572,7 @@ def main():
                                    add_special_tokens=False)
             embed_ids = embed_toks["input_ids"].to(device)
             embed_mask = embed_toks["attention_mask"].to(device)
-            mean = vae_model.encode(embed_ids, embed_mask)
-            prompt_embed = vae_model.vae.sample(mean)
+            prompt_embed = vae_model.encode(embed_ids, embed_mask)
             paragraph_zs = [prompt_embed]
             for i in range(n_steps):
                 output_ids = router.generate(paragraph_zs[-1],
@@ -523,22 +580,26 @@ def main():
                                              context_mask,
                                              128,
                                              tau=0.9)
-                context_ids = torch.cat([context_ids, embed_ids], dim=1)
-                context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                new_context = output_ids[:,-128:-64]
+                new_mask = context_mask.new_ones([1, new_context.shape[1]])
+                context_ids = torch.cat([context_ids, new_context], dim=1)
+                context_mask = torch.cat([context_mask, new_mask], dim=1)
                 embed_ids = output_ids[:,-64:]
                 embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
-                mean = vae_model.encode(embed_ids, embed_mask)
-                z = vae_model.vae.sample(mean)
+                z = vae_model.encode(embed_ids, embed_mask)
+                # z = vae_model.vae.sample(mean)
+                z_norm = z.norm().item()
                 z = z * 0.75 + paragraph_zs[0] * 0.1 + prose_task_vector * 0.15
-                z *= (z.norm().item()
+                z *= ((z_norm
                       + paragraph_zs[0].norm().item()
-                      + prose_task_vector.norm().item()) / 3
+                      + prose_task_vector.norm().item()) / 3) / z.norm().item()
                 paragraph_zs.append(z)
-            next_topic = (paragraph_zs[-1] * 0.8
-                          + paragraph_zs[0] * 0.2)
-            next_topic *= (paragraph_zs[-1].norm().item()
-                           + paragraph_zs[0].norm().item()) / 2
-            # next_topic = next_topic / (next_topic ** 2)
+            next_topic = (paragraph_zs[-1] * 0.7
+                          + paragraph_zs[0] * 0.1
+                          + prose_task_vector * 0.2)
+            next_topic *= ((paragraph_zs[-1].norm().item()
+                           + paragraph_zs[0].norm().item()
+                           + prose_task_vector.norm().item()) / 3) / next_topic.norm().item()
             break_context = tokenizer.decode(context_ids[0]).strip()
             break_context = '.'.join(break_context.split(".")[:-1]) + "."
             break_context += "\n\n"
@@ -547,14 +608,25 @@ def main():
                                    add_special_tokens=False)
             context_ids = break_toks["input_ids"].to(device)
             context_mask = break_toks["attention_mask"].to(device)
-            topic_ids = router.generate(next_topic,
+            embed_ids = context_ids[:,-64:]
+            embed_mask = context_mask[:,-64:]
+            context_ids = context_ids[:,:-64]
+            context_mask = context_mask[:,:-64]
+            z = vae_model.encode(embed_ids, embed_mask)
+            # z = vae_model.vae.sample(mean)
+            topic_ids = router.generate(z,
                                         context_ids,
                                         context_mask,
                                         128,
                                         tau=0.9)
+            new_context = topic_ids[:,-128:-64]
+            new_mask = context_mask.new_ones([1, new_context.shape[1]])
+            context_ids = torch.cat([context_ids, new_context], dim=1)
+            context_mask = torch.cat([context_mask, new_mask], dim=1)
+            topic_ids = topic_ids[:,-64:]
             out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
             print(tokenizer.decode(topic_ids[0][-128:]))
-            return out_texts[0], tokenizer.decode(topic_ids[0][-128:-64])
+            return out_texts[0], tokenizer.decode(topic_ids[0])
 
         
     def bigvae_generate_avg(vae_model, router, prompt, context, n_steps, n_avg):
@@ -657,7 +729,8 @@ HERMES [A: EMPIRICISM], Genome synthesis technology costs are falling faster tha
 
 HERMES [A: AMBITION], Basically I'm asking why there hasn't been something like an Apollo program or Manhattan Project for this, I don't mean in the West because there the answer is obvious but why not in China?
 
-HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative society? I think you failed to really think about the implications of what EMPIRICISM said. If synthesis technology is advancing faster than Moore's Law, this implies it's probably already advancing about as quickly as it can given the human capital bottlenecks to progress. The Manhattan Project was a specific thing with a specific goal, like a very technically specific plan in mind to accelerate development of a particular thing in the nuclear tech tree."""]
+HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative society? I think you failed to really think about the implications of what EMPIRICISM said. If synthesis technology is advancing faster than Moore's Law, this implies it's probably already advancing about as quickly as it can given the human capital bottlenecks to progress. The Manhattan Project was a specific thing with a specific goal, like a very technically specific plan in mind to accelerate development of a particular thing in the nuclear tech tree."""]  
+
     
     def bigvae_generate_paragraph(vae_model, router, topic, context=None, n_avg=4):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
@@ -784,7 +857,7 @@ HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative soc
                 terminal_embed = torch.mean(torch.cat(embeds, dim=0), dim=0).unsqueeze(0)
                 if terminal_embed.norm().item() < 50:
                     terminal_embed *= (50 / terminal_embed.norm().item())
-            for step in torch.tensor([i for i in range(1, n_steps+1)]) * 0.05:
+            for step in torch.tensor([i for i in range(1, n_steps+1)]) * 0.025:
                 embeds = []
                 for i in range(n_avg):
                     output_ids = router.generate(z,
@@ -799,7 +872,7 @@ HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative soc
                     )
                     mean = vae_model.encode(intermediate_embed_ids, intermediate_embed_mask)
                     embeds.append(vae_model.vae.sample(mean))
-                avg_z = (sum(embeds) / n_avg * (0.95-step)) + terminal_embed * (0.05+step)
+                avg_z = (sum(embeds) / n_avg * (0.975-step)) + terminal_embed * (0.025+step)
                 # avg_z = (sum(embeds) / n_avg * 0.9) + terminal_embed * 0.1
                 avg_z *= (50 / avg_z.norm().item())
                 output_ids = router.generate(avg_z,
@@ -825,82 +898,63 @@ HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative soc
     def bigvae_generate_plan_2(vae_model, router, terminal=None, n_steps=5, n_avg=4, start=None, context=None):
         ae_scale = 1.28125
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            prose_sample_toks = [tokenizer(sample,
-                                           return_tensors="pt",
-                                           add_special_tokens=False)
-                                 for sample in prose_samples]
-            sample_ids = [s["input_ids"][:,:64] for s in prose_sample_toks]
-            sample_mask = [s["attention_mask"][:,:64] for s in prose_sample_toks]
-            prose_task_vector = torch.zeros(768).to(device)
-            total_norm = 0
-            for batch_ids, batch_mask in zip(torch.split(torch.cat(sample_ids), 4),
-                                             torch.split(torch.cat(sample_mask), 4)):
-                batch_ids = batch_ids.to(device)
-                batch_mask = batch_mask.to(device)
-                batch_mean = vae_model.encode(batch_ids, batch_mask)
-                batch_z = vae_model.vae.sample(batch_mean)
-                for z in batch_z:
-                    prose_task_vector += z
-                    total_norm += z.norm().item()
-            prose_task_vector /= torch.cat(sample_ids).shape[0]
-            avg_norm = total_norm / torch.cat(sample_ids).shape[0]
-            prose_task_vector *= (avg_norm / prose_task_vector.norm().item())
+            prose_task_vector = mk_task_vector(vae_model, prose_samples)
             if context:
-                context_toks = tokenizer(context, return_tensors="pt")
+                context_toks = tokenizer(context,
+                                         return_tensors="pt",
+                                         add_special_tokens=False)
                 context_ids = context_toks["input_ids"].to(device)
                 context_mask = context_toks["attention_mask"].to(device)
             else:
                 context_ids = torch.empty([1,0]).long().to(device)
                 context_mask = torch.empty([1,0]).long().to(device) 
             if start:
-                start_toks = tokenizer(start, return_tensors="pt")
+                start_toks = tokenizer(start,
+                                       return_tensors="pt",
+                                       add_special_tokens=False)
                 start_ids = start_toks["input_ids"].to(device)
                 start_mask = start_toks["attention_mask"].to(device)
-                mean = vae_model.encode(start_ids, start_mask)
-                z = vae_model.vae.sample(mean) * 0.8 + prose_task_vector * 0.2
+                z = vae_model.encode(start_ids, start_mask)
+                z = z * 0.8 + prose_task_vector * 0.2
             else:
                 embed = (torch.randn([1, args.z_dim]) * ae_scale).to(device)
+                norm = ((z.norm.item() + prose_task_vector.norm().item()) / 2)
                 z = (embed * 0.7 + prose_task_vector * 0.3)
-                z *= (33 / z.norm().item())
+                z *= (norm / z.norm().item())
             if terminal:
                 terminal_toks = tokenizer(terminal,
                                           return_tensors="pt",
                                           add_special_tokens=False)
                 terminal_ids = terminal_toks["input_ids"].to(device)
                 terminal_mask = terminal_toks["attention_mask"].to(device)
-                mean = vae_model.encode(terminal_ids, terminal_mask)
-                terminal_embed = vae_model.vae.sample(mean)
+                terminal_embed = vae_model.encode(terminal_ids, terminal_mask)
             else:
                 embeds = []
                 for i in range(n_avg):
                     embed_ids, embed_mask = bigvae_generate_task(vae_model, router, start)
-                    mean = vae_model.encode(embed_ids[-64:], embed_mask[-64:])
-                    embeds.append(vae_model.vae.sample(mean))
+                    embed = vae_model.encode(embed_ids[-64:], embed_mask[-64:])
+                    embeds.append(embed)
                 terminal_embed = torch.mean(torch.cat(embeds, dim=0), dim=0).unsqueeze(0)
-                if terminal_embed.norm().item() < 33:
-                    avg_norm = sum([e.norm() for e in embeds]) / len(embeds)
-                    terminal_embed *= (avg_norm / terminal_embed.norm().item())
-            for step in torch.tensor([i for i in range(1, n_steps+1)]) * 0.05:
+                avg_norm = sum([e.norm().item() for e in embeds]) / len(embeds)
+                terminal_embed *= (avg_norm / terminal_embed.norm().item())
+            for step in torch.tensor([i for i in range(1, n_steps+1)]) * 0.025:
+                avg_norm = (z.norm().item() + terminal_embed.norm().item()) / 2
                 z = z * (0.95-step) + terminal_embed * (0.05+step)
                 # avg_z = (sum(embeds) / n_avg * 0.9) + terminal_embed * 0.1
-                if z.norm().item() < 33:
-                    z *= (33 / z.norm().item())
+                z *= (avg_norm / z.norm().item()) 
                 output_ids = router.generate(z,
                                              context_ids,
                                              context_mask,
-                                             64,
+                                             128,
                                              tau=0.9)
                 print(tokenizer.decode(output_ids[0][-128:]))
-                if start:
-                    context_ids = torch.cat([context_ids, embed_ids], dim=1)
-                    context_mask = torch.cat([context_mask, embed_mask], dim=1)
+                new_context = output_ids[:,-128:-64]
+                new_mask = context_mask.new_ones([1, new_context.shape[1]])
+                context_ids = torch.cat([context_ids, new_context], dim=1)
+                context_mask = torch.cat([context_mask, new_mask], dim=1)
                 embed_ids = output_ids[:,-64:]
                 embed_mask = context_mask.new_ones([1, embed_ids.shape[1]])
-                if not start:
-                    context_ids = torch.cat([context_ids, embed_ids], dim=1)
-                    context_mask = torch.cat([context_mask, embed_mask], dim=1)
-                mean = vae_model.encode(embed_ids, embed_mask)
-                z = vae_model.vae.sample(mean)
+                z = vae_model.encode(embed_ids, embed_mask)
             out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in context_ids]
             return out_texts  
 
@@ -967,10 +1021,9 @@ HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative soc
             plans.sort(key=lambda x: x[0])
             plan = plans[-1]
             return plan
-        
-    for i in range(3):
-        context, prompt = bigvae_generate_paragraph_topic(vae_model, router, prompt, context=context)
-    print(context)
 
+
+    print(bigvae_generate_paragraph_topic(vae_model, router, prompt, context))
+        
 if __name__ == "__main__":
     main()
