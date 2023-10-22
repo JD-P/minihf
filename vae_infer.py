@@ -245,6 +245,42 @@ class VAERouter(nn.Module):
                 )
                 past = outputs.past_key_values
         return input_ids
+
+    def generate_cfg(self, z, input_ids, attention_mask, n_tokens, tau=1.0, cfg_scale=1):
+        z_embed = self.vae.vae.decode(z)[:, None]
+        inputs_embeds_base = self.input_ids_to_embeds(input_ids)
+        inputs_embeds_router = torch.cat([inputs_embeds_base, z_embed], dim=1)
+        attention_mask = torch.cat(
+            [attention_mask, attention_mask.new_ones([attention_mask.shape[0], 1])], dim=1
+        )
+        new_embeds, base_past, router_past = None, None, None
+        for _ in range(n_tokens):
+            with set_adapter(self.vae.model, "router"):
+                router_outputs = self.model(
+                    inputs_embeds=inputs_embeds_router if router_past is None else new_embeds,
+                    attention_mask=attention_mask,
+                    use_cache=True,
+                    past_key_values=router_past,
+                )
+            with set_adapter(self.vae.model, None):
+                base_outputs = self.model(
+                    inputs_embeds=inputs_embeds_base if base_past is None else new_embeds,
+                    attention_mask=attention_mask[:,:-1],
+                    use_cache=True,
+                    past_key_values=base_past,
+                )
+                base_logits = base_outputs.logits[:, -1:, :].float()
+                router_logits = router_outputs.logits[:, -1:, :].float()
+                logits = base_logits + cfg_scale * (router_logits - base_logits)
+                new_input_ids = torch.argmax(logits + gumbel_like(logits) * tau, dim=-1)
+                input_ids = torch.cat([input_ids, new_input_ids], dim=1)
+                new_embeds = self.input_ids_to_embeds(new_input_ids)
+                attention_mask = torch.cat(
+                    [attention_mask, attention_mask.new_ones([attention_mask.shape[0], 1])], dim=1
+                )
+                base_past = base_outputs.past_key_values
+                router_past = router_outputs.past_key_values
+        return input_ids
     
     def forward(self, embed_ids, embed_mask, target_ids, target_mask, decoder_prefix_ids, decoder_prefix_mask):
         mean = self.encode(embed_ids, embed_mask)
@@ -555,7 +591,7 @@ def main():
         task_vector *= (avg_norm / task_vector.norm().item())
         return task_vector.unsqueeze(0)
 
-    def bigvae_generate_paragraph_topic(vae_model, router, prompt, context=None, n_steps=5):
+    def bigvae_generate_paragraph_topic(vae_model, router, prompt, context=None, n_steps=5, cfg_scale=1):
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
             prose_task_vector = mk_task_vector(vae_model, prose_samples)
             if context:
@@ -575,11 +611,12 @@ def main():
             prompt_embed = vae_model.encode(embed_ids, embed_mask)
             paragraph_zs = [prompt_embed]
             for i in range(n_steps):
-                output_ids = router.generate(paragraph_zs[-1],
-                                             context_ids,
-                                             context_mask,
-                                             128,
-                                             tau=0.9)
+                output_ids = router.generate_cfg(paragraph_zs[-1],
+                                                 context_ids,
+                                                 context_mask,
+                                                 128,
+                                                 tau=0.9,
+                                                 cfg_scale=cfg_scale)
                 new_context = output_ids[:,-128:-64]
                 new_mask = context_mask.new_ones([1, new_context.shape[1]])
                 context_ids = torch.cat([context_ids, new_context], dim=1)
@@ -614,11 +651,12 @@ def main():
             context_mask = context_mask[:,:-64]
             z = vae_model.encode(embed_ids, embed_mask)
             # z = vae_model.vae.sample(mean)
-            topic_ids = router.generate(z,
-                                        context_ids,
-                                        context_mask,
-                                        128,
-                                        tau=0.9)
+            topic_ids = router.generate_cfg(z,
+                                            context_ids,
+                                            context_mask,
+                                            128,
+                                            tau=0.9,
+                                            cfg_scale=cfg_scale)
             new_context = topic_ids[:,-128:-64]
             new_mask = context_mask.new_ones([1, new_context.shape[1]])
             context_ids = torch.cat([context_ids, new_context], dim=1)
@@ -1023,7 +1061,7 @@ HERMES [A: ECONOMIST], Besides the part where China is a deeply conservative soc
             return plan
 
 
-    print(bigvae_generate_paragraph_topic(vae_model, router, prompt, context))
+    print(bigvae_generate_paragraph_topic(vae_model, router, prompt, context, cfg_scale=1.25))
         
 if __name__ == "__main__":
     main()
