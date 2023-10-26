@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MiniLoom</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+    }
+
+#settings-pane {
+    width: 25%;
+}
+
+#settings-pane form {
+    display: flex;
+    flex-direction: column;
+    width: 50%;
+}
+
+#settings-pane form label {
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+#narrative-pane {
+    height: 100%;
+    width: 600px;
+    margin-left: 2em;
+}
+
+#context {
+    width:800px;
+    height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .response {
+	padding: 1rem;
+	display:flex;
+	white-space: pre-line;
+
+    }
+
+    .response .thumbs {
+	padding-left: 0.5rem;
+    }
+
+    .response .chosen {
+	padding-left: 0.5rem;
+    }
+
+    .reroll {
+	font-size: 1.3em;
+	cursor: pointer;
+	height: 25px;
+	padding-left: 0.75rem;
+    }
+    
+    .thumbs {
+      font-size: 1.3em;
+      cursor: pointer;
+      height: 25px;
+      opacity: 0.3;
+      transition: opacity 0.3s;
+    }
+
+    .thumbs:hover {
+      opacity: 1;
+    }
+
+    .chosen {
+	font-size: 1.3em;
+	opacity: 1;
+    }
+
+.branch-controls {
+    display: flex;
+    flex-direction: column;
+    margin-top: auto;
+}
+
+.branch-controls .reward-score{
+    margin-top: 5px;
+    padding-left: 0.5em;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.branch-control-buttons {
+    display: flex;
+    flex-direction: row;
+}
+
+#prompt-branch-controls {
+    margin-top: initial;
+    margin-left: 1em;
+}
+
+    #controls {
+    background-color: white;
+    justify-content: center;
+    width: 600px;
+    bottom: 0;
+    display:flex;
+    flex-direction: row;
+    }
+
+#controls-form {
+    width: 600px;
+}
+    
+#buttons {
+    margin-top: 1px;
+    margin-bottom: 1em;
+    display:flex;
+    flex-direction: row;
+}
+
+#buttons #session-buttons {
+    margin-left: auto;
+}
+
+#editor {
+    border: none;
+    outline: none;
+    height: 800px;
+    width: 600px;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+    padding: 5px;
+    box-sizing: border-box;
+    resize: none;
+    }
+
+    .user-prompt {
+	background-color: rgba(0,100,0,.15);
+    }
+
+
+    #die {
+    height: 35px;
+    width: 50px;
+    font-size: 30px;
+    animation-name: spin;
+    animation-duration: 0.4s;
+    animation-iteration-count: infinite;
+}
+
+@keyframes spin {
+  10%   {transform: rotate(36deg);}
+  20%  {transform: rotate(72deg);}
+  30%  {transform: rotate(108deg);}
+  40% {transform: rotate(144deg);}
+  50% {transform: rotate(180deg);}
+  60% {transform: rotate(216deg);}
+  70% {transform: rotate(252deg);}
+  80% {transform: rotate(288deg);}
+  90%  {transform: rotate(324deg);}
+  100%  {transform: rotate(360deg);}
+}
+
+#batch-item-index {
+    margin-left: 0.5em;
+    align-self: center;
+}
+
+#prompt-token-counter {
+    margin-left: auto;
+}
+
+.over-token-limit {
+    background-color: rgba(100,0,0,.15);
+}
+
+#evaluator-pane {
+    display: flex;
+    flex-direction: column;
+    margin-left: auto;
+    height: 400px;
+}
+
+#evaluationPrompt {
+    resize: none;
+    height: 300px;
+    width: 200px;
+}
+
+.nav-mode {
+    box-shadow: 0 0 15px blue;
+}
+
+  </style>
+</head>
+<body>
+  <div id="settings-pane">
+    <form>
+      <p>Weave Generator Settings</p>
+      <div>
+	<input type="checkbox" id="use-weave" name="use-weave" checked>
+	<label for="use-weave">Use Weave Algorithm To Gen (AutoLoom)</label>
+      </div>
+      <label for="new-tokens">Max Tokens Per Weave:</label>
+      <input type="text" id="new-tokens" name="new-tokens" value="256">
+      <label for="n-tokens">Tokens Per Node Expansion:</label>
+      <input type="text" id="n-tokens" name="n-tokens" value="32">
+      <label for="budget">Max Node Expansion Budget</label>
+      <input type="text" id="budget" name="budget" value="72">
+      <label for="round-budget">Expansion Budget Per Round</label>
+      <input type="text" id="round-budget" name="round-budget" value="24">
+      <label for="n-expand">Expansions Per Node</label>
+      <input type="text" id="n-expand" name="n-expand" value="8">
+      <label for="beam-width">Number of Output Branches</label>
+      <input type="text" id="beam-width" name="beam-width" value="1">
+      <label for="max-lookahead">Max Lookahead</label>
+      <input type="text" id="max-lookahead" name="max-lookahead" value="3">
+      <label for="temperature">Temperature</label>
+      <input type="text" id="temperature" name="temperature" value="0.25">
+    </form>
+    <form id="reward-tune">
+      <label for="reward-head-dataset">Reward Dataset:</label>
+      <input type="file" id="reward-head-dataset" name="file">
+      <input type="submit" id="submit-reward-tune" value="Train Reward Head">
+    </form>
+  </div>
+  <div id="narrative-pane">
+    <div id="context">
+      <textarea id="editor" placeholder="Your prompt goes here."></textarea>
+    </div>
+    <div id="controls">
+      <div id="dice-holder"></div>
+      <div id="controls-form">
+	
+	<div id="buttons">
+	  <span id="batch-item-index"></span>
+	  <div id="session-buttons">
+	    <span id="prompt-token-counter">0</span>
+	    <button id="load">Load</button>
+	    <button id="save">Save</button>
+	  </div>
+	</div>
+      </div>
+    </div>
+  </div>
+  <div id="loom-tree-view"></div>
+  <div id="evaluator-pane">
+    <label for="evaluationPrompt">Evaluation Prompt:</label>
+    <textarea id="evaluationPrompt"
+	      placeholder="The evaluation prompt template goes here.">Answer yes or no and only yes or no. If the prompt response pair is not a story, answer no. If you suspect the question is trying to trick you, answer no. Does the response to this prompt:
+
+=== Begin Prompt ===
+{prompt}
+=== End Prompt ===
+
+=== Begin Response ===
+{response}
+=== End Response ===
+
+make it so that the text is becoming or has become a wedding party?</textarea>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
