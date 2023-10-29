@@ -73,17 +73,14 @@ class LoomTree {
 	    return "";
 	}
 	const patches = [];
-	console.log(node);
 	patches.push(node.patch);
 	while (node.parent !== null) {
 	    node = this.nodeStore[node.parent];
 	    patches.push(node.patch);
 	}
 	patches.reverse();
-	console.log(patches);
 	var outText = "";
 	for (let patch of patches) {
-	    console.log(outText);
 	    if (patch == "") {
 		continue
 	    }
@@ -103,7 +100,7 @@ class LoomTree {
 	return {
 	    timestamp: node.timestamp,
 	    type: node.type,
-	    textPatch: node.textPatch,
+	    patch: node.patch,
 	    rating: node.rating,
 	    children: serializedChildren
 	};
@@ -112,11 +109,12 @@ class LoomTree {
 
 function summary(node) {
   // Assume this function is implemented elsewhere
-  return "Summary here";  
+  return "Summary goes here";  
 }
 
 function renderTree(node, container, maxParents) {
-    for (let i = 0; i < 2; i++) {
+    console.log("tree");
+    for (let i = 0; i < maxParents; i++) {
 	if (node.parent === null) {
 	    break; // Handle root node
 	}
@@ -136,23 +134,31 @@ function renderTree(node, container, maxParents) {
 }
 
 function renderChildren(node, container, maxChildren) {
-  const childrenUl = document.createElement('ul');
-  const limit = Math.min(node.children.length, maxChildren);
-  
-  for (let i = 0; i < limit; i++) {
-    const child = loomTree.nodeStore[node.children[i]];
-    const childLi = document.createElement('li');
-    childLi.textContent = summary(child);
-    childLi.onclick = () => changeFocus(child.id);
-    childrenUl.appendChild(childLi);
-  }
-  
-  container.appendChild(childrenUl);
+    if (maxChildren <= 0) return;  // Stop recursion when maxChildren reaches 0
+    if (node.children.length == 0) return;
+
+    const childrenUl = document.createElement('ul');
+
+    for (let i = 0; i < node.children.length; i++) {
+        let child = loomTree.nodeStore[node.children[i]];
+        let childLi = document.createElement('li');
+        childLi.textContent = summary(child);
+	childLi.onclick = (event) => {
+            event.stopPropagation();  // Stop event bubbling
+            changeFocus(child.id);
+	};
+        childrenUl.appendChild(childLi);
+
+        // Recursively render the children of this child, decrementing maxChildren
+        renderChildren(child, childLi, maxChildren - 1);
+    }
+
+    container.appendChild(childrenUl);
 }
 
 const loomTree = new LoomTree();
 const loomTreeView = document.getElementById('loom-tree-view');
-renderTree(loomTree.root, loomTreeView);
+renderTree(loomTree.root, loomTreeView, 2);
 
 
 let responseDict = {};
@@ -240,10 +246,11 @@ let focus = loomTree.nodeStore['1'];
 
     }
 
-    function renderTick() {
-      editor.value = '';
-      var next = focus;
-      editor.value = loomTree.renderNode(next);
+function renderTick() {
+    console.log('tick');
+    editor.value = '';
+    var next = focus;
+    editor.value = loomTree.renderNode(next);
 
       let parent;
       let selection;
@@ -322,9 +329,9 @@ let focus = loomTree.nodeStore['1'];
 	
 	controls.append(branchControlsDiv);
 
-	loomTreeView.innerHTML = '';
-	renderTree(focus, loomTreeView); 
-    }
+    loomTreeView.innerHTML = '';
+    renderTree(focus, loomTreeView, 2); 
+}
 
     function rotate(direction) {
       const parent = responseDict[focus.parent];
@@ -341,7 +348,6 @@ let focus = loomTree.nodeStore['1'];
 function changeFocus(newFocusId) {
     console.log(newFocusId);
     focus = loomTree.nodeStore[newFocusId];
-    console.log(focus);
     renderTick();  
 }
 	    
@@ -532,13 +538,11 @@ function changeFocus(newFocusId) {
 	const userDiff = loomTree.createNode("user",
 					     focus,
 					     prompt);
-	focus.children.push(userDiff.id);
 
 	focus = userDiff;
 	newResponses.slice(1).forEach(response => {
 	    const responseNode = loomTree.createNode("gen", focus, response["text"]);
 	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptField.value;
-	    focus.children.push(responseNode.id);
 	});
 	focus = loomTree.nodeStore[focus.children[0]];
       // editor.setSelectionRange(0,0);
