@@ -113,7 +113,6 @@ function summary(node) {
 }
 
 function renderTree(node, container, maxParents) {
-    console.log("tree");
     for (let i = 0; i < maxParents; i++) {
 	if (node.parent === null) {
 	    break; // Handle root node
@@ -247,7 +246,6 @@ let focus = loomTree.nodeStore['1'];
     }
 
 function renderTick() {
-    console.log('tick');
     editor.value = '';
     var next = focus;
     editor.value = loomTree.renderNode(next);
@@ -346,7 +344,6 @@ function renderTick() {
     }
 
 function changeFocus(newFocusId) {
-    console.log(newFocusId);
     focus = loomTree.nodeStore[newFocusId];
     renderTick();  
 }
