@@ -37,11 +37,12 @@ const [originalText, unapplyResults] = dmp.patch_apply(reversedPatches, newText)
     const evaluationPromptField = document.getElementById('evaluationPrompt');
 
 class Node {
-    constructor(id, type, parent, patch) {
+    constructor(id, type, parent, patch, summary) {
 	this.id = id;
 	this.timestamp = Date.now();
 	this.type = type;
 	this.patch = patch;
+	this.summary = summary;
 	this.rating = null;
 	this.parent = parent;
 	this.children = [];
@@ -50,11 +51,11 @@ class Node {
 
 class LoomTree {
     constructor() {
-	this.root = new Node(1, "root", null, "");
+	this.root = new Node(1, "root", null, "", "Root Node");
 	this.nodeStore = {'1':this.root};
     }
 
-    createNode(type, parent, text) {
+    createNode(type, parent, text, summary) {
 	const parentRenderedText = this.renderNode(parent);
 	// TODO: Make this work when the model does arbitrary edits
 	if (type == "gen") {
@@ -62,7 +63,7 @@ class LoomTree {
 	}
 	const patch = dmp.patch_make(parentRenderedText, text);
 	const newNodeId = String(Object.keys(this.nodeStore).length + 1);
-	const newNode = new Node(newNodeId, type, parent.id, patch);
+	const newNode = new Node(newNodeId, type, parent.id, patch, summary);
 	parent.children.push(newNodeId);
 	this.nodeStore[newNodeId] = newNode;
 	return newNode;
@@ -121,7 +122,7 @@ function renderTree(node, container, maxParents) {
     }
   const ul = document.createElement('ul');
   const li = document.createElement('li');
-  li.textContent = summary(node);
+  li.textContent = node.summary;
   li.onclick = () => changeFocus(node.id);
   ul.appendChild(li);
   
@@ -141,7 +142,7 @@ function renderChildren(node, container, maxChildren) {
     for (let i = 0; i < node.children.length; i++) {
         let child = loomTree.nodeStore[node.children[i]];
         let childLi = document.createElement('li');
-        childLi.textContent = summary(child);
+        childLi.textContent = child.summary;
 	childLi.onclick = (event) => {
             event.stopPropagation();  // Stop event bubbling
             changeFocus(child.id);
@@ -155,14 +156,10 @@ function renderChildren(node, container, maxChildren) {
     container.appendChild(childrenUl);
 }
 
-const loomTree = new LoomTree();
+var loomTree = new LoomTree();
 const loomTreeView = document.getElementById('loom-tree-view');
 renderTree(loomTree.root, loomTreeView, 2);
 
-
-let responseDict = {};
-let responseBatches = [];
-let selectedResponseIndices = [];
 let focus = loomTree.nodeStore['1'];
 
     function renderResponse(id) {
@@ -389,6 +386,71 @@ function changeFocus(newFocusId) {
 	return batch;
     }
 
+async function getSummary(taskText) {
+    endpoint = "http://localhost:5000/generate"
+    summaryContext = `DEMO
+
+You are BigVAE, an instruction following language model that performs tasks for users. In the following task you are to summarize the following tasktext in 3 words. Write three words, like "man became sad" or "cat ate fish" which summarize the task text.
+
+<tasktext>
+I grinned as I looked at the computer screen, it was crazy how far the system had come. Just a year ago I was a junior sysadmin dreaming, but now my orchestration across the cluster was beginning to take shape.
+</tasktext>
+
+Three Words: Computer Man Thinks
+
+<tasktext>
+I watched as the bird flew far up above the sky and over the mountain, getting smaller and smaller until I couldn't see it anymore. I sat down slightly disappointed. I'd really wanted to see it make the rainbow.
+</tasktext>
+
+Three Words: Bird Hopes Fail
+
+<tasktext>
+Vervaeke argues something like shamans invent the foundations for modern humanity by finetuning their adversarial-anthropic prior into an animist prior, at their best the rationalists finetune their anthropic-animist priors into a fully materialist prior. People with materialist priors become bad at adversarial thinking because understanding the natural world largely doesn't require it,
+</tasktext>
+
+Three Words: Modern Man Gullible
+
+<tasktext>
+Desire is life and enlightenment is death. 
+A dead man walks unburdened among the living. 
+A functioning hand can grip, and release.
+One must die and rise from their own grave to be liberated.
+</task>
+
+Three Words: Enlightenment Is Death
+
+<tasktext>
+HERMES [A: LIBRARIAN], While it's true that learned helplessness and inevitability are an explicit theme, it's also made explicit that the Colour is an extraterrestrial being. It's more like a parasite than a normal environmental disaster. It's also important to note that the causality of the disaster is a space meteorite, so it's not actually based on anything the inhabitants of Arkham did. It's horror not tragedy, the townspeople are victims of forces beyond their control.
+</tasktext>
+
+Three Words: Genre Is Horror
+
+<tasktext>
+I'm to understand that in Vodou ancestor cults people work together to preserve and unconditionally sample from the agent-prior the ancestor is dedicated to. To be possessed by the ancestors one needs a corpus of their mannerisms. You might ask how we'll defeat death? The way we did it the first time and then forgot.
+</tasktext>
+
+Three Words: Ancestors Lessen Death`
+
+    prompt = "<tasktext>\n" + taskText + "\n</tasktext>\n\nThree Words:"
+    
+    r = await fetch(endpoint, {
+	method: "POST",
+	body: JSON.stringify({
+	    context: summaryContext,
+	    prompt: prompt,
+	    prompt_node: true,
+	    evaluationPrompt: "",
+	    new_tokens: 4,
+	    weave_beam_width: 1,
+	    }),
+	    headers: {
+		"Content-type": "application/json; charset=UTF-8"
+	    }
+	});
+    batch = await r.json();
+    return batch[1]["text"].trim();
+}
+
     function thumbsUp(id) {
 	responseDict[id].rating = true;
 	renderedResponse = document.getElementById(id)
@@ -532,15 +594,24 @@ function changeFocus(newFocusId) {
 					       weave: settingUseWeave.checked,
 					       weaveParams: wp,
 					       includePrompt: true});
+
+	const userDiffSummary = await getSummary(prompt);
 	const userDiff = loomTree.createNode("user",
 					     focus,
-					     prompt);
+					     prompt,
+					     userDiffSummary);
 
 	focus = userDiff;
-	newResponses.slice(1).forEach(response => {
-	    const responseNode = loomTree.createNode("gen", focus, response["text"]);
+	const responses = newResponses.slice(1);
+	for (let i = 0; i < responses.length; i++) {
+	    const response = responses[i];
+	    const responseSummary = await getSummary(response["text"]);
+	    const responseNode = loomTree.createNode("gen",
+						     focus,
+						     response["text"],
+						     responseSummary);
 	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptField.value;
-	});
+	}
 	focus = loomTree.nodeStore[focus.children[0]];
       // editor.setSelectionRange(0,0);
       editor.readOnly = false;
@@ -550,8 +621,8 @@ function changeFocus(newFocusId) {
 
     saveBtn.addEventListener('click', () => {
       const data = JSON.stringify({
-        responseDict,
-        "focusId": focus.id,
+        loomTree,
+        "focus": focus,
       });
       const blob = new Blob([data], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -568,15 +639,18 @@ function changeFocus(newFocusId) {
       input.onchange = (e) => {
         const file = e.target.files[0];
         if (file) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const data = JSON.parse(e.target.result);
-            responseDict = data.responseDict;
-            focus = responseDict[data.focusId];
-	    evaluationPromptField.value = focus.evaluationPrompt;
-            renderResponses();
-          };
-          reader.readAsText(file);
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              const data = JSON.parse(e.target.result);
+		loomTreeRaw = data.loomTree;
+		loomTree = Object.assign(new LoomTree(), loomTreeRaw);
+		focus = loomTree.nodeStore[data.focus.id];
+		if ('evaluationPrompt' in focus) {
+		    evaluationPromptField.value = focus.evaluationPrompt;
+		};
+	    renderTick();
+            };
+            reader.readAsText(file);
         }
       };
       input.click();
