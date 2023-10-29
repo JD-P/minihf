@@ -619,6 +619,54 @@ Three Words: Ancestors Lessen Death`
       renderTick();
     });
 
+const { ipcRenderer } = require('electron');
+
+function saveFile() {
+  const data = {
+    loomTree,
+    "focus": focus,
+  };
+  ipcRenderer.invoke('save-file', data)
+    .catch(err => console.error('Save File Error:', err));
+};
+
+function loadFile() {
+  ipcRenderer.invoke('load-file')
+    .then(data => {
+      loomTreeRaw = data.loomTree;
+      loomTree = Object.assign(new LoomTree(), loomTreeRaw);
+      focus = loomTree.nodeStore[data.focus.id];
+      if ('evaluationPrompt' in focus) {
+        evaluationPromptField.value = focus.evaluationPrompt;
+      }
+      renderTick();
+    })
+    .catch(err => console.error('Load File Error:', err));
+};
+
+function autoSave() {
+  const data = {
+    loomTree,
+    "focus": focus,
+  };
+  ipcRenderer.invoke('auto-save', data)
+    .catch(err => console.error('Auto-save Error:', err));
+}
+
+ipcRenderer.on('invoke-action', (event, action) => {
+  switch(action) {
+    case 'save-file':
+      saveFile();
+      break;
+    case 'load-file':
+      loadFile();
+      break;
+    default:
+      console.log('Action not recognized', action);
+  }
+});
+
+    /*
     saveBtn.addEventListener('click', () => {
       const data = JSON.stringify({
         loomTree,
@@ -655,7 +703,7 @@ Three Words: Ancestors Lessen Death`
       };
       input.click();
     });
-
+    */
     rewardTune.onsubmit = async (e) => {
 	e.preventDefault();
 	diceSetup();
