@@ -120,11 +120,16 @@ function renderTree(node, container, maxParents) {
 	}
 	node = loomTree.nodeStore[node.parent];
     }
-  const ul = document.createElement('ul');
-  const li = document.createElement('li');
-  li.textContent = node.summary;
-  li.onclick = () => changeFocus(node.id);
-  ul.appendChild(li);
+    const ul = document.createElement('ul');
+    const li = document.createElement('li');
+    if (node.id == focus.id) {
+	li.id = "focused-node";
+    }
+    const span = document.createElement('span');
+    span.textContent = node.summary;
+    span.onclick = () => changeFocus(node.id);
+    li.appendChild(span);
+    ul.appendChild(li);
   
   if (node.children.length > 0) {
     renderChildren(node, li, 5);
@@ -142,11 +147,16 @@ function renderChildren(node, container, maxChildren) {
     for (let i = 0; i < node.children.length; i++) {
         let child = loomTree.nodeStore[node.children[i]];
         let childLi = document.createElement('li');
-        childLi.textContent = child.summary;
-	childLi.onclick = (event) => {
+	let childSpan = document.createElement('span');
+	if (child.id == focus.id) {
+	    childLi.id = "focused-node";
+	}
+	childSpan.textContent = child.summary;
+	childSpan.onclick = (event) => {
             event.stopPropagation();  // Stop event bubbling
             changeFocus(child.id);
 	};
+	childLi.append(childSpan);
         childrenUl.appendChild(childLi);
 
         // Recursively render the children of this child, decrementing maxChildren
@@ -158,9 +168,9 @@ function renderChildren(node, container, maxChildren) {
 
 var loomTree = new LoomTree();
 const loomTreeView = document.getElementById('loom-tree-view');
+let focus = loomTree.nodeStore['1'];
 renderTree(loomTree.root, loomTreeView, 2);
 
-let focus = loomTree.nodeStore['1'];
 
     function renderResponse(id) {
       const response = responseDict[id];
