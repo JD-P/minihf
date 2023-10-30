@@ -330,9 +330,9 @@ function renderTick() {
       } catch (error) {
 	  branchScoreSpan.textContent = "N.A.";
       }
-      branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+    branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
 	
-	controls.append(branchControlsDiv);
+    controls.append(branchControlsDiv);
 
     loomTreeView.innerHTML = '';
     renderTree(focus, loomTreeView, 2); 
@@ -498,7 +498,7 @@ Three Words: Ancestors Lessen Death`
     }
     
     function diceSetup() {
-      promptField.readOnly = true;
+      editor.readOnly = true;
       const diceHolder = document.getElementById("dice-holder");
       const die = document.createElement("p");
       die.innerText = '🎲';
@@ -507,16 +507,16 @@ Three Words: Ancestors Lessen Death`
     }
 
     function diceTeardown() {
-	promptField.readOnly = false;
+	editor.readOnly = false;
 	const die = document.getElementById('die');
 	die.remove();
     }
     
     async function reroll(id, weave=true) {
-      const rerollFocus = responseDict[id];
-      const parent = responseDict[rerollFocus.parent];
-      const prompt = rerollFocus['prompt'];
-      const evaluationPromptV = rerollFocus['evaluationPrompt'];
+	const rerollFocus = loomTree.nodeStore[id];
+	const parent = loomTree.nodeStore[rerollFocus.parent];
+	const prompt = loomTree.renderNode(rerollFocus);
+	const evaluationPromptV = rerollFocus['evaluationPrompt'];
       const wp = {"newTokens": settingNewTokens.value,
 		  "nTokens": settingNTokens.value,
 		  "budget": settingBudget.value,
@@ -532,19 +532,18 @@ Three Words: Ancestors Lessen Death`
 					       weave: weave,
 					       weaveParams: wp,
 					       focusId: parent.id});
-      newResponses.forEach(response => {    
-        responseDict[response.id] = { ...response,
-				      rating: null,
-				      parent: parent.id,
-				      children: []};
-        if (!response["evaluationPrompt"]) {
-	  responseDict[response.id]["evaluationPrompt"] = evaluationPromptField.value;
-        }
-        parent.children.push(response.id);
-      });
-      focus = responseDict[newResponses[0].id];
+	for (let i = 0; i < newResponses.length; i++) {
+	    const response = newResponses[i];
+	    const responseSummary = await getSummary(response["text"]);
+	    const responseNode = loomTree.createNode("gen",
+						     parent,
+						     response["text"],
+						     responseSummary);
+	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptField.value;
+	}
+	focus = loomTree.nodeStore[parent.children.at(-1)];
       diceTeardown();
-      renderResponses();
+      renderTick();
     };
 
     editor.addEventListener('keydown', async (e) => {
@@ -726,6 +725,8 @@ ipcRenderer.on('invoke-action', (event, action) => {
     // Expose functions to the global scope for use in inline event handlers
     window.thumbsUp = thumbsUp;
     window.thumbsDown = thumbsDown;
+
+renderTick();
 
 // TODO: Figure out why this ends up activating when you shift-up in the text editor
 /*
