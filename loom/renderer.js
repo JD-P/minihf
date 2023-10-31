@@ -171,87 +171,6 @@ const loomTreeView = document.getElementById('loom-tree-view');
 let focus = loomTree.nodeStore['1'];
 renderTree(loomTree.root, loomTreeView, 2);
 
-
-    function renderResponse(id) {
-      const response = responseDict[id];
-      var leftThumbClass = 'thumbs'	
-      var rightThumbClass = 'thumbs'
-      if (response.rating) {
-	  leftThumbClass = 'chosen'
-      }
-      else if (response.rating == false) {
-	  rightThumbClass = 'chosen'
-      }
-	
-      const responseElem = document.createElement('div');
-      responseElem.classList.add('response');
-      responseElem.id = id;
-
-      const textSpan = document.createElement('span');
-      textSpan.classList.add('text');
-	    
-      const userPromptSpan = document.createElement('span');
-      userPromptSpan.classList.add('user-prompt');
-      userPromptSpan.textContent = response.prompt;
-
-      if (id == focus.id) {
-	userPromptSpan.classList.remove('user-prompt');
-      }
-
-      if (response.text) {
-        textSpan.append(document.createTextNode(response.text));
-      }
-      else {
-        textSpan.append(userPromptSpan);
-      }
-
-      const branchControlsDiv = document.createElement('div');
-      branchControlsDiv.classList.add('branch-controls');
-
-      const branchControlButtonsDiv = document.createElement('div');
-      branchControlButtonsDiv.classList.add('branch-control-buttons');
-
-      const leftThumbSpan = document.createElement('span');
-      leftThumbSpan.classList.add(leftThumbClass);
-      leftThumbSpan.textContent = "👍";
-      leftThumbSpan.onclick = () => thumbsUp(id);
-
-      const rightThumbSpan = document.createElement('span');
-      rightThumbSpan.classList.add(rightThumbClass);
-      rightThumbSpan.textContent = "👎";
-      rightThumbSpan.onclick = () => thumbsDown(id);
-
-      branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
-
-      /* if (response.parent) {
-          const rerollSpan = document.createElement('span');
-          rerollSpan.classList.add('reroll');
-          rerollSpan.textContent = "🔄";
-          rerollSpan.onclick = () => reroll(id);
-          branchControlButtonsDiv.append(rerollSpan);
-      } */
-
-      const branchScoreSpan = document.createElement('span');
-	branchScoreSpan.classList.add('reward-score');
-      try {
-	  const score = response["nodes"].at(-1).score;
-	  const prob = 1 / (Math.exp(-score) + 1);
-	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
-      } catch (error) {
-	  branchScoreSpan.textContent = "N.A.";
-      }
-      branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
-
-      if (id == focus.id) {
-        responseElem.append(textSpan);
-      }
-      else {
-	responseElem.append(textSpan, branchControlsDiv);
-      }
-      return responseElem;
-
-    }
-
 function renderTick() {
     editor.value = '';
     var next = focus;
@@ -461,26 +380,8 @@ Three Words: Ancestors Lessen Death`
     return batch[1]["text"].trim();
 }
 
-    function thumbsUp(id) {
-	responseDict[id].rating = true;
-	renderedResponse = document.getElementById(id)
-	thumbUp = renderedResponse.children.item(1).children.item(0).children.item(0)
-	thumbUp.classList = ['chosen']
-	thumbDown = renderedResponse.children.item(1).children.item(0).children.item(1)
-	thumbDown.classList = ['thumbs']
-    }
-
-    function thumbsDown(id) {
-	responseDict[id].rating = false;
-	renderedResponse = document.getElementById(id)
-	thumbUp = renderedResponse.children.item(1).children.item(0).children.item(0)
-	thumbUp.classList = ['thumbs']
-	thumbDown = renderedResponse.children.item(1).children.item(0).children.item(1)
-	thumbDown.classList = ['chosen']
-    }
-
     function promptThumbsUp(id) {
-	responseDict[id].rating = true;
+	loomTree.nodeStore[id].rating = true;
 	promptBranchControls = document.getElementById("prompt-branch-controls")
 	thumbUp = promptBranchControls.children.item(0).children.item(0)
 	thumbUp.classList = ['chosen']
@@ -489,7 +390,7 @@ Three Words: Ancestors Lessen Death`
     }
 
     function promptThumbsDown(id) {
-	responseDict[id].rating = false;
+	loomTree.nodeStore[id].rating = false;
 	promptBranchControls = document.getElementById("prompt-branch-controls")
 	thumbUp = promptBranchControls.children.item(0).children.item(0)
 	thumbUp.classList = ['thumbs']
@@ -722,9 +623,6 @@ ipcRenderer.on('invoke-action', (event, action) => {
 	})
 	diceTeardown();
     };
-    // Expose functions to the global scope for use in inline event handlers
-    window.thumbsUp = thumbsUp;
-    window.thumbsDown = thumbsDown;
 
 renderTick();
 
