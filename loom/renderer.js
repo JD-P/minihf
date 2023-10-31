@@ -415,32 +415,59 @@ Three Words: Ancestors Lessen Death`
     
     async function reroll(id, weave=true) {
 	const rerollFocus = loomTree.nodeStore[id];
-	const parent = loomTree.nodeStore[rerollFocus.parent];
-	const prompt = loomTree.renderNode(rerollFocus);
-	const evaluationPromptV = rerollFocus['evaluationPrompt'];
-      const wp = {"newTokens": settingNewTokens.value,
-		  "nTokens": settingNTokens.value,
-		  "budget": settingBudget.value,
-		  "roundBudget": settingRoundBudget.value,
-		  "nExpand": settingNExpand.value,
-		  "beamWidth": settingBeamWidth.value,
-		  "maxLookahead": settingMaxLookahead.value,
-		  "temperature": settingTemperature.value
-		 }
-      diceSetup();
-      const newResponses = await getResponses({prompt: prompt,
-					       evaluationPrompt: evaluationPromptV,
-					       weave: weave,
-					       weaveParams: wp,
-					       focusId: parent.id});
-	for (let i = 0; i < newResponses.length; i++) {
-	    const response = newResponses[i];
+	let parent = loomTree.nodeStore[rerollFocus.parent];
+	let prompt = loomTree.renderNode(rerollFocus);
+	let includePrompt = false;
+	let evaluationPromptV = rerollFocus['evaluationPrompt'];
+	const writeNewNode = prompt !== editor.value;
+	if (writeNewNode) {
+	    parent = focus;
+	    prompt = editor.value;
+	    includePrompt = true;
+	    evaluationPromptV = evaluationPromptField.value;
+	}
+	
+	const wp = {"newTokens": settingNewTokens.value,
+		    "nTokens": settingNTokens.value,
+		    "budget": settingBudget.value,
+		    "roundBudget": settingRoundBudget.value,
+		    "nExpand": settingNExpand.value,
+		    "beamWidth": settingBeamWidth.value,
+		    "maxLookahead": settingMaxLookahead.value,
+		    "temperature": settingTemperature.value
+		   }
+	diceSetup();
+	const newResponses = await getResponses({prompt: prompt,
+						 evaluationPrompt: evaluationPromptV,
+						 weave: weave,
+						 weaveParams: wp,
+						 focusId: parent.id,
+						 includePrompt: includePrompt});
+
+	let responses = newResponses;
+	console.log(responses);
+	console.log(prompt);
+	console.log(editor.value);
+	console.log(prompt !== editor.value)
+	if (writeNewNode) {
+	    const userDiffSummary = await getSummary(prompt);
+	    const userDiff = loomTree.createNode("user",
+						 parent,
+						 prompt,
+						 userDiffSummary);
+	    
+	    parent = userDiff;
+	    responses = newResponses.slice(1);
+	}
+	console.log(responses);
+	for (let i = 0; i < responses.length; i++) {
+	    const response = responses[i];
 	    const responseSummary = await getSummary(response["text"]);
 	    const responseNode = loomTree.createNode("gen",
 						     parent,
 						     response["text"],
 						     responseSummary);
-	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptField.value;
+	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptV;
 	}
 	focus = loomTree.nodeStore[parent.children.at(-1)];
       diceTeardown();
@@ -474,59 +501,7 @@ Three Words: Ancestors Lessen Death`
       else if (!(e.shiftKey)) {
 	  return null
       }
-      const prompt = editor.value;	
-      editor.readOnly = true;
-      const diceHolder = document.getElementById("dice-holder");
-      const die = document.createElement("p");
-      die.innerText = '🎲';
-      die.id = 'die';
-      diceHolder.appendChild(die);
-	
-      let focusId;
-      if (focus) {
-	  focusId = focus.id;
-      }
-      else {
-	  focusId = null;
-      }
-      const wp = {"newTokens": settingNewTokens.value,
-		  "nTokens": settingNTokens.value,
-		  "budget": settingBudget.value,
-		  "roundBudget": settingRoundBudget.value,
-		  "nExpand": settingNExpand.value,
-		  "beamWidth": settingBeamWidth.value,
-		  "maxLookahead": settingMaxLookahead.value,
-		  "temperature": settingTemperature.value
-		 };
-      const newResponses = await getResponses({prompt: prompt,
-					       evaluationPrompt: evaluationPromptField.value,
-					       focusId: focusId,
-					       weave: settingUseWeave.checked,
-					       weaveParams: wp,
-					       includePrompt: true});
-
-	const userDiffSummary = await getSummary(prompt);
-	const userDiff = loomTree.createNode("user",
-					     focus,
-					     prompt,
-					     userDiffSummary);
-
-	focus = userDiff;
-	const responses = newResponses.slice(1);
-	for (let i = 0; i < responses.length; i++) {
-	    const response = responses[i];
-	    const responseSummary = await getSummary(response["text"]);
-	    const responseNode = loomTree.createNode("gen",
-						     focus,
-						     response["text"],
-						     responseSummary);
-	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptField.value;
-	}
-	focus = loomTree.nodeStore[focus.children[0]];
-      // editor.setSelectionRange(0,0);
-      editor.readOnly = false;
-      die.remove();
-      renderTick();
+	reroll(focus.id, settingUseWeave.checked);
     });
 
 const { ipcRenderer } = require('electron');
