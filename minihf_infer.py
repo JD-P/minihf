@@ -33,7 +33,7 @@ def set_adapter(model, adapter_name):
         model.set_adapter(old_adapter_name)
 
 def load_generator_evaluator():
-    evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
+    evaluator_adapter_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
     generator_adapter_name = ""
     peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
     model_name = peft_config.base_model_name_or_path
