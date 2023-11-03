@@ -1,40 +1,23 @@
+const { ipcRenderer } = require('electron');
 const DiffMatchPatch = require('diff-match-patch');
 const dmp = new DiffMatchPatch();
 
-function reversePatch(patch) {
-  const reversedPatch = { ...patch };
-  reversedPatch.diffs = patch.diffs.map(([op, text]) => [-op, text]);
-  return reversedPatch;
-}
-
-const text1 = "Hello my name is Bob.";
-const text2 = "Hello my name is Carol.\nCarol is a strange woman who likes to snack.";
-
-var patches = dmp.patch_make(text1, text2);
-const stringPatches = JSON.stringify(patches);
-var patches = JSON.parse(stringPatches);
-const [newText, results] = dmp.patch_apply(patches, text1);
-
-const reversedPatches = patches.map(reversePatch);
-const [originalText, unapplyResults] = dmp.patch_apply(reversedPatches, newText);
-
-    const settingUseWeave = document.getElementById('use-weave');
-    const settingNewTokens = document.getElementById('new-tokens');
-    const settingNTokens = document.getElementById('n-tokens');
-    const settingBudget = document.getElementById('budget');
-    const settingRoundBudget = document.getElementById('round-budget');
-    const settingNExpand = document.getElementById('n-expand');
-    const settingBeamWidth = document.getElementById('beam-width');
-    const settingMaxLookahead = document.getElementById('max-lookahead');
-    const settingTemperature = document.getElementById('temperature');
-    const rewardHeadDataset = document.getElementById('reward-head-dataset');
-    const rewardTune = document.getElementById('reward-tune');
-    const context = document.getElementById('context');
-    const editor = document.getElementById('editor');
-    const promptTokenCounter = document.getElementById('prompt-token-counter');
-    const saveBtn = document.getElementById('save');
-    const loadBtn = document.getElementById('load');
-    const evaluationPromptField = document.getElementById('evaluationPrompt');
+const settingUseWeave = document.getElementById('use-weave');
+const settingNewTokens = document.getElementById('new-tokens');
+const settingNTokens = document.getElementById('n-tokens');
+const settingBudget = document.getElementById('budget');
+const settingRoundBudget = document.getElementById('round-budget');
+const settingNExpand = document.getElementById('n-expand');
+const settingBeamWidth = document.getElementById('beam-width');
+const settingMaxLookahead = document.getElementById('max-lookahead');
+const settingTemperature = document.getElementById('temperature');
+const sampler = document.getElementById('sampler');
+const context = document.getElementById('context');
+const editor = document.getElementById('editor');
+const promptTokenCounter = document.getElementById('prompt-token-counter');
+const saveBtn = document.getElementById('save');
+const loadBtn = document.getElementById('load');
+const evaluationPromptField = document.getElementById('evaluationPrompt');
 
 class Node {
     constructor(id, type, parent, patch, summary) {
@@ -44,6 +27,7 @@ class Node {
 	this.patch = patch;
 	this.summary = summary;
 	this.rating = null;
+	this.read = false;
 	this.parent = parent;
 	this.children = [];
     }
@@ -108,11 +92,6 @@ class LoomTree {
     }
 }
 
-function summary(node) {
-  // Assume this function is implemented elsewhere
-  return "Summary goes here";  
-}
-
 function renderTree(node, container, maxParents) {
     for (let i = 0; i < maxParents; i++) {
 	if (node.parent === null) {
@@ -150,6 +129,9 @@ function renderChildren(node, container, maxChildren) {
 	let childSpan = document.createElement('span');
 	if (child.id == focus.id) {
 	    childLi.id = "focused-node";
+	}
+	if (child.read) {
+	    childLi.classList.add("read-tree-node");
 	}
 	childSpan.textContent = child.summary;
 	childSpan.onclick = (event) => {
@@ -253,8 +235,9 @@ function renderTick() {
 	
     controls.append(branchControlsDiv);
 
+    focus.read = true;
     loomTreeView.innerHTML = '';
-    renderTree(focus, loomTreeView, 2); 
+    renderTree(focus, loomTreeView, 2);
 }
 
     function rotate(direction) {
@@ -271,7 +254,10 @@ function renderTick() {
 
 function changeFocus(newFocusId) {
     focus = loomTree.nodeStore[newFocusId];
-    renderTick();  
+    renderTick();
+    editor.selectionStart = editor.value.length;
+    editor.selectionEnd = editor.value.length;
+    editor.focus();
 }
 	    
     
@@ -504,8 +490,6 @@ Three Words: Ancestors Lessen Death`
 	reroll(focus.id, settingUseWeave.checked);
     });
 
-const { ipcRenderer } = require('electron');
-
 function saveFile() {
   const data = {
     loomTree,
@@ -551,53 +535,16 @@ ipcRenderer.on('invoke-action', (event, action) => {
   }
 });
 
-    /*
-    saveBtn.addEventListener('click', () => {
-      const data = JSON.stringify({
-        loomTree,
-        "focus": focus,
-      });
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'conversation.json';
-      a.click();
-    });
+/* sampler.addEventListener('change', function() {
+    let selectedSampler = this.value;
+    if selectedSampler === ""
+    console.log(selectedSampler);
+}); */
 
-    loadBtn.addEventListener('click', () => {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'application/json';
-      input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-              const data = JSON.parse(e.target.result);
-		loomTreeRaw = data.loomTree;
-		loomTree = Object.assign(new LoomTree(), loomTreeRaw);
-		focus = loomTree.nodeStore[data.focus.id];
-		if ('evaluationPrompt' in focus) {
-		    evaluationPromptField.value = focus.evaluationPrompt;
-		};
-	    renderTick();
-            };
-            reader.readAsText(file);
-        }
-      };
-      input.click();
-    });
-    */
-    rewardTune.onsubmit = async (e) => {
-	e.preventDefault();
-	diceSetup();
-	r = await fetch("/train-reward-model", {
-	    method: 'POST',
-	    body: new FormData(rewardTune),
-	})
-	diceTeardown();
-    };
+editor.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  ipcRenderer.send('show-context-menu');
+});
 
 renderTick();
 

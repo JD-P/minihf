@@ -125,3 +125,14 @@ app.on('activate', function () {
     if (mainWindow === null) createWindow();
 });
 
+ipcMain.on('show-context-menu', (event) => {
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Cut', role: 'cut' },
+    { label: 'Copy', role: 'copy' },
+    { label: 'Paste', role: 'paste' },
+    { type: 'separator' },
+    { label: 'Select All', role: 'selectAll' },
+  ]);
+
+  contextMenu.popup(BrowserWindow.fromWebContents(event.sender));
+});

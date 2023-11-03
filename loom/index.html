@@ -79,10 +79,18 @@
 	opacity: 1;
     }
 
+.read-tree-node {
+    opacity: 0.6;
+}
+
 #focused-node > span {
     font-weight: bold;
 }
-    
+
+#focused-node {
+    opacity: 1.0 !important;
+}
+
 .branch-controls {
     display: flex;
     flex-direction: column;
@@ -204,10 +212,10 @@
 <body>
   <div id="settings-pane">
     <form>
-      <p>Weave Generator Settings</p>
+      <p>Weave Tree Search Settings</p>
       <div>
 	<input type="checkbox" id="use-weave" name="use-weave" checked>
-	<label for="use-weave">Use Weave Algorithm To Gen (AutoLoom)</label>
+	<label for="use-weave">Use Weave Algorithm To Search (AutoLoom)</label>
       </div>
       <label for="new-tokens">Max Tokens Per Weave:</label>
       <input type="text" id="new-tokens" name="new-tokens" value="256">
@@ -226,10 +234,18 @@
       <label for="temperature">Temperature</label>
       <input type="text" id="temperature" name="temperature" value="0.25">
     </form>
-    <form id="reward-tune">
-      <label for="reward-head-dataset">Reward Dataset:</label>
-      <input type="file" id="reward-head-dataset" name="file">
-      <input type="submit" id="submit-reward-tune" value="Train Reward Head">
+    <form id="sampler-setings">
+      <p>Sampler Settings</p>
+      <label for="sampler">Sampling Method</label>
+      <select id="sampler">
+	<option value="base">Base Model</option>
+	<option value="vae-base">Unguided VAE</option>
+	<option value="guided">Guided VAE</option>
+	<option value="paragraph">Paragraph</option>
+	<option value="bridge">Bridge</option>
+      </select>
+      <div id="sampler-option-menu">
+      </div>
     </form>
   </div>
   <div id="narrative-pane">
