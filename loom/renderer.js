@@ -401,13 +401,12 @@ Three Words: Ancestors Lessen Death`
     
     async function reroll(id, weave=true) {
 	const rerollFocus = loomTree.nodeStore[id];
-	let parent = loomTree.nodeStore[rerollFocus.parent];
+	let parent = rerollFocus;
 	let prompt = loomTree.renderNode(rerollFocus);
 	let includePrompt = false;
 	let evaluationPromptV = rerollFocus['evaluationPrompt'];
 	const writeNewNode = prompt !== editor.value;
 	if (writeNewNode) {
-	    parent = focus;
 	    prompt = editor.value;
 	    includePrompt = true;
 	    evaluationPromptV = evaluationPromptField.value;
@@ -427,7 +426,7 @@ Three Words: Ancestors Lessen Death`
 						 evaluationPrompt: evaluationPromptV,
 						 weave: weave,
 						 weaveParams: wp,
-						 focusId: parent.id,
+						 focusId: rerollFocus.id,
 						 includePrompt: includePrompt});
 
 	let responses = newResponses;
