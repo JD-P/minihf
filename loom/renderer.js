@@ -472,6 +472,7 @@ async function reroll(id, weave=true) {
 };
 
 var secondsSinceLastTyped = 0;
+var updatingNode = false;
 editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
     if (e.key != "Enter") {
@@ -503,9 +504,11 @@ editor.addEventListener('keydown', async (e) => {
 		const child = loomTree.createNode("user", focus, prompt, "New Node");
 		changeFocus(child.id);
 	    }
-	    else if (focus.type == "user") {
+	    else if (focus.type == "user" && !updatingNode) {
+		updatingNode = true;
 		const summary = await getSummary(prompt);
 		loomTree.updateNode(focus, prompt, summary);
+		updatingNode = false;
 	    }
 	    // Render only the loom tree so we don't interrupt their typing
 	    loomTreeView.innerHTML = '';
@@ -516,7 +519,7 @@ editor.addEventListener('keydown', async (e) => {
       else if (!(e.shiftKey)) {
 	  return null
       }
-	reroll(focus.id, settingUseWeave.checked);
+    reroll(focus.id, settingUseWeave.checked);
     });
 
 function saveFile() {
@@ -552,7 +555,6 @@ function autoSave() {
 }
 
 var secondsSinceLastSave = 0;
-var updatingNode = false;
 async function autoSaveTick() {
     secondsSinceLastSave += 1;
     secondsSinceLastTyped += 1;
