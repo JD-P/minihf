@@ -26,6 +26,7 @@ class Node {
 	this.type = type;
 	this.patch = patch;
 	this.summary = summary;
+	this.cache = null;
 	this.rating = null;
 	this.read = false;
 	this.parent = parent;
@@ -48,14 +49,36 @@ class LoomTree {
 	const patch = dmp.patch_make(parentRenderedText, text);
 	const newNodeId = String(Object.keys(this.nodeStore).length + 1);
 	const newNode = new Node(newNodeId, type, parent.id, patch, summary);
+	if (newNode.type == "user") {
+	    newNode.read = true;
+	}
 	parent.children.push(newNodeId);
 	this.nodeStore[newNodeId] = newNode;
 	return newNode;
     }
 
+    updateNode(node, text, summary) {
+	// Update a user written leaf
+	if (node.type == "gen") {
+	    return;
+	}
+	else if (node.children.length > 0) {
+	    return;
+	}
+	const parent = this.nodeStore[node.parent];
+	const parentRenderedText = this.renderNode(parent);
+	const patch = dmp.patch_make(parentRenderedText, text);
+	node.timestamp = Date.now();
+	node.patch = patch;
+	node.summary = summary;
+	}
+    
     renderNode(node) {
 	if (node == this.root) {
 	    return "";
+	}
+	if (node.cache) {
+	    return node.cache;
 	}
 	const patches = [];
 	patches.push(node.patch);
@@ -70,6 +93,9 @@ class LoomTree {
 		continue
 	    }
 	    var [outText, results] = dmp.patch_apply(patch, outText);
+	}
+	if (node.children.length > 0) {
+	    node.cache = outText;
 	}
 	return outText;
     }
@@ -254,10 +280,17 @@ function renderTick() {
 
 function changeFocus(newFocusId) {
     focus = loomTree.nodeStore[newFocusId];
-    renderTick();
-    editor.selectionStart = editor.value.length;
-    editor.selectionEnd = editor.value.length;
-    editor.focus();
+    // Prevent focus change from interrupting users typing
+    if (focus.type === "user" && focus.children.length == 0) {
+	loomTreeView.innerHTML = '';
+	renderTree(focus, loomTreeView, 2);
+    }
+    else {
+	renderTick();
+	editor.selectionStart = editor.value.length;
+	editor.selectionEnd = editor.value.length;
+	editor.focus();
+    }
 }
 	    
     
@@ -399,70 +432,53 @@ Three Words: Ancestors Lessen Death`
 	die.remove();
     }
     
-    async function reroll(id, weave=true) {
-	const rerollFocus = loomTree.nodeStore[id];
-	let parent = rerollFocus;
-	let prompt = loomTree.renderNode(rerollFocus);
-	let includePrompt = false;
-	let evaluationPromptV = rerollFocus['evaluationPrompt'];
-	const writeNewNode = prompt !== editor.value;
-	if (writeNewNode) {
-	    prompt = editor.value;
-	    includePrompt = true;
-	    evaluationPromptV = evaluationPromptField.value;
-	}
+async function reroll(id, weave=true) {
+    autoSaveTick();
+    const rerollFocus = loomTree.nodeStore[id];
+    let prompt = loomTree.renderNode(rerollFocus);
+    let includePrompt = false;
+    let evaluationPromptV = evaluationPromptField.value;
 	
-	const wp = {"newTokens": settingNewTokens.value,
-		    "nTokens": settingNTokens.value,
-		    "budget": settingBudget.value,
-		    "roundBudget": settingRoundBudget.value,
-		    "nExpand": settingNExpand.value,
-		    "beamWidth": settingBeamWidth.value,
-		    "maxLookahead": settingMaxLookahead.value,
-		    "temperature": settingTemperature.value
-		   }
-	diceSetup();
-	const newResponses = await getResponses({prompt: prompt,
-						 evaluationPrompt: evaluationPromptV,
-						 weave: weave,
-						 weaveParams: wp,
-						 focusId: rerollFocus.id,
-						 includePrompt: includePrompt});
+    const wp = {"newTokens": settingNewTokens.value,
+		"nTokens": settingNTokens.value,
+		"budget": settingBudget.value,
+		"roundBudget": settingRoundBudget.value,
+		"nExpand": settingNExpand.value,
+		"beamWidth": settingBeamWidth.value,
+		"maxLookahead": settingMaxLookahead.value,
+		"temperature": settingTemperature.value
+	       }
+    diceSetup();
+    const newResponses = await getResponses({prompt: prompt,
+					     evaluationPrompt: evaluationPromptV,
+					     weave: weave,
+					     weaveParams: wp,
+					     focusId: rerollFocus.id,
+					     includePrompt: includePrompt});
 
-	let responses = newResponses;
-	console.log(responses);
-	console.log(prompt);
-	console.log(editor.value);
-	console.log(prompt !== editor.value)
-	if (writeNewNode) {
-	    const userDiffSummary = await getSummary(prompt);
-	    const userDiff = loomTree.createNode("user",
-						 parent,
-						 prompt,
-						 userDiffSummary);
-	    
-	    parent = userDiff;
-	    responses = newResponses.slice(1);
-	}
-	console.log(responses);
-	for (let i = 0; i < responses.length; i++) {
-	    const response = responses[i];
-	    const responseSummary = await getSummary(response["text"]);
-	    const responseNode = loomTree.createNode("gen",
-						     parent,
-						     response["text"],
-						     responseSummary);
-	    loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptV;
-	}
-	focus = loomTree.nodeStore[parent.children.at(-1)];
-      diceTeardown();
-      renderTick();
-    };
+    let responses = newResponses;
+    for (let i = 0; i < responses.length; i++) {
+	const response = responses[i];
+	const responseSummary = await getSummary(response["text"]);
+	const responseNode = loomTree.createNode("gen",
+						 rerollFocus,
+						 response["text"],
+						 responseSummary);
+	loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptV;
+    }
+    focus = loomTree.nodeStore[rerollFocus.children.at(-1)];
+    diceTeardown();
+    renderTick();
+};
 
-    editor.addEventListener('keydown', async (e) => {
-      if (e.key != "Enter") {
+var secondsSinceLastTyped = 0;
+editor.addEventListener('keydown', async (e) => {
+    secondsSinceLastTyped = 0;
+    if (e.key != "Enter") {
 	const prompt = editor.value;
-	if (!(prompt.length % 8)) {
+	console.log(prompt);
+	console.log(prompt.length);
+	if ((prompt.length % 8) == 0) {
 	    const r = await fetch("http://localhost:5000/check-tokens", {
 		method: "POST",
 		body: JSON.stringify({
@@ -480,6 +496,20 @@ Three Words: Ancestors Lessen Death`
 		promptTokenCounter.classList = []
 	    }
 	    promptTokenCounter.innerText = tokens;
+
+	    // Autosave users work when writing next prompt
+	    if (focus.children.length > 0 || focus.type == "gen" || focus.type == "root") {
+		
+		const child = loomTree.createNode("user", focus, prompt, "New Node");
+		changeFocus(child.id);
+	    }
+	    else if (focus.type == "user") {
+		const summary = await getSummary(prompt);
+		loomTree.updateNode(focus, prompt, summary);
+	    }
+	    // Render only the loom tree so we don't interrupt their typing
+	    loomTreeView.innerHTML = '';
+	    renderTree(focus, loomTreeView, 2);
 	}
 	return null;
       }
@@ -520,6 +550,31 @@ function autoSave() {
   ipcRenderer.invoke('auto-save', data)
     .catch(err => console.error('Auto-save Error:', err));
 }
+
+var secondsSinceLastSave = 0;
+var updatingNode = false;
+async function autoSaveTick() {
+    secondsSinceLastSave += 1;
+    secondsSinceLastTyped += 1;
+    if (secondsSinceLastSave == 30 || secondsSinceLastSave > 40) {
+	autoSave();
+	secondsSinceLastSave = 0;
+    }
+    if (focus.type == "user" && focus.children.length == 0 && !updatingNode) {
+	const currentFocus = focus; // Stop focus from changing out underneath us
+	const prompt = loomTree.renderNode(currentFocus);
+	const newPrompt = editor.value;
+	if (prompt !== newPrompt && secondsSinceLastTyped >= 2) {
+	    updatingNode = true;
+	    const summary = await getSummary(prompt);
+	    loomTree.updateNode(currentFocus, newPrompt, summary);
+	    updatingNode = false;
+	}
+
+    }
+}
+    
+var autoSaveIntervalId = setInterval(autoSaveTick, 1000);
 
 ipcRenderer.on('invoke-action', (event, action) => {
   switch(action) {
