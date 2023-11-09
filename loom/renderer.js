@@ -157,7 +157,7 @@ function renderChildren(node, container, maxChildren) {
 	    childLi.id = "focused-node";
 	}
 	if (child.read) {
-	    childLi.classList.add("read-tree-node");
+	    childSpan.classList.add("read-tree-node");
 	}
 	childSpan.textContent = child.summary;
 	childSpan.onclick = (event) => {
