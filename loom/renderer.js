@@ -10,8 +10,9 @@ const settingRoundBudget = document.getElementById('round-budget');
 const settingNExpand = document.getElementById('n-expand');
 const settingBeamWidth = document.getElementById('beam-width');
 const settingMaxLookahead = document.getElementById('max-lookahead');
-const settingTemperature = document.getElementById('temperature');
+const settingWeaveTemperature = document.getElementById('weave-temperature');
 const sampler = document.getElementById('sampler');
+const samplerOptionMenu = document.getElementById('sampler-option-menu');
 const context = document.getElementById('context');
 const editor = document.getElementById('editor');
 const promptTokenCounter = document.getElementById('prompt-token-counter');
@@ -335,7 +336,7 @@ function changeFocus(newFocusId) {
     }
 
 async function getSummary(taskText) {
-    endpoint = "http://localhost:5000/generate"
+    endpoint = document.getElementById('api-url').value;
     summaryContext = `DEMO
 
 You are BigVAE, an instruction following language model that performs tasks for users. In the following task you are to summarize the following tasktext in 3 words. Write three words, like "man became sad" or "cat ate fish" which summarize the task text.
@@ -380,23 +381,44 @@ I'm to understand that in Vodou ancestor cults people work together to preserve 
 Three Words: Ancestors Lessen Death`
 
     prompt = "<tasktext>\n" + taskText + "\n</tasktext>\n\nThree Words:"
-    
-    r = await fetch(endpoint, {
-	method: "POST",
-	body: JSON.stringify({
-	    context: summaryContext,
-	    prompt: prompt,
-	    prompt_node: true,
-	    evaluationPrompt: "",
-	    new_tokens: 4,
-	    weave_beam_width: 1,
+
+    if (sampler.value !== "together") {
+	r = await fetch(endpoint, {
+	    method: "POST",
+	    body: JSON.stringify({
+		context: summaryContext,
+		prompt: prompt,
+		prompt_node: true,
+		evaluationPrompt: "",
+		new_tokens: 4,
+		weave_beam_width: 1,
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
 	    }
 	});
-    batch = await r.json();
-    return batch[1]["text"].trim();
+	let batch = await r.json();
+	return batch[1]["text"].trim();
+    } // TODO: Figure out how I might have to change this if I end up supporting
+    // multiple APIs
+    else {
+	const tp = {
+	    "api-key": document.getElementById('api-key').value,
+	    "output-branches": 1,
+	    "model-name": document.getElementById('model-name').value,
+	    "tokens-per-branch": 4,
+	    "temperature": document.getElementById('temperature').value,
+	    "top-p": document.getElementById('top-p').value,
+	    "top-k": document.getElementById('top-k').value,
+	    "repetition_penalty": document.getElementById('repetition-penalty').value,
+	};
+	let batch = await togetherGetResponses({endpoint: endpoint,
+						prompt: summaryContext + "\n\n" + prompt,
+						togetherParams: tp}
+					      );
+	console.log(batch[0]["text"]);
+	return batch[0]["text"];
+    }
 }
 
     function promptThumbsUp(id) {
@@ -431,9 +453,47 @@ Three Words: Ancestors Lessen Death`
 	const die = document.getElementById('die');
 	die.remove();
     }
-    
+
+async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
+    const tp = togetherParams;
+    const auth_token = "Bearer " + tp["api-key"];
+    let batch = [];
+    for (let i = 0; i < tp["output-branches"]; i++) {
+	let r = await fetch(endpoint, {
+	    method: "POST",
+	    body: JSON.stringify({
+		model: tp["model-name"],
+		prompt: prompt,
+		max_tokens: Number(tp["tokens-per-branch"]),
+		temperature: Number(tp["temperature"]),
+		top_p: Number(tp["top-p"]),
+		top_k: Number(tp["top-k"]),
+		repetition_penalty: Number(tp["repetition_penalty"]),
+	    }),
+	    headers: {
+		"accept": "application/json",
+		"Content-type": "application/json; charset=UTF-8",
+		"Authorization": auth_token,
+	    }
+	});
+	let response_json = await r.json();
+	batch.push({"text": response_json["output"]["choices"][0]["text"],
+		      "model": response_json["model"]});
+    }
+    return batch;
+};
+
 async function reroll(id, weave=true) {
-    autoSaveTick();
+    if (sampler.value === "base") {
+	baseRoll(id, weave);
+    }
+    else if (sampler.value === "together") {
+	togetherRoll(id);
+    }
+};
+
+async function baseRoll(id, weave=true) {
+    await autoSaveTick();
     const rerollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rerollFocus);
     let includePrompt = false;
@@ -471,33 +531,72 @@ async function reroll(id, weave=true) {
     renderTick();
 };
 
+async function togetherRoll(id) {
+    await autoSaveTick();
+    const rollFocus = loomTree.nodeStore[id];
+    let prompt = loomTree.renderNode(rollFocus);
+    console.log(prompt);
+    
+    const tp = {
+	"api-key": document.getElementById('api-key').value,
+	"model-name": document.getElementById('model-name').value,
+	"output-branches": document.getElementById('output-branches').value,
+	"tokens-per-branch": document.getElementById('tokens-per-branch').value,
+	"temperature": document.getElementById('temperature').value,
+	"top-p": document.getElementById('top-p').value,
+	"top-k": document.getElementById('top-k').value,
+	"repetition_penalty": document.getElementById('repetition-penalty').value,
+    };
+    diceSetup();
+    const newResponses = await togetherGetResponses({
+	endpoint: document.getElementById('api-url').value,
+	prompt: prompt,
+	togetherParams: tp,
+    });
+    for (let i = 0; i < newResponses.length; i++) {
+	response = newResponses[i];
+	const responseSummary = await getSummary(response["text"]);
+	const responseNode = loomTree.createNode("gen",
+						 rollFocus,
+						 response["text"],
+						 responseSummary);
+	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
+    }
+    focus = loomTree.nodeStore[rollFocus.children.at(-1)];
+    diceTeardown();
+    renderTick();
+};
+			       
+    
 var secondsSinceLastTyped = 0;
 var updatingNode = false;
 editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
     if (e.key != "Enter") {
 	const prompt = editor.value;
-	console.log(prompt);
-	console.log(prompt.length);
 	if ((prompt.length % 8) == 0) {
-	    const r = await fetch("http://localhost:5000/check-tokens", {
-		method: "POST",
-		body: JSON.stringify({
-		    text: prompt,
-		}),
-		headers: {
-		    "Content-type": "application/json; charset=UTF-8",
+	    try {
+		const r = await fetch("http://localhost:5000/check-tokens", {
+		    method: "POST",
+		    body: JSON.stringify({
+			text: prompt,
+		    }),
+		    headers: {
+			"Content-type": "application/json; charset=UTF-8",
+		    }
+		});
+		const tokens = await r.json();
+		if (tokens > (4096 - settingNewTokens.value)) {
+		    promptTokenCounter.classList = ['over-token-limit']
 		}
-	    });
-	    const tokens = await r.json();
-	    if (tokens > (4096 - settingNewTokens.value)) {
-		promptTokenCounter.classList = ['over-token-limit']
-	    }
-	    else {
-		promptTokenCounter.classList = []
-	    }
-	    promptTokenCounter.innerText = tokens;
-
+		else {
+		    promptTokenCounter.classList = []
+		}
+		promptTokenCounter.innerText = tokens;
+	    } catch (error) {
+		console.error("The MiniHF server didn't respond to a token count check. Is it running?",
+			      error.message);
+	    };
 	    // Autosave users work when writing next prompt
 	    if (focus.children.length > 0 || focus.type == "gen" || focus.type == "root") {
 		
@@ -505,6 +604,7 @@ editor.addEventListener('keydown', async (e) => {
 		changeFocus(child.id);
 	    }
 	    else if (focus.type == "user" && !updatingNode) {
+		console.log("tick");
 		updatingNode = true;
 		const summary = await getSummary(prompt);
 		loomTree.updateNode(focus, prompt, summary);
@@ -564,12 +664,16 @@ async function autoSaveTick() {
     }
     if (focus.type == "user" && focus.children.length == 0 && !updatingNode) {
 	const currentFocus = focus; // Stop focus from changing out underneath us
-	const prompt = loomTree.renderNode(currentFocus);
 	const newPrompt = editor.value;
+	const prompt = loomTree.renderNode(currentFocus);
 	if (prompt !== newPrompt && secondsSinceLastTyped >= 2) {
 	    updatingNode = true;
-	    const summary = await getSummary(prompt);
-	    loomTree.updateNode(currentFocus, newPrompt, summary);
+	    try {
+		const summary = await getSummary(prompt);
+		loomTree.updateNode(currentFocus, newPrompt, summary);
+	    } catch (error) {
+		loomTree.updateNode(currentFocus, newPrompt, "Server Response Error");
+	    }
 	    updatingNode = false;
 	}
 
@@ -591,53 +695,133 @@ ipcRenderer.on('invoke-action', (event, action) => {
   }
 });
 
-/* sampler.addEventListener('change', function() {
+function baseSamplerMenu() {
+    samplerOptionMenu.innerHTML = '';
+    const apiUrlLabel = document.createElement('label');
+    apiUrlLabel.for = "api-url";
+    apiUrlLabel.textContent="API URL";
+    const apiUrl = document.createElement('input');
+    apiUrl.type = "text";
+    apiUrl.id = "api-url";
+    apiUrl.name = "api-url";
+    apiUrl.value = "http://localhost:5000/";
+    const outputBranchesLabel = document.createElement('label');
+    outputBranchesLabel.for = "output-branches";
+    outputBranchesLabel.classList.add("first-sampler-menu-item");
+    outputBranchesLabel.textContent="Output Branches";
+    const outputBranches = document.createElement("input");
+    outputBranches.type = "text";
+    outputBranches.id = "output-branches";
+    outputBranches.name = "output-branches";
+    outputBranches.value = "1";
+    const tokensPerBranchLabel = document.createElement('label');
+    tokensPerBranchLabel.for = "tokens-per-branch";
+    tokensPerBranchLabel.textContent = "Tokens Per Branch";
+    const tokensPerBranch = document.createElement('input');
+    tokensPerBranch.type = "text";
+    tokensPerBranch.id = "tokens-per-branch";
+    tokensPerBranch.name = "tokens-per-branch";
+    tokensPerBranch.value = "256";
+    const temperatureLabel = document.createElement('label');
+    temperatureLabel.for = "temperature";
+    temperatureLabel.textContent = "Temperature";
+    const temperature = document.createElement('input');
+    temperature.type = "text";
+    temperature.id = "temperature";
+    temperature.name = "temperature";
+    temperature.value = "0.9";
+    samplerOptionMenu.append(apiUrlLabel);
+    samplerOptionMenu.append(apiUrl);
+    samplerOptionMenu.append(outputBranchesLabel);
+    samplerOptionMenu.append(outputBranches);
+    samplerOptionMenu.append(tokensPerBranchLabel);
+    samplerOptionMenu.append(tokensPerBranch);
+    samplerOptionMenu.append(temperatureLabel);
+    samplerOptionMenu.append(temperature);
+}
+
+function togetherSamplerMenu() {
+    baseSamplerMenu();
+    const apiUrl = document.getElementById('api-url');
+    apiUrl.value = "https://api.together.xyz/inference";
+    const topPLabel = document.createElement('label');
+    topPLabel.for = "top-p";
+    topPLabel.textContent = "Top-P";
+    const topP = document.createElement('input');
+    topP.type = "text";
+    topP.id = "top-p";
+    topP.name = "top-p";
+    topP.value = "1";
+    const topKLabel = document.createElement('label');
+    topKLabel.for = "top-k";
+    topKLabel.textContent = "Top-K";
+    const topK = document.createElement('input');
+    topK.type = "text";
+    topK.id = "top-k";
+    topK.name = "top-k";
+    topK.value = "100";
+    const repetitionPenaltyLabel = document.createElement('label');
+    repetitionPenaltyLabel.for = "repetition-penalty";
+    repetitionPenaltyLabel.textContent = "Repetition Penalty";
+    const repetitionPenalty = document.createElement('input');
+    repetitionPenalty.type = "text";
+    repetitionPenalty.id = "repetition-penalty";
+    repetitionPenalty.name = "repetition-penalty";
+    repetitionPenalty.value = "1";
+    const apiKeyLabel = document.createElement('label');
+    apiKeyLabel.for = "api-key";
+    apiKeyLabel.textContent = "API Key";
+    const apiKey = document.createElement('input');
+    apiKey.type = "text";
+    apiKey.id = "api-key";
+    apiKey.name = "api-key";
+    const modelNameLabel = document.createElement('label');
+    modelNameLabel.for = "model-name";
+    modelNameLabel.textContent = "Model Name";
+    const modelName = document.createElement('input');
+    modelName.type = "text";
+    modelName.id = "model-name";
+    modelName.name = "model-name";
+    modelName.value = "togethercomputer/llama-2-70b";
+    samplerOptionMenu.append(topPLabel);
+    samplerOptionMenu.append(topP);
+    samplerOptionMenu.append(topKLabel);
+    samplerOptionMenu.append(topK);
+    samplerOptionMenu.append(repetitionPenaltyLabel);
+    samplerOptionMenu.append(repetitionPenalty);
+    samplerOptionMenu.append(apiKeyLabel);
+    samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(modelNameLabel);
+    samplerOptionMenu.append(modelName);
+}
+
+sampler.addEventListener('change', function() {
     let selectedSampler = this.value;
-    if selectedSampler === ""
+    if (selectedSampler === "base") {
+	baseSamplerMenu();
+    }
+    else if (selectedSampler === "vae-base") {
+	vaeBaseSamplerMenu();
+    }
+    else if (selectedSampler == "guided") {
+	vaeGuidedSamplerMenu();
+    }
+    else if (selectedSampler == "vae-paragraph") {
+	vaeParagraphSamplerMenu();
+    }
+    else if (selectedSampler == "vae-bridge") {
+	vaeBridgeSamplerMenu();
+    }
+    else if (selectedSampler == "together") {
+	togetherSamplerMenu();
+    }
     console.log(selectedSampler);
-}); */
+});
 
 editor.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   ipcRenderer.send('show-context-menu');
 });
 
-renderTick();
-
-// TODO: Figure out why this ends up activating when you shift-up in the text editor
-/*
-    window.addEventListener('keydown', async (e) => {
-      if (e.shiftKey) {
-        if (window.navMode) {
-	    window.navMode = null;
-	    const rotateButtons = document.getElementById("rotate-buttons");
-	    rotateButtons.classList.remove("nav-mode");
-	}
-	else if (window.navMode == false) {
-	    window.navMode = true;
-	    const rotateButtons = document.getElementById("rotate-buttons");
-	    rotateButtons.classList.add("nav-mode");
-	}
-	else {
-	    setTimeout(() => {
-	      if (window.navMode == false) {
-	        window.navMode = null;
-	      }
-	    }, 300);
-	    window.navMode = false;
-	}
-      }
-      if (e.key == "ArrowUp" && window.navMode == true) {
-	changeDepth("up");
-      }
-      if (e.key == "ArrowDown" && window.navMode == true) {
-	changeDepth("down");
-      }
-      if (e.key == "ArrowLeft" && window.navMode == true) {
-	rotate("left");
-      }
-      if (e.key == "ArrowRight" && window.navMode == true) {
-        rotate("right");
-      }
-    });	
-*/	    
+renderTick();	    
+baseSamplerMenu();
