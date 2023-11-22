@@ -669,7 +669,12 @@ async function autoSaveTick() {
 	if (prompt !== newPrompt && secondsSinceLastTyped >= 2) {
 	    updatingNode = true;
 	    try {
-		const summary = await getSummary(prompt);
+		let summary = await getSummary(prompt);
+		console.log(summary);
+		console.log(summary.codePointAt(0));
+		if (summary.trim() === "") {
+		    summary = "Summary Not Given";
+		}
 		loomTree.updateNode(currentFocus, newPrompt, summary);
 	    } catch (error) {
 		loomTree.updateNode(currentFocus, newPrompt, "Server Response Error");
