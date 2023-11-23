@@ -19,6 +19,7 @@ const promptTokenCounter = document.getElementById('prompt-token-counter');
 const saveBtn = document.getElementById('save');
 const loadBtn = document.getElementById('load');
 const evaluationPromptField = document.getElementById('evaluationPrompt');
+const errorMessage = document.getElementById('error-message');
 
 class Node {
     constructor(id, type, parent, patch, summary) {
@@ -265,6 +266,7 @@ function renderTick() {
     focus.read = true;
     loomTreeView.innerHTML = '';
     renderTree(focus, loomTreeView, 2);
+    errorMessage.textContent = "";
 }
 
     function rotate(direction) {
@@ -295,22 +297,22 @@ function changeFocus(newFocusId) {
 }
 	    
     
-    async function getResponses({prompt, evaluationPrompt,
+async function getResponses(endpoint, {prompt, evaluationPrompt,
 				 weave = true, weaveParams = {},
 				 focusId = null, includePrompt = false}) {
-	let wp = weaveParams;
-	var context = ""
-	if (focusId) {
-	    loomTree.renderNode(loomTree.nodeStore[focusId]);
-	}
-	context.split("").reverse().join("");
-	let endpoint;
-	if (weave) {
-	  endpoint = "http://localhost:5000/weave";
-	}
-	else {
-	  endpoint = "http://localhost:5000/generate";
-	}
+    let wp = weaveParams;
+    var context = ""
+    if (focusId) {
+	loomTree.renderNode(loomTree.nodeStore[focusId]);
+    }
+    context.split("").reverse().join("");
+    if (weave) {
+	endpoint = endpoint + "weave";
+    }
+    else {
+	endpoint = endpoint + "generate";
+    }
+    
 	r = await fetch(endpoint, {
 	    method: "POST",
 	    body: JSON.stringify({
@@ -498,6 +500,7 @@ async function baseRoll(id, weave=true) {
     let prompt = loomTree.renderNode(rerollFocus);
     let includePrompt = false;
     let evaluationPromptV = evaluationPromptField.value;
+    let endpoint = document.getElementById('api-url').value;
 	
     const wp = {"newTokens": settingNewTokens.value,
 		"nTokens": settingNTokens.value,
@@ -506,16 +509,23 @@ async function baseRoll(id, weave=true) {
 		"nExpand": settingNExpand.value,
 		"beamWidth": settingBeamWidth.value,
 		"maxLookahead": settingMaxLookahead.value,
-		"temperature": settingTemperature.value
+		"temperature": document.getElementById('temperature').value
 	       }
     diceSetup();
-    const newResponses = await getResponses({prompt: prompt,
-					     evaluationPrompt: evaluationPromptV,
-					     weave: weave,
-					     weaveParams: wp,
-					     focusId: rerollFocus.id,
-					     includePrompt: includePrompt});
-
+    let newResponses;
+    try {
+	newResponses = await getResponses(endpoint, {prompt: prompt,
+						     evaluationPrompt: evaluationPromptV,
+						     weave: weave,
+						     weaveParams: wp,
+						     focusId: rerollFocus.id,
+						     includePrompt: includePrompt}
+					 );
+    } catch (error) {
+	diceTeardown();
+	errorMessage.textContent = "Error: " + error.message;
+	throw error;
+    }
     let responses = newResponses;
     for (let i = 0; i < responses.length; i++) {
 	const response = responses[i];
@@ -535,7 +545,6 @@ async function togetherRoll(id) {
     await autoSaveTick();
     const rollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rollFocus);
-    console.log(prompt);
     
     const tp = {
 	"api-key": document.getElementById('api-key').value,
@@ -548,11 +557,18 @@ async function togetherRoll(id) {
 	"repetition_penalty": document.getElementById('repetition-penalty').value,
     };
     diceSetup();
-    const newResponses = await togetherGetResponses({
-	endpoint: document.getElementById('api-url').value,
-	prompt: prompt,
-	togetherParams: tp,
-    });
+    let newResponses;
+    try {
+	newResponses = await togetherGetResponses({
+	    endpoint: document.getElementById('api-url').value,
+	    prompt: prompt,
+	    togetherParams: tp,
+	});
+    } catch (error) {
+	diceTeardown();
+	errorMessage.textContent = "Error: " + error.message;
+	throw error;
+    }
     for (let i = 0; i < newResponses.length; i++) {
 	response = newResponses[i];
 	const responseSummary = await getSummary(response["text"]);
@@ -604,11 +620,16 @@ editor.addEventListener('keydown', async (e) => {
 		changeFocus(child.id);
 	    }
 	    else if (focus.type == "user" && !updatingNode) {
-		console.log("tick");
-		updatingNode = true;
-		const summary = await getSummary(prompt);
-		loomTree.updateNode(focus, prompt, summary);
-		updatingNode = false;
+		try {
+		    updatingNode = true;
+		    const summary = await getSummary(prompt);
+		    loomTree.updateNode(focus, prompt, summary);
+		    updatingNode = false;
+		}
+		catch (error) {
+		    console.log(error);
+		    updatingNode = false;
+		}
 	    }
 	    // Render only the loom tree so we don't interrupt their typing
 	    loomTreeView.innerHTML = '';
@@ -670,8 +691,6 @@ async function autoSaveTick() {
 	    updatingNode = true;
 	    try {
 		let summary = await getSummary(prompt);
-		console.log(summary);
-		console.log(summary.codePointAt(0));
 		if (summary.trim() === "") {
 		    summary = "Summary Not Given";
 		}
