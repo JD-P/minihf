@@ -265,8 +265,8 @@ def main():
     else:
         model.add_adapter("default", peft_config)
         model.train()
-    # model.gradient_checkpointing_enable()
-    # model.enable_input_require_grads()
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
     if accelerator.is_local_main_process:
         model.print_trainable_parameters()
 
@@ -318,15 +318,10 @@ def main():
                     pad_token_id=tokenizer.eos_token_id,
                     top_k=0,
                 )
-                attention_mask = torch.cat(
-                    [inputs.attention_mask[indices], torch.ones_like(tokens[:, input_len:])], dim=1
-                )
-                outputs = model(tokens, attention_mask=attention_mask)
+            attention_mask = torch.cat(
+                [inputs.attention_mask[indices], torch.ones_like(tokens[:, input_len:])], dim=1
+            )
             texts = [tokenizer.decode(t, skip_special_tokens=True) for t in tokens]
-            logits = at_least_float32(outputs.logits)
-            logp = dice.logp_categorical(logits[:, input_len - 1 : -1], tokens[:, input_len:])
-            logp_sum = torch.sum(logp, dim=1)
-            logp_cumsum = torch.cumsum(logp, dim=1)
 
             with torch.no_grad(), set_adapter(accelerator.unwrap_model(model), None):
                 outputs_orig = model(tokens, attention_mask=attention_mask)
@@ -335,7 +330,6 @@ def main():
                 logits_orig[:, input_len - 1 : -1], tokens[:, input_len:]
             )
             logp_orig_cumsum = torch.cumsum(logp_orig, dim=1)
-            kls = inv_cumsum(kl_div_est(logp_cumsum.detach(), logp_orig_cumsum.detach()))
 
             split_texts = [
                 {"prompt": prompts[index], "response": text[len(prompts[index]) :]}
@@ -366,19 +360,27 @@ def main():
                 scores * principle_signs[None], principle_weights[None], dim=1
             ).to(device)
 
-            losses_main = -F.logsigmoid(scores)
-            losses_main = dice.cost_node(losses_main, [logp_sum])
-            losses_main_global = accelerator.reduce(losses_main, "mean")
-            losses_main += baseline(losses_main_global, [logp_sum])
-            losses_kl = kls * kl_sched(i)
-            losses_kl = dice.cost_node(losses_kl, [logp_cumsum])
-            losses_kl_global = accelerator.reduce(losses_kl, "mean")
-            losses_kl += baseline_kl(losses_kl_global, [logp_cumsum])
-            loss_main = losses_main.mean()
-            loss_kl = losses_kl.mean()
-            loss = loss_main + loss_kl
-            loss_global = accelerator.reduce(loss, "mean")
-            accelerator.backward(loss)
+            with set_adapter(accelerator.unwrap_model(model), "default"):
+                outputs = model(tokens, attention_mask=attention_mask)
+                logits = at_least_float32(outputs.logits)
+                logp = dice.logp_categorical(logits[:, input_len - 1 : -1], tokens[:, input_len:])
+                logp_sum = torch.sum(logp, dim=1)
+                logp_cumsum = torch.cumsum(logp, dim=1)
+                kls = inv_cumsum(kl_div_est(logp_cumsum.detach(), logp_orig_cumsum.detach()))
+
+                losses_main = -F.logsigmoid(scores)
+                losses_main = dice.cost_node(losses_main, [logp_sum])
+                losses_main_global = accelerator.reduce(losses_main, "mean")
+                losses_main += baseline(losses_main_global, [logp_sum])
+                losses_kl = kls * kl_sched(i)
+                losses_kl = dice.cost_node(losses_kl, [logp_cumsum])
+                losses_kl_global = accelerator.reduce(losses_kl, "mean")
+                losses_kl += baseline_kl(losses_kl_global, [logp_cumsum])
+                loss_main = losses_main.mean()
+                loss_kl = losses_kl.mean()
+                loss = loss_main + loss_kl
+                loss_global = accelerator.reduce(loss, "mean")
+                accelerator.backward(loss)
 
             print0(
                 f"step: {i}, loss: {loss_global.item():g}, main: {losses_main_global.mean().item():g}, kl: {losses_kl_global.mean().item():g}"
