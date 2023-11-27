@@ -1,0 +1,38 @@
+graph TB
+
+
+U[User]
+A[MiniHF User Data]
+B[Bulk Pretraining Data]
+C[Bulk Instruction Data]
+CON[RLAIF Eval Prompts]
+
+D[Generator LoRa]
+E[Evaluator LoRa]
+
+F[SFT Script for Generator LoRa]
+G[SFT Script for Evaluator LoRa]
+H[RLAIF Script for Generator LoRa]
+
+A -- input --> F
+A -- input --> G
+A -- input --> U
+B -- input --> F
+C -- input --> G
+CON -- input --> H
+
+F -- output --> D
+G -- output --> E
+
+E -- input --> H
+H -- output --> D
+
+U -- contributes to --> A
+D -- contributes to --> A
+E -- contributes to --> A
+
+
+classDef dataSource fill:#69f46b;
+class CON,A,B,C dataSource;
+classDef lora fill:#f4ca69;
+class U,D,E lora;

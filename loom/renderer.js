@@ -385,7 +385,7 @@ Three Words: Ancestors Lessen Death`
     prompt = "<tasktext>\n" + taskText + "\n</tasktext>\n\nThree Words:"
 
     if (sampler.value !== "together") {
-	r = await fetch(endpoint, {
+	r = await fetch(endpoint + "generate", {
 	    method: "POST",
 	    body: JSON.stringify({
 		context: summaryContext,
@@ -456,6 +456,20 @@ Three Words: Ancestors Lessen Death`
 	die.remove();
     }
 
+async function vaeGuidedGetResponses({endpoint, params = {}}) {
+    let batch = [];
+    let r = await fetch(endpoint, {
+	method: "POST",
+	body: JSON.stringify(params),
+	headers: {
+	    "Content-type": "application/json; charset=UTF-8",
+	    "accept": "application/json",
+	    }
+	});
+    batch = await r.json();
+    return batch;
+}
+    
 async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
     const tp = togetherParams;
     const auth_token = "Bearer " + tp["api-key"];
@@ -488,6 +502,9 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
 async function reroll(id, weave=true) {
     if (sampler.value === "base") {
 	baseRoll(id, weave);
+    }
+    else if (sampler.value === "vae-guided") {
+	await vaeGuidedRoll(id);
     }
     else if (sampler.value === "together") {
 	togetherRoll(id);
@@ -540,6 +557,69 @@ async function baseRoll(id, weave=true) {
     diceTeardown();
     renderTick();
 };
+
+function readFileAsJson(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const json = JSON.parse(e.target.result);
+                resolve(json);
+            } catch (error) {
+                reject(error);
+            }
+        };
+        reader.onerror = () => {
+            reject(new Error('Error reading the file'));
+        };
+        reader.readAsText(file);
+    });
+}
+
+async function vaeGuidedRoll(id) {
+    await autoSaveTick();
+    const rollFocus = loomTree.nodeStore[id];
+    let prompt = loomTree.renderNode(rollFocus);
+
+    const params = {"output_branches": document.getElementById('output-branches').value,
+	            "tokens_per_branch": document.getElementById('tokens-per-branch').value,
+		    "prompt": prompt};
+    const fileInput = document.getElementById('task-vector');
+    if (fileInput.files.length > 0) {
+        const file = fileInput.files[0];
+        try {
+	    params["task_vector"] = await readFileAsJson(file);
+	} catch (error) {
+	    errorMessage.textContent = "Error: " + error.message;
+	    return;
+	}
+    }
+    
+    diceSetup();
+    let responses;
+    try {
+	responses = await vaeGuidedGetResponses({
+	    endpoint: document.getElementById('api-url').value + "vae-guided",
+	    params: params,
+	});
+    } catch (error) {
+	diceTeardown();
+	errorMessage.textContent = "Error: " + error.message;
+	throw error;
+    }
+    for (let i = 0; i < responses.length; i++) {
+	const response = responses[i];
+	const responseSummary = await getSummary(response["text"]);
+	const responseNode = loomTree.createNode("gen",
+						 rollFocus,
+						 response["text"],
+						 responseSummary);
+    }
+    focus = loomTree.nodeStore[rollFocus.children.at(-1)];
+    diceTeardown();
+    renderTick();
+}
+						   
 
 async function togetherRoll(id) {
     await autoSaveTick();
@@ -764,6 +844,20 @@ function baseSamplerMenu() {
     samplerOptionMenu.append(temperature);
 }
 
+function vaeGuidedSamplerMenu() {
+    baseSamplerMenu();
+    const taskVectorLabel = document.createElement('label');
+    taskVectorLabel.for = "task-vector";
+    taskVectorLabel.textContent = "Task Vector";
+    const taskVector = document.createElement('input');
+    taskVector.type = "file";
+    taskVector.id = "task-vector";
+    taskVector.name = "task-vector";
+    samplerOptionMenu.append(taskVectorLabel);
+    samplerOptionMenu.append(taskVector);
+    
+}
+
 function togetherSamplerMenu() {
     baseSamplerMenu();
     const apiUrl = document.getElementById('api-url');
@@ -827,7 +921,7 @@ sampler.addEventListener('change', function() {
     else if (selectedSampler === "vae-base") {
 	vaeBaseSamplerMenu();
     }
-    else if (selectedSampler == "guided") {
+    else if (selectedSampler == "vae-guided") {
 	vaeGuidedSamplerMenu();
     }
     else if (selectedSampler == "vae-paragraph") {
