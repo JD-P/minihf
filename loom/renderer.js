@@ -28,7 +28,7 @@ class Node {
 	this.type = type;
 	this.patch = patch;
 	this.summary = summary;
-	this.cache = null;
+	this.cache = false;
 	this.rating = null;
 	this.read = false;
 	this.parent = parent;
@@ -382,7 +382,10 @@ I'm to understand that in Vodou ancestor cults people work together to preserve 
 
 Three Words: Ancestors Lessen Death`
 
-    prompt = "<tasktext>\n" + taskText + "\n</tasktext>\n\nThree Words:"
+    // Limit context to 8 * 512, where eight is the average number of letters in a word
+    // and 512 is the number of words to summarize over
+    // otherwise we eventually end up pushing the few shot prompt out of the context window
+    prompt = "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
 
     if (sampler.value !== "together") {
 	r = await fetch(endpoint + "generate", {
@@ -418,7 +421,7 @@ Three Words: Ancestors Lessen Death`
 						prompt: summaryContext + "\n\n" + prompt,
 						togetherParams: tp}
 					      );
-	console.log(batch[0]["text"]);
+	console.log(batch);
 	return batch[0]["text"];
     }
 }
@@ -469,33 +472,43 @@ async function vaeGuidedGetResponses({endpoint, params = {}}) {
     batch = await r.json();
     return batch;
 }
-    
+
+async function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
     const tp = togetherParams;
     const auth_token = "Bearer " + tp["api-key"];
-    let batch = [];
-    for (let i = 0; i < tp["output-branches"]; i++) {
-	let r = await fetch(endpoint, {
-	    method: "POST",
-	    body: JSON.stringify({
-		model: tp["model-name"],
-		prompt: prompt,
-		max_tokens: Number(tp["tokens-per-branch"]),
-		temperature: Number(tp["temperature"]),
-		top_p: Number(tp["top-p"]),
-		top_k: Number(tp["top-k"]),
-		repetition_penalty: Number(tp["repetition_penalty"]),
-	    }),
-	    headers: {
-		"accept": "application/json",
-		"Content-type": "application/json; charset=UTF-8",
-		"Authorization": auth_token,
-	    }
+    let batch_promises = [];
+    for (let i = 1; i <= tp["output-branches"]; i++) {
+	console.log("Together API called");
+	const promise = delay(3000 * i).then(async () => {
+	    let r = await fetch(endpoint, {
+		method: "POST",
+		body: JSON.stringify({
+		    model: tp["model-name"],
+		    prompt: prompt,
+		    max_tokens: Number(tp["tokens-per-branch"]),
+		    temperature: Number(tp["temperature"]),
+		    top_p: Number(tp["top-p"]),
+		    top_k: Number(tp["top-k"]),
+		    repetition_penalty: Number(tp["repetition_penalty"]),
+		}),
+		headers: {
+		    "accept": "application/json",
+		    "Content-type": "application/json; charset=UTF-8",
+		    "Authorization": auth_token,
+		}
+	    });
+	    return r.json();
+	}).then(response_json => {
+	    return {"text": response_json["output"]["choices"][0]["text"],
+		    "model": response_json["model"]};
 	});
-	let response_json = await r.json();
-	batch.push({"text": response_json["output"]["choices"][0]["text"],
-		      "model": response_json["model"]});
+	batch_promises.push(promise);
     }
+    const batch = await Promise.all(batch_promises);
     return batch;
 };
 
@@ -651,7 +664,7 @@ async function togetherRoll(id) {
     }
     for (let i = 0; i < newResponses.length; i++) {
 	response = newResponses[i];
-	const responseSummary = await getSummary(response["text"]);
+	const responseSummary = await delay(3000).then(() => {return getSummary(response["text"])});
 	const responseNode = loomTree.createNode("gen",
 						 rollFocus,
 						 response["text"],
@@ -670,7 +683,7 @@ editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
     if (e.key != "Enter") {
 	const prompt = editor.value;
-	if ((prompt.length % 8) == 0) {
+	if ((prompt.length % 32) == 0) {
 	    try {
 		const r = await fetch("http://localhost:5000/check-tokens", {
 		    method: "POST",
@@ -933,7 +946,6 @@ sampler.addEventListener('change', function() {
     else if (selectedSampler == "together") {
 	togetherSamplerMenu();
     }
-    console.log(selectedSampler);
 });
 
 editor.addEventListener('contextmenu', (e) => {
