@@ -184,7 +184,7 @@ def main():
         "--grad-accum-steps", type=int, default=4, help="the number of gradient accumulation steps"
     )
     parser.add_argument("--kl-weight", type=float, default=0.18, help="the KL weight")
-    parser.add_argument("--reward-scale", type=float, default=1.0, help="the reward scale")
+    parser.add_argument("--logit-scale", type=float, default=1.0, help="the evaluator logit scale")
     parser.add_argument("--length", type=int, default=64, help="the number of tokens to sample")
     parser.add_argument("--output-path", type=str, required=True, help="the output path")
     parser.add_argument("--prompts", type=Path, required=True, help="the prompts to use")
@@ -358,7 +358,7 @@ def main():
                 logp_1, logp_2 = torch.chunk(logp, 2)
                 logp_ref_1, logp_ref_2 = torch.chunk(logp_ref, 2)
                 score_1, score_2 = torch.chunk(scores, 2)
-                win_rate = torch.sigmoid(score_1 - score_2)
+                win_rate = torch.sigmoid(args.logit_scale * (score_1 - score_2))
                 loss = crit(logp_1, logp_ref_1, logp_2, logp_ref_2, win_rate)
                 accelerator.backward(loss)
 
