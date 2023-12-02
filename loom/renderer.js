@@ -316,18 +316,18 @@ async function getResponses(endpoint, {prompt, evaluationPrompt,
 	r = await fetch(endpoint, {
 	    method: "POST",
 	    body: JSON.stringify({
-	    context: context,
-	    prompt: prompt,
-	    prompt_node: includePrompt,
-	    evaluationPrompt: evaluationPrompt,
-	    new_tokens: wp["newTokens"],
-	    weave_n_tokens: wp["nTokens"],
-	    weave_budget: wp["budget"],
-	    weave_round_budget: wp["roundBudget"],
-	    weave_n_expand: wp["nExpand"],
-	    weave_beam_width: wp["beamWidth"],
-	    weave_max_lookahead: wp["maxLookahead"],
-	    weave_temperature: wp["temperature"]
+		context: context,
+		prompt: prompt,
+		prompt_node: includePrompt,
+		evaluationPrompt: evaluationPrompt,
+		tokens_per_branch: wp["tokens_per_branch"],
+		output_branches: wp["output_branches"],
+		weave_n_tokens: wp["nTokens"],
+		weave_budget: wp["budget"],
+		weave_round_budget: wp["roundBudget"],
+		weave_n_expand: wp["nExpand"],
+		weave_max_lookahead: wp["maxLookahead"],
+		weave_temperature: wp["temperature"]
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
@@ -395,8 +395,8 @@ Three Words: Ancestors Lessen Death`
 		prompt: prompt,
 		prompt_node: true,
 		evaluationPrompt: "",
-		new_tokens: 4,
-		weave_beam_width: 1,
+		tokens_per_branch: 4,
+		output_branches: 1,
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
@@ -532,12 +532,12 @@ async function baseRoll(id, weave=true) {
     let evaluationPromptV = evaluationPromptField.value;
     let endpoint = document.getElementById('api-url').value;
 	
-    const wp = {"newTokens": settingNewTokens.value,
+    const wp = {"tokens_per_branch": document.getElementById('tokens-per-branch').value,
 		"nTokens": settingNTokens.value,
 		"budget": settingBudget.value,
 		"roundBudget": settingRoundBudget.value,
 		"nExpand": settingNExpand.value,
-		"beamWidth": settingBeamWidth.value,
+		"output_branches": document.getElementById('output-branches').value,
 		"maxLookahead": settingMaxLookahead.value,
 		"temperature": document.getElementById('temperature').value
 	       }
@@ -681,8 +681,18 @@ var secondsSinceLastTyped = 0;
 var updatingNode = false;
 editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
+    const prompt = editor.value;
+    // Autosave users work when writing next prompt
+    if (focus.children.length > 0 || focus.type == "gen" || focus.type == "root") {
+	const child = loomTree.createNode("user", focus, prompt, "New Node");
+	changeFocus(child.id);
+    }
+    if ((focus.children.length == 0) && (focus.type == "user") && !updatingNode) {
+	updatingNode = true;
+	loomTree.updateNode(focus, prompt, focus.summary);
+	updatingNode = false;
+    }
     if (e.key != "Enter") {
-	const prompt = editor.value;
 	if ((prompt.length % 32) == 0) {
 	    try {
 		const r = await fetch("http://localhost:5000/check-tokens", {
@@ -706,13 +716,8 @@ editor.addEventListener('keydown', async (e) => {
 		console.error("The MiniHF server didn't respond to a token count check. Is it running?",
 			      error.message);
 	    };
-	    // Autosave users work when writing next prompt
-	    if (focus.children.length > 0 || focus.type == "gen" || focus.type == "root") {
-		
-		const child = loomTree.createNode("user", focus, prompt, "New Node");
-		changeFocus(child.id);
-	    }
-	    else if (focus.type == "user" && !updatingNode) {
+	    // Update summary while user is writing next prompt
+	    if ((focus.children.length == 0) && (focus.type == "user") && !updatingNode) {
 		try {
 		    updatingNode = true;
 		    const summary = await getSummary(prompt);
