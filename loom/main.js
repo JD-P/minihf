@@ -19,14 +19,7 @@ function createWindow() {
   const existingMenuTemplate = Menu.getApplicationMenu().items.map(item => {
     return {
       label: item.label,
-      submenu: item.submenu.items.map(subItem => {
-        return {
-          label: subItem.label,
-          role: subItem.role,  // preserve other roles
-          type: subItem.type,  // preserve type (e.g., separator)
-          // ...other properties as needed
-        };
-      })
+      submenu: item.submenu.items,
     };
   });
 
