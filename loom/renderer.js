@@ -835,7 +835,7 @@ function baseSamplerMenu() {
     outputBranches.type = "text";
     outputBranches.id = "output-branches";
     outputBranches.name = "output-branches";
-    outputBranches.value = "1";
+    outputBranches.value = "2";
     const tokensPerBranchLabel = document.createElement('label');
     tokensPerBranchLabel.for = "tokens-per-branch";
     tokensPerBranchLabel.textContent = "Tokens Per Branch";
