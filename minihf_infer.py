@@ -26,16 +26,18 @@ def set_adapter(model, adapter_name):
     try:
         if adapter_name is not None:
             model.set_adapter(adapter_name)
+            print(adapter_name)
             yield model
         else:
             with model.disable_adapter():
+                print("Reached here!")
                 yield model
     finally:
         model.set_adapter(old_adapter_name)
 
 def load_generator_evaluator():
     evaluator_adapter_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
-    generator_adapter_name = "jdpressman/Mistral-Morpheus-7B"
+    generator_adapter_name = None
     peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
     model_name = peft_config.base_model_name_or_path
     tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
@@ -114,11 +116,18 @@ def generate():
             prompt_node = params['prompt_node']
         else:
             prompt_node = False
-        context = params['context']
-        full_prompt = context + " " + prompt
         new_tokens = int(params['tokens_per_branch'])
         n_outputs = int(params['output_branches'])
-        outs = generate_fn(full_prompt, new_tokens, n=n_outputs)
+        base_model_name = generator[1].active_peft_config.base_model_name_or_path
+        try:
+            adapter = params["adapter"]
+        except KeyError:
+            adapter = "generator" if "generator" in generator[1].peft_config else None
+        if (adapter == "generator") or (adapter == None):
+            gen_fn = generate_fn
+        elif adapter == "evaluator":
+            gen_fn = set_adapter(generator[1], "evaluator")(partial(generate_outputs, generator, batch_size=1))
+        outs = gen_fn(prompt, new_tokens, n=n_outputs)
         batch = []
         if prompt_node:
             timestamp = str(time.time())
@@ -132,6 +141,7 @@ def generate():
             timestamp = str(time.time())
             id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
             batch.append({"id":id_,
+                          "base_model": base_model_name,
                           "prompt": prompt,
                           "text":out,
                           "timestamp":timestamp,

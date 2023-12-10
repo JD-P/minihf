@@ -1,16 +1,12 @@
+const fs = require('fs');
+const path = require('path');
 const { ipcRenderer } = require('electron');
 const DiffMatchPatch = require('diff-match-patch');
 const dmp = new DiffMatchPatch();
 
 const settingUseWeave = document.getElementById('use-weave');
 const settingNewTokens = document.getElementById('new-tokens');
-const settingNTokens = document.getElementById('n-tokens');
 const settingBudget = document.getElementById('budget');
-const settingRoundBudget = document.getElementById('round-budget');
-const settingNExpand = document.getElementById('n-expand');
-const settingBeamWidth = document.getElementById('beam-width');
-const settingMaxLookahead = document.getElementById('max-lookahead');
-const settingWeaveTemperature = document.getElementById('weave-temperature');
 const sampler = document.getElementById('sampler');
 const samplerOptionMenu = document.getElementById('sampler-option-menu');
 const context = document.getElementById('context');
@@ -18,7 +14,6 @@ const editor = document.getElementById('editor');
 const promptTokenCounter = document.getElementById('prompt-token-counter');
 const saveBtn = document.getElementById('save');
 const loadBtn = document.getElementById('load');
-const evaluationPromptField = document.getElementById('evaluationPrompt');
 const errorMessage = document.getElementById('error-message');
 
 class Node {
@@ -225,7 +220,8 @@ function renderTick() {
       else if (focus.rating == false) {
 	  rightThumbClass = 'chosen'
       }
-	
+
+    if (focus.type === "rewrite") {
       const leftThumbSpan = document.createElement('span');
       leftThumbSpan.classList.add(leftThumbClass);
       leftThumbSpan.textContent = "👍";
@@ -237,29 +233,36 @@ function renderTick() {
       rightThumbSpan.onclick = () => promptThumbsDown(focus.id);
 
       branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
-	
+    }
+    else if (focus.type === "gen") {
+	const rewriteButton = document.createElement("span");
+	rewriteButton.id = "rewrite-button";
+	rewriteButton.textContent = "💬";
+	rewriteButton.onclick = () => promptRewriteNode(focus.id);
+
+	branchControlButtonsDiv.append(rewriteButton);
+    }
       const quickRollSpan = document.createElement('span');
       quickRollSpan.classList.add('reroll');
-      quickRollSpan.textContent = "🖍️";
+      quickRollSpan.textContent = "🖋️";
       quickRollSpan.onclick = () => reroll(focus.id, false);
       branchControlButtonsDiv.append(quickRollSpan);
 
-      const weaveRollSpan = document.createElement('span');
-      weaveRollSpan.classList.add('reroll');
-      weaveRollSpan.textContent = "🖋️";
-      weaveRollSpan.onclick = () => reroll(focus.id, true);
-      branchControlButtonsDiv.append(weaveRollSpan);
-	
-      const branchScoreSpan = document.createElement('span');
-      branchScoreSpan.classList.add('reward-score');
-      try {
-	  const score = focus["nodes"].at(-1).score;
-	  const prob = 1 / (Math.exp(-score) + 1);
-	  branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
-      } catch (error) {
-	  branchScoreSpan.textContent = "N.A.";
-      }
-    branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+    if (focus.type === "weave") {
+	const branchScoreSpan = document.createElement('span');
+	branchScoreSpan.classList.add('reward-score');
+	try {
+	    const score = focus["nodes"].at(-1).score;
+	    const prob = 1 / (Math.exp(-score) + 1);
+	    branchScoreSpan.textContent = (prob * 100).toPrecision(4) + "%";
+	} catch (error) {
+	    branchScoreSpan.textContent = "N.A.";
+	}
+	branchControlsDiv.append(branchControlButtonsDiv, branchScoreSpan);
+    }
+    else {
+	branchControlsDiv.append(branchControlButtonsDiv);
+    }
 	
     controls.append(branchControlsDiv);
 
@@ -297,15 +300,12 @@ function changeFocus(newFocusId) {
 }
 	    
     
-async function getResponses(endpoint, {prompt, evaluationPrompt,
-				 weave = true, weaveParams = {},
+async function getResponses(endpoint, {prompt, weave = true, weaveParams = {},
 				 focusId = null, includePrompt = false}) {
     let wp = weaveParams;
-    var context = ""
     if (focusId) {
 	loomTree.renderNode(loomTree.nodeStore[focusId]);
     }
-    context.split("").reverse().join("");
     if (weave) {
 	endpoint = endpoint + "weave";
     }
@@ -316,18 +316,10 @@ async function getResponses(endpoint, {prompt, evaluationPrompt,
 	r = await fetch(endpoint, {
 	    method: "POST",
 	    body: JSON.stringify({
-		context: context,
 		prompt: prompt,
 		prompt_node: includePrompt,
-		evaluationPrompt: evaluationPrompt,
 		tokens_per_branch: wp["tokens_per_branch"],
 		output_branches: wp["output_branches"],
-		weave_n_tokens: wp["nTokens"],
-		weave_budget: wp["budget"],
-		weave_round_budget: wp["roundBudget"],
-		weave_n_expand: wp["nExpand"],
-		weave_max_lookahead: wp["maxLookahead"],
-		weave_temperature: wp["temperature"]
 	    }),
 	    headers: {
 		"Content-type": "application/json; charset=UTF-8"
@@ -338,60 +330,19 @@ async function getResponses(endpoint, {prompt, evaluationPrompt,
     }
 
 async function getSummary(taskText) {
-    endpoint = document.getElementById('api-url').value;
-    summaryContext = `DEMO
-
-You are BigVAE, an instruction following language model that performs tasks for users. In the following task you are to summarize the following tasktext in 3 words. Write three words, like "man became sad" or "cat ate fish" which summarize the task text.
-
-<tasktext>
-I grinned as I looked at the computer screen, it was crazy how far the system had come. Just a year ago I was a junior sysadmin dreaming, but now my orchestration across the cluster was beginning to take shape.
-</tasktext>
-
-Three Words: Computer Man Thinks
-
-<tasktext>
-I watched as the bird flew far up above the sky and over the mountain, getting smaller and smaller until I couldn't see it anymore. I sat down slightly disappointed. I'd really wanted to see it make the rainbow.
-</tasktext>
-
-Three Words: Bird Hopes Fail
-
-<tasktext>
-Vervaeke argues something like shamans invent the foundations for modern humanity by finetuning their adversarial-anthropic prior into an animist prior, at their best the rationalists finetune their anthropic-animist priors into a fully materialist prior. People with materialist priors become bad at adversarial thinking because understanding the natural world largely doesn't require it,
-</tasktext>
-
-Three Words: Modern Man Gullible
-
-<tasktext>
-Desire is life and enlightenment is death. 
-A dead man walks unburdened among the living. 
-A functioning hand can grip, and release.
-One must die and rise from their own grave to be liberated.
-</task>
-
-Three Words: Enlightenment Is Death
-
-<tasktext>
-HERMES [A: LIBRARIAN], While it's true that learned helplessness and inevitability are an explicit theme, it's also made explicit that the Colour is an extraterrestrial being. It's more like a parasite than a normal environmental disaster. It's also important to note that the causality of the disaster is a space meteorite, so it's not actually based on anything the inhabitants of Arkham did. It's horror not tragedy, the townspeople are victims of forces beyond their control.
-</tasktext>
-
-Three Words: Genre Is Horror
-
-<tasktext>
-I'm to understand that in Vodou ancestor cults people work together to preserve and unconditionally sample from the agent-prior the ancestor is dedicated to. To be possessed by the ancestors one needs a corpus of their mannerisms. You might ask how we'll defeat death? The way we did it the first time and then forgot.
-</tasktext>
-
-Three Words: Ancestors Lessen Death`
+    const endpoint = document.getElementById('api-url').value;
+    const summarizePromptPath = path.join(__dirname, 'prompts', 'summarize.txt');
+    const summarizePrompt = fs.readFileSync(summarizePromptPath, 'utf8');
 
     // Limit context to 8 * 512, where eight is the average number of letters in a word
     // and 512 is the number of words to summarize over
     // otherwise we eventually end up pushing the few shot prompt out of the context window
-    prompt = "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
+    const prompt = summarizePrompt + "\n\n" + "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
 
     if (sampler.value !== "together") {
 	r = await fetch(endpoint + "generate", {
 	    method: "POST",
 	    body: JSON.stringify({
-		context: summaryContext,
 		prompt: prompt,
 		prompt_node: true,
 		evaluationPrompt: "",
@@ -418,12 +369,85 @@ Three Words: Ancestors Lessen Death`
 	    "repetition_penalty": document.getElementById('repetition-penalty').value,
 	};
 	let batch = await togetherGetResponses({endpoint: endpoint,
-						prompt: summaryContext + "\n\n" + prompt,
+						prompt: prompt,
 						togetherParams: tp}
 					      );
 	console.log(batch);
 	return batch[0]["text"];
     }
+}
+
+async function rewriteNode(id) {
+    const endpoint = document.getElementById('api-url').value;
+    const rewriteNodePrompt = document.getElementById("rewrite-node-prompt");
+    const rewritePromptPath = path.join(__dirname, 'prompts', 'rewrite.txt');
+    const rewritePrompt = fs.readFileSync(rewritePromptPath, 'utf8');
+    const rewriteFeedback =  rewriteNodePrompt.value;
+    const rewriteContext = editor.value;
+
+    // TODO: Add new endpoint? Make tokenizer that returns to client?
+    // Could also make dedicated rewriteNode endpoint
+    const tokens = document.getElementById('tokens-per-branch').value;
+    const outputBranches = document.getElementById('output-branches').value
+    
+    let prompt = rewritePrompt;
+    prompt += rewriteContext.slice(-(tokens * 8));
+    prompt += "\n\n";
+    prompt += "Rewrite the text using the following feedback:\n";
+    prompt += rewriteFeedback;
+    prompt += "<|end|>";
+    
+    diceSetup();
+    r = await fetch(endpoint + "generate", {
+	method: "POST",
+	body: JSON.stringify({
+	    prompt: prompt,
+	    prompt_node: false,
+	    adapter: "evaluator",
+	    evaluationPrompt: "",
+	    tokens_per_branch: tokens,
+	    output_branches: outputBranches,
+	}),
+	headers: {
+	    "Content-type": "application/json; charset=UTF-8"
+	}
+    });
+    let batch = await r.json();
+    console.log(batch);
+
+    const focusParent = loomTree.nodeStore[focus.parent];
+    const focusParentText = loomTree.renderNode(focusParent);
+    for (i = 0; i < batch.length; i++) {
+	let response = batch[i];
+	let summary = await getSummary(response["text"]);
+	const responseNode = loomTree.createNode("rewrite",
+						 focus,
+						 focusParentText + response["text"],
+						 summary);
+	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
+    }
+    const chatPane = document.getElementById("chat-pane");
+    chatPane.innerHTML = "";
+    diceTeardown();
+    renderTick();
+}
+    
+function promptRewriteNode(id) {
+    const rewriteNodeLabel = document.createElement("label");
+    rewriteNodeLabel.for = "rewrite-node-prompt";
+    rewriteNodeLabel.textContent = "Rewrite Node From Feedback";
+    const rewriteNodePrompt = document.createElement("textarea");
+    rewriteNodePrompt.id = "rewrite-node-prompt";
+    rewriteNodePrompt.value = "";
+    rewriteNodePrompt.placeholder = "Write 3-5 bulletpoints of feedback to rewrite the node with.";
+    const rewriteNodeSubmit = document.createElement("input");
+    rewriteNodeSubmit.id = "rewrite-node-submit";
+    rewriteNodeSubmit.type = "button";
+    rewriteNodeSubmit.value = "Submit";
+    rewriteNodeSubmit.onclick = () => rewriteNode(focus.id);
+    
+    const chatPane = document.getElementById("chat-pane");
+    chatPane.append(rewriteNodeLabel, rewriteNodePrompt, rewriteNodeSubmit);
 }
 
     function promptThumbsUp(id) {
@@ -529,23 +553,16 @@ async function baseRoll(id, weave=true) {
     const rerollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rerollFocus);
     let includePrompt = false;
-    let evaluationPromptV = evaluationPromptField.value;
     let endpoint = document.getElementById('api-url').value;
 	
     const wp = {"tokens_per_branch": document.getElementById('tokens-per-branch').value,
-		"nTokens": settingNTokens.value,
-		"budget": settingBudget.value,
-		"roundBudget": settingRoundBudget.value,
-		"nExpand": settingNExpand.value,
 		"output_branches": document.getElementById('output-branches').value,
-		"maxLookahead": settingMaxLookahead.value,
 		"temperature": document.getElementById('temperature').value
 	       }
     diceSetup();
     let newResponses;
     try {
 	newResponses = await getResponses(endpoint, {prompt: prompt,
-						     evaluationPrompt: evaluationPromptV,
 						     weave: weave,
 						     weaveParams: wp,
 						     focusId: rerollFocus.id,
@@ -564,7 +581,7 @@ async function baseRoll(id, weave=true) {
 						 rerollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["evaluationPrompt"] = evaluationPromptV;
+	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
     }
     focus = loomTree.nodeStore[rerollFocus.children.at(-1)];
     diceTeardown();
@@ -669,7 +686,7 @@ async function togetherRoll(id) {
 						 rollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
+	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
     }
     focus = loomTree.nodeStore[rollFocus.children.at(-1)];
     diceTeardown();
@@ -756,9 +773,6 @@ function loadFile() {
       loomTreeRaw = data.loomTree;
       loomTree = Object.assign(new LoomTree(), loomTreeRaw);
       focus = loomTree.nodeStore[data.focus.id];
-      if ('evaluationPrompt' in focus) {
-        evaluationPromptField.value = focus.evaluationPrompt;
-      }
       renderTick();
     })
     .catch(err => console.error('Load File Error:', err));
