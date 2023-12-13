@@ -387,11 +387,20 @@ async function rewriteNode(id) {
 
     // TODO: Add new endpoint? Make tokenizer that returns to client?
     // Could also make dedicated rewriteNode endpoint
-    const tokens = document.getElementById('tokens-per-branch').value;
+    let tokens = document.getElementById('tokens-per-branch').value;
     const outputBranches = document.getElementById('output-branches').value
+
+    // Make sure we don't give too much or too little context
+    // TODO: Change this once models have longer context/are less limited
+    if (tokens < 256) {
+	tokens = 256;
+    }
+    else if (tokens > 512) {
+	tokens = 512;
+    }
     
-    let prompt = rewritePrompt;
-    prompt += rewriteContext.slice(-(tokens * 8));
+    let prompt = rewritePrompt.trim();
+    prompt += rewriteContext.slice(-(tokens * 8)).trim();
     prompt += "\n\n";
     prompt += "Rewrite the text using the following feedback:\n";
     prompt += rewriteFeedback;
@@ -424,7 +433,9 @@ async function rewriteNode(id) {
 						 focus,
 						 focusParentText + response["text"],
 						 summary);
-	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["feedback"] = rewriteFeedback;
+	loomTree.nodeStore[responseNode.id]["rewritePrompt"] = prompt;
+	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
     }
     const chatPane = document.getElementById("chat-pane");
     chatPane.innerHTML = "";
@@ -581,7 +592,7 @@ async function baseRoll(id, weave=true) {
 						 rerollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
     }
     focus = loomTree.nodeStore[rerollFocus.children.at(-1)];
     diceTeardown();
@@ -686,7 +697,7 @@ async function togetherRoll(id) {
 						 rollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["base_model"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
     }
     focus = loomTree.nodeStore[rollFocus.children.at(-1)];
     diceTeardown();
@@ -700,7 +711,7 @@ editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
     const prompt = editor.value;
     // Autosave users work when writing next prompt
-    if (focus.children.length > 0 || focus.type == "gen" || focus.type == "root") {
+    if (focus.children.length > 0 || ["gen", "rewrite", "root"].includes(focus.type)) {
 	const child = loomTree.createNode("user", focus, prompt, "New Node");
 	changeFocus(child.id);
     }
