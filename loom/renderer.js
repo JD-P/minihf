@@ -79,6 +79,7 @@ class LoomTree {
 	}
 	const patches = [];
 	patches.push(node.patch);
+	const cacheNode = node;
 	while (node.parent !== null) {
 	    node = this.nodeStore[node.parent];
 	    patches.push(node.patch);
@@ -91,8 +92,8 @@ class LoomTree {
 	    }
 	    var [outText, results] = dmp.patch_apply(patch, outText);
 	}
-	if (node.children.length > 0) {
-	    node.cache = outText;
+	if (cacheNode.children.length > 0) {
+	    cacheNode.cache = outText;
 	}
 	return outText;
     }
