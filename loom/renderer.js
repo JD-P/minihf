@@ -33,7 +33,7 @@ class Node {
 
 class LoomTree {
     constructor() {
-	this.root = new Node(1, "root", null, "", "Root Node");
+	this.root = new Node('1', "root", null, "", "Root Node");
 	this.nodeStore = {'1':this.root};
     }
 

@@ -37,6 +37,28 @@ class LoomTreeNode:
         except (IndexError, KeyError):
             return None
 
+    def count_children(self):
+        count = 0
+        queue = self.children
+        while queue:
+            count += 1
+            child = queue.pop()
+            queue += self.tree.node_store[child].children
+        return count
+
+    def count_children_decay(self, decay=0.5):
+        if decay >= 1:
+            raise ValueError
+        count = 0
+        depth = 0
+        queue = [(depth, i) for i in self.children]
+        while queue:
+            depth, child_id = queue.pop()
+            child = self.tree.node_store[child_id]
+            queue += [(depth+1, i) for i in child.children]
+            count += 1 * (decay ** depth)
+        return count
+    
     def render(self):
         if self.type == "root":
             return ""
@@ -89,12 +111,47 @@ class LoomTree:
                 node["read"],
                 node["children"],
             )
+        self.tokenizer = tokenizer
+        if self.tokenizer:
+            for key in self.node_store.keys():
+                # In theory we could speed this up by only tokenizing the diffed parts...
+                text = self.node_store[key].render()
+                self.node_store[key]["tokens"] = self.tokenizer(text)
+        try:
+            self.root = self.node_store["1"]
+        except KeyError:
+            self.root = self.node_store[1]
 
 if __name__ == '__main__':
     parser = ArgumentParser()
     # TODO: Change this to a zip file of loom traces
     parser.add_argument("loom_trace", type=Path, help="The loom trace to read from")
     args = parser.parse_args()
-    # Example: How to print the 3rd node in the tree
+    # Example: Retrieving training pairs for IPO/SPO
     tree = LoomTree(args.loom_trace)
-    print(tree.node_store["3"].render())
+    batches = []
+    tree.root.score = 0
+    queue = [tree.root.children,]
+    while queue:
+        new_batches = []
+        children = queue.pop()
+        children_batch = []
+        for child_id in children:
+            child = tree.node_store[child_id]
+            child.score = child.count_children_decay(decay=0.5)
+            children_batch.append(child)
+            if child.type == "user" and child.get_parent().type != "root":
+                parent = child.get_parent()
+                grandparent = parent.get_parent()
+                # Only take user edits as reward information if they share a prefix
+                if (parent.render().startswith(grandparent.render())
+                    and child.render().startswith(grandparent.render())):
+                    child.score = child.score * 1.5
+                    new_batches.append([parent, child])
+            queue.append(child.children)
+        if len(children_batch) > 1:
+            children_batch.sort(key=lambda x: x.score)
+            new_batches.append(children_batch)
+        batches += new_batches
+    for batch in batches:
+        print(batch)
