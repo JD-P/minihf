@@ -545,8 +545,14 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 	}).then(response_json => {
 	    let outs = [];
 	    for (let i = 0; i < response_json["output"]["choices"].length; i++) {
-		outs.push({"text": response_json["output"]["choices"][i]["text"],
-			   "model": response_json["model"]});
+		if (openai) {
+		    outs.push({"text": response_json["choices"][i]["text"],
+			       "model": response_json["model"]});
+		}
+		else {
+		    outs.push({"text": response_json["output"]["choices"][i]["text"],
+			       "model": response_json["model"]});
+		}
 	    }
 	    if (openai) {
 		return outs;
