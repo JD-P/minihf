@@ -373,7 +373,7 @@ async function getSummary(taskText) {
 	    let batch = await togetherGetResponses({endpoint: endpoint,
 						    prompt: prompt,
 						    togetherParams: tp,
-						    openai=true}
+						    openai: true}
 						  );
 	}
 	else {
