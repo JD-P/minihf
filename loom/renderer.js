@@ -340,7 +340,7 @@ async function getSummary(taskText) {
     // otherwise we eventually end up pushing the few shot prompt out of the context window
     const prompt = summarizePrompt + "\n\n" + "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
 
-    if (sampler.value !== "together") {
+    if (!["together", "openai"].includes(sampler.value)) {
 	r = await fetch(endpoint + "generate", {
 	    method: "POST",
 	    body: JSON.stringify({
@@ -579,9 +579,10 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 	});
 	batch_promises.push(promise);
     }
-    let batch = null;
+    let batch;
     if (openai) {
-	batch = await Promise.all(batch_promises)[0];
+	batch = await Promise.all(batch_promises);
+	batch = batch[0];
     }
     else {
 	batch = await Promise.all(batch_promises);
