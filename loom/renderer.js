@@ -369,15 +369,16 @@ async function getSummary(taskText) {
 	    "top-k": document.getElementById('top-k').value,
 	    "repetition_penalty": document.getElementById('repetition-penalty').value,
 	};
+	let batch;
 	if (sampler.value === "openai") {
-	    let batch = await togetherGetResponses({endpoint: endpoint,
+	    batch = await togetherGetResponses({endpoint: endpoint,
 						    prompt: prompt,
 						    togetherParams: tp,
 						    openai: true}
 						  );
 	}
 	else {
-	    let batch = await togetherGetResponses({endpoint: endpoint,
+	    batch = await togetherGetResponses({endpoint: endpoint,
 						    prompt: prompt,
 						    togetherParams: tp}
 						  );
@@ -552,7 +553,14 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 	    return r.json();
 	}).then(response_json => {
 	    let outs = [];
-	    for (let i = 0; i < response_json["output"]["choices"].length; i++) {
+	    let choices_length;
+	    if (openai) {
+		choices_length = response_json["choices"].length;
+	    }
+	    else {
+		choices_length = response_json["output"]["choices"].length;
+	    }
+	    for (let i = 0; i < choices_length; i++) {
 		if (openai) {
 		    outs.push({"text": response_json["choices"][i]["text"],
 			       "model": response_json["model"]});
