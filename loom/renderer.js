@@ -577,6 +577,9 @@ async function reroll(id, weave=true) {
     else if (sampler.value === "together") {
 	togetherRoll(id);
     }
+    else if (sampler.value === "openai") {
+	togetherRoll(id, openai=true);
+    }
 };
 
 async function baseRoll(id, weave=true) {
