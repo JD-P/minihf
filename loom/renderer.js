@@ -513,11 +513,14 @@ async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
+async function togetherGetResponses({endpoint, prompt, togetherParams = {}, openai=false}) {
     const tp = togetherParams;
     const auth_token = "Bearer " + tp["api-key"];
     let batch_promises = [];
-    for (let i = 1; i <= tp["output-branches"]; i++) {
+    // Together doesn't let you get more than one completion at a time
+    // But OpenAI expects you to use the n parameter
+    let calls = openai ? 1 : tp["output-branches"];
+    for (let i = 1; i <= calls; i++) {
 	console.log("Together API called");
 	const promise = delay(3000 * i).then(async () => {
 	    let r = await fetch(endpoint, {
@@ -526,6 +529,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
 		    model: tp["model-name"],
 		    prompt: prompt,
 		    max_tokens: Number(tp["tokens-per-branch"]),
+		    n: openai ? tp["output-branches"] : 1,
 		    temperature: Number(tp["temperature"]),
 		    top_p: Number(tp["top-p"]),
 		    top_k: Number(tp["top-k"]),
@@ -539,12 +543,27 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}}) {
 	    });
 	    return r.json();
 	}).then(response_json => {
-	    return {"text": response_json["output"]["choices"][0]["text"],
-		    "model": response_json["model"]};
+	    let outs = [];
+	    for (let i = 0; i < response_json["output"]["choices"].length; i++) {
+		outs.push({"text": response_json["output"]["choices"][i]["text"],
+			   "model": response_json["model"]});
+	    }
+	    if (openai) {
+		return outs;
+	    }
+	    else {
+		return outs[0];
+	    }
 	});
 	batch_promises.push(promise);
     }
-    const batch = await Promise.all(batch_promises);
+    let batch = null;
+    if (openai) {
+	batch = await Promise.all(batch_promises)[0];
+    }
+    else {
+	batch = await Promise.all(batch_promises);
+    }
     return batch;
 };
 
@@ -561,7 +580,9 @@ async function reroll(id, weave=true) {
 };
 
 async function baseRoll(id, weave=true) {
+    diceSetup();
     await autoSaveTick();
+    await updateFocusSummary();
     const rerollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rerollFocus);
     let includePrompt = false;
@@ -571,7 +592,6 @@ async function baseRoll(id, weave=true) {
 		"output_branches": document.getElementById('output-branches').value,
 		"temperature": document.getElementById('temperature').value
 	       }
-    diceSetup();
     let newResponses;
     try {
 	newResponses = await getResponses(endpoint, {prompt: prompt,
@@ -619,7 +639,9 @@ function readFileAsJson(file) {
 }
 
 async function vaeGuidedRoll(id) {
+    diceSetup();
     await autoSaveTick();
+    await updateFocusSummary();
     const rollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rollFocus);
 
@@ -637,7 +659,6 @@ async function vaeGuidedRoll(id) {
 	}
     }
     
-    diceSetup();
     let responses;
     try {
 	responses = await vaeGuidedGetResponses({
@@ -664,7 +685,9 @@ async function vaeGuidedRoll(id) {
 						   
 
 async function togetherRoll(id) {
+    diceSetup();
     await autoSaveTick();
+    await updateFocusSummary();
     const rollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rollFocus);
     
@@ -678,7 +701,6 @@ async function togetherRoll(id) {
 	"top-k": document.getElementById('top-k').value,
 	"repetition_penalty": document.getElementById('repetition-penalty').value,
     };
-    diceSetup();
     let newResponses;
     try {
 	newResponses = await togetherGetResponses({
@@ -746,7 +768,12 @@ editor.addEventListener('keydown', async (e) => {
 			      error.message);
 	    };
 	    // Update summary while user is writing next prompt
-	    if ((focus.children.length == 0) && (focus.type == "user") && !updatingNode) {
+	    if ((focus.children.length == 0)
+		&& (focus.type == "user")
+		&& ["base", "vae-base",
+		    "vae-guided", "vae-paragraph",
+		    "vae-bridge"].includes(sampler.value)
+		&& !updatingNode) {
 		try {
 		    updatingNode = true;
 		    const summary = await getSummary(prompt);
@@ -807,27 +834,27 @@ async function autoSaveTick() {
 	autoSave();
 	secondsSinceLastSave = 0;
     }
+}
+
+async function updateFocusSummary() {
     if (focus.type == "user" && focus.children.length == 0 && !updatingNode) {
 	const currentFocus = focus; // Stop focus from changing out underneath us
 	const newPrompt = editor.value;
 	const prompt = loomTree.renderNode(currentFocus);
-	if (prompt !== newPrompt && secondsSinceLastTyped >= 2) {
-	    updatingNode = true;
-	    try {
-		let summary = await getSummary(prompt);
-		if (summary.trim() === "") {
-		    summary = "Summary Not Given";
-		}
-		loomTree.updateNode(currentFocus, newPrompt, summary);
-	    } catch (error) {
-		loomTree.updateNode(currentFocus, newPrompt, "Server Response Error");
+	updatingNode = true;
+	try {
+	    let summary = await getSummary(prompt);
+	    if (summary.trim() === "") {
+		summary = "Summary Not Given";
 	    }
-	    updatingNode = false;
+	    loomTree.updateNode(currentFocus, newPrompt, summary);
+	} catch (error) {
+	    loomTree.updateNode(currentFocus, newPrompt, "Server Response Error");
 	}
-
+	updatingNode = false;
     }
 }
-    
+
 var autoSaveIntervalId = setInterval(autoSaveTick, 1000);
 
 ipcRenderer.on('invoke-action', (event, action) => {
@@ -957,6 +984,61 @@ function togetherSamplerMenu() {
     samplerOptionMenu.append(modelName);
 }
 
+function openaiCompletionsSamplerMenu() {
+    baseSamplerMenu();
+    const apiUrl = document.getElementById('api-url');
+    apiUrl.value = "https://api.openai.com/";
+    const topPLabel = document.createElement('label');
+    topPLabel.for = "top-p";
+    topPLabel.textContent = "Top-P";
+    const topP = document.createElement('input');
+    topP.type = "text";
+    topP.id = "top-p";
+    topP.name = "top-p";
+    topP.value = "1";
+    const topKLabel = document.createElement('label');
+    topKLabel.for = "top-k";
+    topKLabel.textContent = "Top-K";
+    const topK = document.createElement('input');
+    topK.type = "text";
+    topK.id = "top-k";
+    topK.name = "top-k";
+    topK.value = "100";
+    const repetitionPenaltyLabel = document.createElement('label');
+    repetitionPenaltyLabel.for = "repetition-penalty";
+    repetitionPenaltyLabel.textContent = "Repetition Penalty";
+    const repetitionPenalty = document.createElement('input');
+    repetitionPenalty.type = "text";
+    repetitionPenalty.id = "repetition-penalty";
+    repetitionPenalty.name = "repetition-penalty";
+    repetitionPenalty.value = "1";
+    const apiKeyLabel = document.createElement('label');
+    apiKeyLabel.for = "api-key";
+    apiKeyLabel.textContent = "API Key";
+    const apiKey = document.createElement('input');
+    apiKey.type = "text";
+    apiKey.id = "api-key";
+    apiKey.name = "api-key";
+    const modelNameLabel = document.createElement('label');
+    modelNameLabel.for = "model-name";
+    modelNameLabel.textContent = "Model Name";
+    const modelName = document.createElement('input');
+    modelName.type = "text";
+    modelName.id = "model-name";
+    modelName.name = "model-name";
+    modelName.value = "code-davinci-002";
+    samplerOptionMenu.append(topPLabel);
+    samplerOptionMenu.append(topP);
+    samplerOptionMenu.append(topKLabel);
+    samplerOptionMenu.append(topK);
+    samplerOptionMenu.append(repetitionPenaltyLabel);
+    samplerOptionMenu.append(repetitionPenalty);
+    samplerOptionMenu.append(apiKeyLabel);
+    samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(modelNameLabel);
+    samplerOptionMenu.append(modelName);
+}
+
 sampler.addEventListener('change', function() {
     let selectedSampler = this.value;
     if (selectedSampler === "base") {
@@ -965,17 +1047,20 @@ sampler.addEventListener('change', function() {
     else if (selectedSampler === "vae-base") {
 	vaeBaseSamplerMenu();
     }
-    else if (selectedSampler == "vae-guided") {
+    else if (selectedSampler === "vae-guided") {
 	vaeGuidedSamplerMenu();
     }
-    else if (selectedSampler == "vae-paragraph") {
+    else if (selectedSampler === "vae-paragraph") {
 	vaeParagraphSamplerMenu();
     }
-    else if (selectedSampler == "vae-bridge") {
+    else if (selectedSampler === "vae-bridge") {
 	vaeBridgeSamplerMenu();
     }
-    else if (selectedSampler == "together") {
+    else if (selectedSampler === "together") {
 	togetherSamplerMenu();
+    }
+    else if (selectedSampler === "openai") {
+	openaiCompletionsSamplerMenu();
     }
 });
 
