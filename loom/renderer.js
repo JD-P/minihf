@@ -369,11 +369,19 @@ async function getSummary(taskText) {
 	    "top-k": document.getElementById('top-k').value,
 	    "repetition_penalty": document.getElementById('repetition-penalty').value,
 	};
-	let batch = await togetherGetResponses({endpoint: endpoint,
-						prompt: prompt,
-						togetherParams: tp}
-					      );
-	console.log(batch);
+	if (sampler.value === "openai") {
+	    let batch = await togetherGetResponses({endpoint: endpoint,
+						    prompt: prompt,
+						    togetherParams: tp,
+						    openai=true}
+						  );
+	}
+	else {
+	    let batch = await togetherGetResponses({endpoint: endpoint,
+						    prompt: prompt,
+						    togetherParams: tp}
+						  );
+	}
 	return batch[0]["text"];
     }
 }
