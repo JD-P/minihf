@@ -538,7 +538,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 		    model: tp["model-name"],
 		    prompt: prompt,
 		    max_tokens: Number(tp["tokens-per-branch"]),
-		    n: openai ? tp["output-branches"] : 1,
+		    n: openai ? Number(tp["output-branches"]) : 1,
 		    temperature: Number(tp["temperature"]),
 		    top_p: Number(tp["top-p"]),
 		    top_k: Number(tp["top-k"]),
