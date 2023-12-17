@@ -709,7 +709,7 @@ async function vaeGuidedRoll(id) {
 }
 						   
 
-async function togetherRoll(id) {
+async function togetherRoll(id, openai=false) {
     diceSetup();
     await autoSaveTick();
     await updateFocusSummary();
@@ -732,6 +732,7 @@ async function togetherRoll(id) {
 	    endpoint: document.getElementById('api-url').value,
 	    prompt: prompt,
 	    togetherParams: tp,
+	    openai: openai
 	});
     } catch (error) {
 	diceTeardown();
