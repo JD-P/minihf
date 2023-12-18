@@ -988,7 +988,7 @@ function togetherSamplerMenu() {
     apiKeyLabel.for = "api-key";
     apiKeyLabel.textContent = "API Key";
     const apiKey = document.createElement('input');
-    apiKey.type = "text";
+    apiKey.type = "password";
     apiKey.id = "api-key";
     apiKey.name = "api-key";
     const modelNameLabel = document.createElement('label');
@@ -1043,7 +1043,7 @@ function openaiCompletionsSamplerMenu() {
     apiKeyLabel.for = "api-key";
     apiKeyLabel.textContent = "API Key";
     const apiKey = document.createElement('input');
-    apiKey.type = "text";
+    apiKey.type = "password";
     apiKey.id = "api-key";
     apiKey.name = "api-key";
     const modelNameLabel = document.createElement('label');
