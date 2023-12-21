@@ -92,9 +92,11 @@ class LoomTree {
 	    }
 	    var [outText, results] = dmp.patch_apply(patch, outText);
 	}
+	/* Disable cache: Not worth the filesize increase
 	if (cacheNode.children.length > 0) {
 	    cacheNode.cache = outText;
 	}
+	*/
 	return outText;
     }
 
@@ -525,13 +527,14 @@ async function delay(ms) {
 async function togetherGetResponses({endpoint, prompt, togetherParams = {}, openai=false}) {
     const tp = togetherParams;
     const auth_token = "Bearer " + tp["api-key"];
+    const apiDelay = Number(tp["delay"]);
     let batch_promises = [];
     // Together doesn't let you get more than one completion at a time
     // But OpenAI expects you to use the n parameter
     let calls = openai ? 1 : tp["output-branches"];
     for (let i = 1; i <= calls; i++) {
 	console.log("Together API called");
-	const promise = delay(3000 * i).then(async () => {
+	const promise = delay(apiDelay * i).then(async () => {
 	    let r = await fetch(endpoint, {
 		method: "POST",
 		body: JSON.stringify({
@@ -716,7 +719,8 @@ async function togetherRoll(id, openai=false) {
     await updateFocusSummary();
     const rollFocus = loomTree.nodeStore[id];
     let prompt = loomTree.renderNode(rollFocus);
-    
+
+    const apiDelay = document.getElementById('api-delay').value;
     const tp = {
 	"api-key": document.getElementById('api-key').value,
 	"model-name": document.getElementById('model-name').value,
@@ -726,6 +730,7 @@ async function togetherRoll(id, openai=false) {
 	"top-p": document.getElementById('top-p').value,
 	"top-k": document.getElementById('top-k').value,
 	"repetition_penalty": document.getElementById('repetition-penalty').value,
+	"delay": apiDelay,
     };
     let newResponses;
     try {
@@ -742,7 +747,7 @@ async function togetherRoll(id, openai=false) {
     }
     for (let i = 0; i < newResponses.length; i++) {
 	response = newResponses[i];
-	const responseSummary = await delay(3000).then(() => {return getSummary(response["text"])});
+	const responseSummary = await delay(apiDelay).then(() => {return getSummary(response["text"])});
 	const responseNode = loomTree.createNode("gen",
 						 rollFocus,
 						 response["text"],
@@ -991,6 +996,14 @@ function togetherSamplerMenu() {
     apiKey.type = "password";
     apiKey.id = "api-key";
     apiKey.name = "api-key";
+    const apiDelayLabel = document.createElement('label');
+    apiDelayLabel.for = "api-delay";
+    apiDelayLabel.textContent = "API Delay";
+    const apiDelay = document.createElement('input');
+    apiDelay.type = "text";
+    apiDelay.id = "api-delay";
+    apiDelay.name = "api-delay";
+    apiDelay.value = 3000;
     const modelNameLabel = document.createElement('label');
     modelNameLabel.for = "model-name";
     modelNameLabel.textContent = "Model Name";
@@ -1007,6 +1020,8 @@ function togetherSamplerMenu() {
     samplerOptionMenu.append(repetitionPenalty);
     samplerOptionMenu.append(apiKeyLabel);
     samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(apiDelayLabel);
+    samplerOptionMenu.append(apiDelay);
     samplerOptionMenu.append(modelNameLabel);
     samplerOptionMenu.append(modelName);
 }
@@ -1046,6 +1061,14 @@ function openaiCompletionsSamplerMenu() {
     apiKey.type = "password";
     apiKey.id = "api-key";
     apiKey.name = "api-key";
+    const apiDelayLabel = document.createElement('label');
+    apiDelayLabel.for = "api-delay";
+    apiDelayLabel.textContent = "API Delay";
+    const apiDelay = document.createElement('input');
+    apiDelay.type = "text";
+    apiDelay.id = "api-delay";
+    apiDelay.name = "api-delay";
+    apiDelay.value = 3000;
     const modelNameLabel = document.createElement('label');
     modelNameLabel.for = "model-name";
     modelNameLabel.textContent = "Model Name";
@@ -1062,6 +1085,8 @@ function openaiCompletionsSamplerMenu() {
     samplerOptionMenu.append(repetitionPenalty);
     samplerOptionMenu.append(apiKeyLabel);
     samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(apiDelayLabel);
+    samplerOptionMenu.append(apiDelay);
     samplerOptionMenu.append(modelNameLabel);
     samplerOptionMenu.append(modelName);
 }
