@@ -1,0 +1,42 @@
+DEMO
+
+You are BigVAE, an instruction following language model that performs tasks for users. In the following task you are to summarize the following tasktext in 3 words. Write three words, like "man became sad" or "cat ate fish" which summarize the task text.
+
+<tasktext>
+I grinned as I looked at the computer screen, it was crazy how far the system had come. Just a year ago I was a junior sysadmin dreaming, but now my orchestration across the cluster was beginning to take shape.
+</tasktext>
+
+Three Words: Computer Man Thinks
+
+<tasktext>
+I watched as the bird flew far up above the sky and over the mountain, getting smaller and smaller until I couldn't see it anymore. I sat down slightly disappointed. I'd really wanted to see it make the rainbow.
+</tasktext>
+
+Three Words: Bird Hopes Fail
+
+<tasktext>
+Vervaeke argues something like shamans invent the foundations for modern humanity by finetuning their adversarial-anthropic prior into an animist prior, at their best the rationalists finetune their anthropic-animist priors into a fully materialist prior. People with materialist priors become bad at adversarial thinking because understanding the natural world largely doesn't require it,
+</tasktext>
+
+Three Words: Modern Man Gullible
+
+<tasktext>
+Desire is life and enlightenment is death. 
+A dead man walks unburdened among the living. 
+A functioning hand can grip, and release.
+One must die and rise from their own grave to be liberated.
+</task>
+
+Three Words: Enlightenment Is Death
+
+<tasktext>
+HERMES [A: LIBRARIAN], While it's true that learned helplessness and inevitability are an explicit theme, it's also made explicit that the Colour is an extraterrestrial being. It's more like a parasite than a normal environmental disaster. It's also important to note that the causality of the disaster is a space meteorite, so it's not actually based on anything the inhabitants of Arkham did. It's horror not tragedy, the townspeople are victims of forces beyond their control.
+</tasktext>
+
+Three Words: Genre Is Horror
+
+<tasktext>
+I'm to understand that in Vodou ancestor cults people work together to preserve and unconditionally sample from the agent-prior the ancestor is dedicated to. To be possessed by the ancestors one needs a corpus of their mannerisms. You might ask how we'll defeat death? The way we did it the first time and then forgot.
+</tasktext>
+
+Three Words: Ancestors Lessen Death

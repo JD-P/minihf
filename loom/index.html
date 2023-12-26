@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>MiniLoom</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: sans-serif;
+      display: flex;
+    }
+
+    input {
+	border: none;
+	outline: none;
+	box-shadow: 0 0 3px rgba(0, 0, 0, 0.4);
+	padding: 5px;
+	text-align: center;
+	font-size: 0.9em;
+    }
+
+    #sampler {
+	background-color: white;
+	border: none;
+	box-shadow: 0 0 3px rgba(0, 0, 0, 0.4);
+	margin-top: 5px;
+	padding: 5px;
+	font-size: 0.9em;
+    }
+    
+#settings-pane {
+    width: 25%;
+}
+
+#settings-pane form {
+    display: flex;
+    flex-direction: column;
+    width: 200px;
+}
+    
+#sampler-option-menu {
+    display: flex;
+    flex-direction: column;
+    width: 200px;
+}
+
+#sampler-option-menu label {
+    margin-top: 1em;
+    margin-bottom: 5px;
+}
+
+#right-panes {
+    display: flex;
+    flex-direction: column;
+    margin-left: auto;
+}
+    
+#agent-pane form {
+    display: flex;
+    flex-direction: column;
+    width: 50%;
+}
+
+#agent-pane form label {
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+#narrative-pane {
+    height: 100%;
+    width: 600px;
+    margin-left: 2em;
+}
+
+#context {
+    width:800px;
+    height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .response {
+	padding: 1rem;
+	display:flex;
+	white-space: pre-line;
+
+    }
+
+    .response .thumbs {
+	padding-left: 0.5rem;
+    }
+
+    .response .chosen {
+	padding-left: 0.5rem;
+    }
+
+    .reroll {
+	font-size: 1.3em;
+	cursor: pointer;
+	height: 25px;
+	padding-left: 0.75rem;
+    }
+
+#rewrite-button {
+    font-size: 1.3em;
+    cursor: pointer;
+    height: 25px;
+    padding-left: 0.75rem;
+}
+
+#rewrite-node-submit {
+    width: 210px;
+    background-color: white;
+    cursor: pointer;
+    margin-top: 5px;
+    padding: 5px;
+    font-size: 0.9em;
+}
+
+    .thumbs {
+      font-size: 1.3em;
+      cursor: pointer;
+      height: 25px;
+      opacity: 0.3;
+      transition: opacity 0.3s;
+    }
+
+    .thumbs:hover {
+      opacity: 1;
+    }
+
+    .chosen {
+	font-size: 1.3em;
+	opacity: 1;
+    }
+
+.read-tree-node {
+    opacity: 0.6;
+}
+
+#focused-node > span {
+    font-weight: bold;
+}
+
+#focused-node {
+    opacity: 1.0 !important;
+}
+
+.branch-controls {
+    display: flex;
+    flex-direction: column;
+    margin-top: auto;
+}
+
+.branch-controls .reward-score{
+    margin-top: 5px;
+    padding-left: 0.5em;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.branch-control-buttons {
+    display: flex;
+    flex-direction: row;
+}
+
+#prompt-branch-controls {
+    margin-top: initial;
+    margin-left: 1em;
+}
+
+    #controls {
+    background-color: white;
+    justify-content: center;
+    width: 600px;
+    bottom: 0;
+    display:flex;
+    flex-direction: row;
+    }
+
+#controls-form {
+    width: 600px;
+}
+    
+#buttons {
+    margin-top: 1px;
+    margin-bottom: 1em;
+    display:flex;
+    flex-direction: row;
+}
+
+#buttons #session-buttons {
+    margin-left: auto;
+}
+
+#editor {
+    border: none;
+    outline: none;
+    height: 800px;
+    width: 600px;
+    overflow-y: auto;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+    padding: 5px;
+    box-sizing: border-box;
+    resize: none;
+    }
+
+    .user-prompt {
+	background-color: rgba(0,100,0,.15);
+    }
+
+
+    #die {
+    height: 35px;
+    width: 50px;
+    font-size: 30px;
+    animation-name: spin;
+    animation-duration: 0.4s;
+    animation-iteration-count: infinite;
+}
+
+@keyframes spin {
+  10%   {transform: rotate(36deg);}
+  20%  {transform: rotate(72deg);}
+  30%  {transform: rotate(108deg);}
+  40% {transform: rotate(144deg);}
+  50% {transform: rotate(180deg);}
+  60% {transform: rotate(216deg);}
+  70% {transform: rotate(252deg);}
+  80% {transform: rotate(288deg);}
+  90%  {transform: rotate(324deg);}
+  100%  {transform: rotate(360deg);}
+}
+
+#batch-item-index {
+    margin-left: 0.5em;
+    align-self: center;
+}
+
+#prompt-token-counter {
+    margin-left: auto;
+}
+
+.over-token-limit {
+    background-color: rgba(100,0,0,.15);
+}
+
+#chat-pane {
+    margin-top: 50px;
+    display: flex;
+    flex-direction: column;
+}
+
+#rewrite-node-prompt {
+    border: none;
+    outline: none;
+    resize: none;
+    height: 400px;
+    width: 200px;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+    margin-top: 5px;
+    padding: 5px;
+}
+
+.nav-mode {
+    box-shadow: 0 0 15px blue;
+}
+
+#loom-tree-view {
+    margin-left: 1em;
+}
+
+#loom-tree-view span {
+    min-height: 1em;
+    min-width: 8em;
+    display: inline-block;
+}
+
+#error-message {
+    color: red;
+}
+
+  </style>
+</head>
+<body>
+  <div id="settings-pane">
+    <form id="sampler-setings">
+      <p>Sampler Settings</p>
+      <label for="sampler">Sampling Method</label>
+      <select id="sampler">
+	<option value="base">Base Model</option>
+	<option value="vae-base">Unguided VAE</option>
+	<option value="vae-guided">Guided VAE</option>
+	<option value="vae-paragraph">VAE Paragraph</option>
+	<option value="vae-bridge">VAE Bridge</option>
+	<option value="together">Together API</option>
+	<option value="openai">OpenAI Completions</option>
+      </select>
+      <div id="sampler-option-menu">
+      </div>
+    </form>
+  </div>
+  <div id="narrative-pane">
+    <div id="context">
+      <textarea id="editor" placeholder="Your prompt goes here."></textarea>
+    </div>
+    <div id="controls">
+      <div id="dice-holder"></div>
+      <div id="controls-form">
+	
+	<div id="buttons">
+	  <span id="batch-item-index"></span>
+	  <div id="session-buttons">
+	    <span id="prompt-token-counter">0</span>
+	  </div>
+	</div>
+      </div>
+    </div>
+    <div id="errors">
+      <p id="error-message"></p>
+    </div>
+  </div>
+  <div id="loom-tree-view"></div>
+  <div id="right-panes">
+    <div id="agent-pane">
+      <form>
+	<p>Weave Tree Search Settings</p>
+	<div>
+	  <input type="checkbox" id="use-weave" name="use-weave" unchecked>
+	  <label for="use-weave">Use Weave Algorithm To Search (AutoLoom)</label>
+	</div>
+	<label for="new-tokens">Max Tokens Per Weave:</label>
+	<input type="text" id="new-tokens" name="new-tokens" value="256">
+	<label for="budget">Max Node Expansion Budget</label>
+	<input type="text" id="budget" name="budget" value="72">
+      </form>
+    </div>
+    <div id="chat-pane">
+    </div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>

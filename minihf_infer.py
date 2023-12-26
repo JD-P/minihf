@@ -14,6 +14,7 @@ import peft
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from transformers import StoppingCriteria, StoppingCriteriaList
 from transformers import BitsAndBytesConfig
+from bigvae import DecoderOnlyTransformerVAE, VAERouter, mk_task_vector, generate_guided
 from weave import weave_tree_search, generate_outputs, evaluate_outputs
 from weave import make_score_prompt_fn, TreeNode
 from lora_tune import lora_tune_evaluator
@@ -25,16 +26,18 @@ def set_adapter(model, adapter_name):
     try:
         if adapter_name is not None:
             model.set_adapter(adapter_name)
+            print(adapter_name)
             yield model
         else:
             with model.disable_adapter():
+                print("Reached here!")
                 yield model
     finally:
         model.set_adapter(old_adapter_name)
 
 def load_generator_evaluator():
-    evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
-    generator_adapter_name = ""
+    evaluator_adapter_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
+    generator_adapter_name = None
     peft_config = peft.PeftConfig.from_pretrained(evaluator_adapter_name)
     model_name = peft_config.base_model_name_or_path
     tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
@@ -43,7 +46,7 @@ def load_generator_evaluator():
     tokenizer.pad_token = tokenizer.eos_token
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
     )
@@ -51,18 +54,45 @@ def load_generator_evaluator():
         model_name,
         device_map="auto",
         quantization_config=bnb_config,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
     model = peft.PeftModel.from_pretrained(model, evaluator_adapter_name, "evaluator")
     if generator_adapter_name:
         model.load_adapter(generator_adapter_name, "generator")
-    return tokenizer, model
+    peft_config = peft.LoraConfig(
+        peft.TaskType.CAUSAL_LM,
+        inference_mode=False,
+        r=32,
+        lora_alpha=8,
+        lora_dropout=0.0,
+        target_modules=[
+            "self_attn.q_proj",
+            "self_attn.k_proj",
+            "self_attn.v_proj",
+            "self_attn.o_proj",
+            "mlp.gate_proj",
+            "mlp.up_proj",
+            "mlp.down_proj",
+        ],
+    )
+    if os.path.exists("BigVAE-Mistral-7B-v0.2"):
+        vae_model = DecoderOnlyTransformerVAE(
+            model, "cuda:0", peft_config, z_dim=768,
+        )
+        vae_model.load_pretrained("BigVAE-Mistral-7B-v0.2")
+        vae_model.vae.requires_grad_(False)
+        router = VAERouter(model, vae_model, "cuda:0", peft_config)
+        router.load_pretrained("BigVAE-Mistral-7B-v0.2")
+    else:
+        vae_model = None
+        router = None
+    return tokenizer, model, vae_model, router
 
 def load_models():
-    global evaluator, evaluate_fn, generator, generate_fn
-    evaluator = generator = load_generator_evaluator()
-
+    global evaluator, evaluate_fn, generator, generate_fn, vae_model, router
+    tokenizer, model, vae_model, router = load_generator_evaluator()
+    evaluator = generator = (tokenizer, model)
     adapter_name = "generator" if "generator" in generator[1].peft_config else None
     generate_fn = set_adapter(generator[1], adapter_name)(partial(generate_outputs, generator, batch_size=1))
     evaluate_fn = set_adapter(evaluator[1], "evaluator")(partial(evaluate_outputs, evaluator))
@@ -86,11 +116,18 @@ def generate():
             prompt_node = params['prompt_node']
         else:
             prompt_node = False
-        context = params['context']
-        full_prompt = context + " " + prompt
-        new_tokens = int(params['new_tokens'])
-        n_outputs = int(params['weave_beam_width'])
-        outs = generate_fn(full_prompt, new_tokens, n=n_outputs)
+        new_tokens = int(params['tokens_per_branch'])
+        n_outputs = int(params['output_branches'])
+        base_model_name = generator[1].active_peft_config.base_model_name_or_path
+        try:
+            adapter = params["adapter"]
+        except KeyError:
+            adapter = "generator" if "generator" in generator[1].peft_config else None
+        if (adapter == "generator") or (adapter == None):
+            gen_fn = generate_fn
+        elif adapter == "evaluator":
+            gen_fn = set_adapter(generator[1], "evaluator")(partial(generate_outputs, generator, batch_size=1))
+        outs = gen_fn(prompt, new_tokens, n=n_outputs)
         batch = []
         if prompt_node:
             timestamp = str(time.time())
@@ -104,6 +141,7 @@ def generate():
             timestamp = str(time.time())
             id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
             batch.append({"id":id_,
+                          "base_model": base_model_name,
                           "prompt": prompt,
                           "text":out,
                           "timestamp":timestamp,
@@ -187,6 +225,60 @@ def weave():
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
 
+@app.route("/vae-guided", methods=['OPTIONS', 'POST'])
+def generate_vae_guided():
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "*")
+        response.headers.add("Access-Control-Allow-Methods", "*")
+        return response
+    if request.method =='POST':
+        params = request.get_json()
+        prompt = params['prompt']
+        prompt_tokens = generator[0](prompt)
+        if len(prompt_tokens["input_ids"]) > 64:
+            prompt = generator[0].decode(prompt_tokens["input_ids"][-64:])
+            context = generator[0].decode(prompt_tokens["input_ids"][:-64])
+        else:
+            context = "."
+        if 'prompt_node' in params:
+            prompt_node = params['prompt_node']
+        else:
+            prompt_node = False
+        new_tokens = int(params['tokens_per_branch'])
+        n_outputs = int(params['output_branches'])
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            task_vector = mk_task_vector(generator[0], vae_model, params["task_vector"])
+            outs = [generate_guided(generator[0],
+                                   vae_model,
+                                   router,
+                                   prompt,
+                                   context=context,
+                                   task_vector=task_vector,
+            ),]
+        batch = []
+        if prompt_node:
+            timestamp = str(time.time())
+            id_ = hashlib.md5((prompt + timestamp).encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt":prompt,
+                          "text":"",
+                          "timestamp":timestamp,
+                          "nodes":[]})
+        for out in outs:
+            timestamp = str(time.time())
+            id_ = hashlib.md5(out.encode("UTF-8")).hexdigest()
+            batch.append({"id":id_,
+                          "prompt": prompt,
+                          "text":out,
+                          "timestamp":timestamp,
+                          "nodes":[]})
+        # TODO: Proper CORS
+        response = jsonify(batch)
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
+    
 @app.route("/check-tokens", methods=['OPTIONS', 'POST'])
 def check_tokens():
     if request.method == 'OPTIONS':
@@ -203,35 +295,6 @@ def check_tokens():
         inputs = tokenizer([text] * 1, return_tensors="pt", truncation=True, max_length=4096).to("cuda")
         # TODO: Proper CORS
         response = jsonify(inputs['input_ids'][0].shape[0])
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        return response
-
-    
-@app.route("/train-reward-model", methods=["OPTIONS", "POST"])
-def train_reward_model():
-    if request.method == 'OPTIONS':
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "*")
-        response.headers.add("Access-Control-Allow-Methods", "*")
-        return response
-    if request.method =='POST':
-        file_ = request.files['file']
-        # Deload models
-        global generator
-        del(generator)
-        global evaluator
-        del(evaluator)
-        global generate_fn
-        del(generate_fn)
-        global evaluate_fn
-        del(evaluate_fn)
-        torch.cuda.empty_cache()
-        data = ZippedConversationsDataset(file_)
-        lora_tune_evaluator(data)
-        torch.cuda.empty_cache()
-        load_models()
-        response = make_response("training complete")
         response.headers.add("Access-Control-Allow-Origin", "*")
         return response
     

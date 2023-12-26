@@ -16,13 +16,14 @@ import sys
 os.environ["BITSANDBYTES_NOWELCOME"] = "1"
 
 import accelerate
-import dice_mc.torch as dice
 import peft
 import torch
 from torch import optim
 from torch.nn import functional as F
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+from dpo_loss import DPOLoss, logp_completion
 
 print = tqdm.external_write_mode()(print)
 
@@ -131,18 +132,6 @@ def make_get_scores(tokenizer, prefix):
     return partial(get_scores_from_logits, pos_tokens=pos_tokens, neg_tokens=neg_tokens)
 
 
-def kl_div_est(logp, logq):
-    """Biased estimator of D_KL(P || Q) from log(p(x)) and log(q(x)), x sampled from p."""
-    return torch.logaddexp(logp - logq, logq - logp) - math.log(2)
-
-
-def inv_cumsum(x):
-    """Inverse of cumulative sum."""
-    out = x.clone()
-    out[..., 1:] -= x[..., :-1]
-    return out
-
-
 def batched(iterable, n):
     "Batch data into tuples of length n. The last batch may be shorter."
     # batched('ABCDEFG', 3) --> ABC DEF G
@@ -188,23 +177,26 @@ def main():
     parser = argparse.ArgumentParser(
         __doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument("--resume", type=str, default=None, help="Path to lora to resume from")
-    parser.add_argument("--batch-size", type=int, default=1, help="the batch size")
+    parser.add_argument("--resume", type=str, default=None, help="path to lora to resume from")
+    parser.add_argument("--batch-size", type=int, default=1, help="the microbatch size")
     parser.add_argument("--constitution", type=Path, required=True, help="the constitution to use")
     parser.add_argument(
         "--grad-accum-steps", type=int, default=4, help="the number of gradient accumulation steps"
     )
-    parser.add_argument("--kl-weight", type=float, default=1.0, help="the KL weight")
+    parser.add_argument("--kl-weight", type=float, default=0.18, help="the KL weight")
+    parser.add_argument("--logit-scale", type=float, default=1.0, help="the evaluator logit scale")
     parser.add_argument("--length", type=int, default=64, help="the number of tokens to sample")
     parser.add_argument("--output-path", type=str, required=True, help="the output path")
     parser.add_argument("--prompts", type=Path, required=True, help="the prompts to use")
     parser.add_argument(
         "--save-every", type=int, default=250, help="the number of steps between saves"
     )
+    parser.add_argument("--learning-rate", type=float, default=1e-4, help="the learning rate")
+    parser.add_argument("--weight-decay", type=float, default=0.0, help="the weight decay factor")
     args = parser.parse_args()
 
     accelerator = accelerate.Accelerator(gradient_accumulation_steps=args.grad_accum_steps)
-    device = accelerator.device
+    device = accelerator.device if accelerator.num_processes > 1 else torch.device("cuda:0")
     print0 = accelerator.on_local_main_process(print)
 
     prompts = parse_prompts(args.prompts.read_text())
@@ -219,8 +211,10 @@ def main():
         principle_signs.append(1 if answer == "yes" else -1)
     principle_signs = torch.tensor(principle_signs, device=device)
 
-    model_name = "openlm-research/open_llama_7b"
-    evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
+    # model_name = "openlm-research/open_llama_7b"
+    # evaluator_adapter_name = "RiversHaveWings/minihf_evaluator_openllama_7b"
+    model_name = "mistralai/Mistral-7B-v0.1"
+    evaluator_adapter_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
     eval_split_batches = True
 
     tokenizer = AutoTokenizer.from_pretrained(evaluator_adapter_name)
@@ -229,7 +223,7 @@ def main():
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16,  # TODO: change back to float16 and use a grad scaler
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=False,
     )
@@ -237,7 +231,7 @@ def main():
         model_name,
         device_map="auto" if accelerator.num_processes == 1 else {"": device},
         quantization_config=bnb_config,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,  # TODO: change back to float16 and use a grad scaler
         trust_remote_code=True,
     )
     model = peft.PeftModel.from_pretrained(model, evaluator_adapter_name, "evaluator")
@@ -261,7 +255,7 @@ def main():
         ],
     )
     if args.resume:
-        model.load_adapter(args.resume, "default", is_trainable=True) 
+        model.load_adapter(args.resume, "default", is_trainable=True)
     else:
         model.add_adapter("default", peft_config)
         model.train()
@@ -272,15 +266,18 @@ def main():
 
     inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
     input_len = inputs.input_ids.shape[1]
+    logp_mask = torch.tensor([False] * input_len + [True] * args.length, device=device)
 
-    opt = optim.Adam(model.parameters(), lr=1e-4, betas=(0.9, 0.98))
+    opt = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        betas=(0.9, 0.98),
+        weight_decay=args.weight_decay,
+    )
+    crit = DPOLoss(beta=args.kl_weight)
     sched = optim.lr_scheduler.LambdaLR(opt, constant_schedule(1.0))
-    kl_sched = constant_schedule(args.kl_weight)
 
     model, opt, sched = accelerator.prepare(model, opt, sched)
-
-    baseline = dice.EMABaseline(decay=0.98).to(device)
-    baseline_kl = dice.EMABaseline(decay=0.98).to(device)
 
     accelerator.wait_for_everyone()
 
@@ -289,8 +286,8 @@ def main():
             with set_adapter(accelerator.unwrap_model(model), "default"):
                 demo_examples = min(4, len(prompts))
                 demo_bs = math.ceil(demo_examples / accelerator.num_processes)
-                start_idx = accelerator.local_process_index * demo_bs
-                end_idx = start_idx + demo_bs
+                start_idx = min(accelerator.local_process_index * demo_bs, len(prompts) - 1)
+                end_idx = min(start_idx + demo_bs, len(prompts))
                 outputs = accelerator.unwrap_model(model).generate(
                     inputs.input_ids[start_idx:end_idx],
                     attention_mask=inputs.attention_mask[start_idx:end_idx],
@@ -309,6 +306,7 @@ def main():
         with accelerator.accumulate(model):
             with set_adapter(accelerator.unwrap_model(model), "default"):
                 indices = torch.randint(0, len(prompts), (args.batch_size,), device=device)
+                indices = torch.tile(indices, (2,))
                 tokens = accelerator.unwrap_model(model).generate(
                     inputs.input_ids[indices],
                     attention_mask=inputs.attention_mask[indices],
@@ -324,12 +322,8 @@ def main():
             texts = [tokenizer.decode(t, skip_special_tokens=True) for t in tokens]
 
             with torch.no_grad(), set_adapter(accelerator.unwrap_model(model), None):
-                outputs_orig = model(tokens, attention_mask=attention_mask)
-            logits_orig = at_least_float32(outputs_orig.logits)
-            logp_orig = dice.logp_categorical(
-                logits_orig[:, input_len - 1 : -1], tokens[:, input_len:]
-            )
-            logp_orig_cumsum = torch.cumsum(logp_orig, dim=1)
+                outputs_ref = model(tokens, attention_mask=attention_mask)
+            logp_ref = logp_completion(outputs_ref.logits.float(), tokens, logp_mask)
 
             split_texts = [
                 {"prompt": prompts[index], "response": text[len(prompts[index]) :]}
@@ -355,44 +349,28 @@ def main():
                             eval_inputs.input_ids, attention_mask=eval_inputs.attention_mask
                         )
                         scores.append(get_scores(eval_outputs.logits))
-            scores = torch.stack(scores, dim=1)
-            scores = soft_minimum(
-                scores * principle_signs[None], principle_weights[None], dim=1
-            ).to(device)
+            scores = torch.stack(scores, dim=1).to(device)
+            scores = soft_minimum(scores * principle_signs[None], principle_weights[None], dim=1)
 
             with set_adapter(accelerator.unwrap_model(model), "default"):
                 outputs = model(tokens, attention_mask=attention_mask)
-                logits = at_least_float32(outputs.logits)
-                logp = dice.logp_categorical(logits[:, input_len - 1 : -1], tokens[:, input_len:])
-                logp_sum = torch.sum(logp, dim=1)
-                logp_cumsum = torch.cumsum(logp, dim=1)
-                kls = inv_cumsum(kl_div_est(logp_cumsum.detach(), logp_orig_cumsum.detach()))
-
-                losses_main = -F.logsigmoid(scores)
-                losses_main = dice.cost_node(losses_main, [logp_sum])
-                losses_main_global = accelerator.reduce(losses_main, "mean")
-                losses_main += baseline(losses_main_global, [logp_sum])
-                losses_kl = kls * kl_sched(i)
-                losses_kl = dice.cost_node(losses_kl, [logp_cumsum])
-                losses_kl_global = accelerator.reduce(losses_kl, "mean")
-                losses_kl += baseline_kl(losses_kl_global, [logp_cumsum])
-                loss_main = losses_main.mean()
-                loss_kl = losses_kl.mean()
-                loss = loss_main + loss_kl
-                loss_global = accelerator.reduce(loss, "mean")
+                logp = logp_completion(outputs.logits.float(), tokens, logp_mask)
+                logp_1, logp_2 = torch.chunk(logp, 2)
+                logp_ref_1, logp_ref_2 = torch.chunk(logp_ref, 2)
+                score_1, score_2 = torch.chunk(scores, 2)
+                win_rate = torch.sigmoid(args.logit_scale * (score_1 - score_2))
+                loss = crit(logp_1, logp_ref_1, logp_2, logp_ref_2, win_rate)
                 accelerator.backward(loss)
 
-            print0(
-                f"step: {i}, loss: {loss_global.item():g}, main: {losses_main_global.mean().item():g}, kl: {losses_kl_global.mean().item():g}"
-            )
+            loss_global = accelerator.reduce(loss, "mean")
+            score_global = accelerator.reduce(torch.mean(scores), "mean")
+            logr = logp_ref - logp.detach()
+            kls = torch.expm1(logr) - logr
+            kl_global = accelerator.reduce(torch.mean(kls), "mean") / args.length
 
-            if accelerator.sync_gradients:
-                grad_norm = 0.0
-                for p in model.parameters():
-                    if p.grad is not None:
-                        grad_norm += p.grad.pow(2).sum().item()
-                grad_norm **= 0.5
-                print0(f"grad norm: {grad_norm:g}")
+            print0(
+                f"step: {i}, loss: {loss_global.item():g}, score: {score_global.item():g}, kl: {kl_global.item():g}"
+            )
 
             opt.step()
             sched.step()
