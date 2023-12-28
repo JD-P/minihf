@@ -177,6 +177,7 @@ function renderChildren(node, container, maxChildren) {
 var loomTree = new LoomTree();
 const loomTreeView = document.getElementById('loom-tree-view');
 let focus = loomTree.nodeStore['1'];
+let samplerSettingsStore = {};
 renderTree(loomTree.root, loomTreeView, 2);
 
 function renderTick() {
@@ -849,10 +850,21 @@ function loadFile() {
     .catch(err => console.error('Load File Error:', err));
 };
 
+function loadSettings() {
+    ipcRenderer.invoke('load-settings')
+	.then(data => {
+	    if (data != null) {
+		samplerSettingsStore = data;
+	    }
+	})
+	.catch(err => console.error('Load Settings Error:', err));
+};
+
 function autoSave() {
   const data = {
-    loomTree,
-    "focus": focus,
+      loomTree,
+      "focus": focus,
+      "samplerSettingsStore": samplerSettingsStore,
   };
   ipcRenderer.invoke('auto-save', data)
     .catch(err => console.error('Auto-save Error:', err));
@@ -1091,28 +1103,127 @@ function openaiCompletionsSamplerMenu() {
     samplerOptionMenu.append(modelName);
 }
 
+function baseSamplerMenuToDict() {
+    const out = {};
+    out["apiUrl"] = document.getElementById("api-url").value;
+    out["outputBranches"] = document.getElementById("output-branches").value;
+    out["tokensPerBranch"] = document.getElementById("tokens-per-branch").value;
+    out["temperature"] = document.getElementById("temperature").value;
+    return out;
+}
+
+function vaeGuidedSamplerMenuToDict() {
+    const out = baseSamplerMenuToDict();
+    out["task-vector"] = document.getElementById("task-vector").value;
+    return out;
+}
+
+function togetherSamplerMenuToDict() {
+    const out = baseSamplerMenuToDict();
+    out["topP"] = document.getElementById("top-p").value;
+    out["topK"] = document.getElementById("top-k").value;
+    out["repetitionPenalty"] = document.getElementById("repetition-penalty").value;
+    out["apiKey"] = document.getElementById("api-key").value;
+    out["apiDelay"] = document.getElementById("api-delay").value;
+    out["modelName"] = document.getElementById("model-name").value;
+    return out;
+}
+
+function openaiCompletionsSamplerMenuToDict() {
+    return togetherSamplerMenuToDict();
+}
+
+function loadBaseSamplerMenuDict(samplerMenuDict) {
+    document.getElementById("api-url").value = samplerMenuDict["apiUrl"];
+    document.getElementById("output-branches").value = samplerMenuDict["outputBranches"];
+    document.getElementById("tokens-per-branch").value = samplerMenuDict["tokensPerBranch"];
+    document.getElementById("temperature").value = samplerMenuDict["temperature"];
+}
+
+function loadVaeGuidedSamplerMenuDict(samplerMenuDict) {
+    loadBaseSamplerMenuDict(samplerMenuDict);
+    document.getElementById("task-vector").value = samplerMenuDict["task-vector"];
+}
+
+function loadTogetherSamplerMenuDict(samplerMenuDict) {
+    loadBaseSamplerMenuDict(samplerMenuDict);
+    document.getElementById("top-p").value = samplerMenuDict["topP"];
+    document.getElementById("top-k").value = samplerMenuDict["topK"];
+    document.getElementById("repetition-penalty").value = samplerMenuDict["repetitionPenalty"];
+    document.getElementById("api-key").value = samplerMenuDict["apiKey"];
+    document.getElementById("api-delay").value = samplerMenuDict["apiDelay"];
+    document.getElementById("model-name").value = samplerMenuDict["modelName"];
+}
+
+function loadOpenAICompletionsSamplerMenuDict(samplerMenuDict) {
+    loadTogetherSamplerMenuDict(samplerMenuDict);
+}
+
+function internalSaveSamplerSettings() {
+    let currentSampler = document.getElementById("sampler").value;
+    if (currentSampler === "base") {
+	samplerSettingsStore["base"] = baseSamplerMenuToDict();
+    }
+    else if (currentSampler === "vae-base") {
+	samplerSettingsStore["vae-base"] = vaeBaseSamplerMenuToDict();
+    }
+    else if (currentSampler === "vae-guided") {
+	samplerSettingsStore["vae-guided"] = vaeGuidedSamplerMenuToDict();
+    }
+    else if (currentSampler === "vae-paragraph") {
+	samplerSettingsStore["vae-paragraph"] = vaeParagraphSamplerMenuToDict();
+    }
+    else if (currentSampler === "vae-bridge") {
+	samplerSettingsStore["vae-bridge"] = vaeBridgeSamplerMenuToDict();
+    }
+    else if (currentSampler === "together") {
+	samplerSettingsStore["together"] = togetherSamplerMenuToDict();
+    }
+    else if (currentSampler === "openai") {
+	samplerSettingsStore["openai"] = openaiCompletionsSamplerMenuToDict();
+    }
+}
+
+samplerOptionMenu.addEventListener('change', internalSaveSamplerSettings);
+sampler.addEventListener('focus', internalSaveSamplerSettings);
+
 sampler.addEventListener('change', function() {
     let selectedSampler = this.value;
     if (selectedSampler === "base") {
 	baseSamplerMenu();
+	if ("base" in samplerSettingsStore) {
+	    loadBaseSamplerMenuDict(samplerSettingsStore["base"]);
+	}
     }
     else if (selectedSampler === "vae-base") {
+	// Not implemented
 	vaeBaseSamplerMenu();
     }
     else if (selectedSampler === "vae-guided") {
 	vaeGuidedSamplerMenu();
+	if ("vae-guided" in samplerSettingsStore) {
+	    loadVaeGuidedSamplerMenuDict(samplerSettingsStore["vae-guided"]);
+	}
     }
     else if (selectedSampler === "vae-paragraph") {
-	vaeParagraphSamplerMenu();
+	// Not implemented
+	vaeParagraphSamplerMenu();	
     }
     else if (selectedSampler === "vae-bridge") {
+	// Not implemented
 	vaeBridgeSamplerMenu();
     }
     else if (selectedSampler === "together") {
 	togetherSamplerMenu();
+	if ("together" in samplerSettingsStore) {
+	    loadTogetherSamplerMenuDict(samplerSettingsStore["together"]);
+	}
     }
     else if (selectedSampler === "openai") {
 	openaiCompletionsSamplerMenu();
+	if ("openai" in samplerSettingsStore) {
+	    loadOpenAICompletionsSamplerMenuDict(samplerSettingsStore["openai"]);
+	}
     }
 });
 
@@ -1121,5 +1232,9 @@ editor.addEventListener('contextmenu', (e) => {
   ipcRenderer.send('show-context-menu');
 });
 
-renderTick();	    
+renderTick();
 baseSamplerMenu();
+loadSettings();
+if ("base" in samplerSettingsStore) {
+    loadBaseSamplerMenuDict(samplerSettingsStore["base"]);
+}

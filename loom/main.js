@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, MenuItem } = require('electron');
 const fs = require('fs');
+const path = require('path');
 
 let mainWindow;
 
@@ -101,10 +102,33 @@ ipcMain.handle('load-file', async (event) => {
   }
 });
 
+ipcMain.handle('load-settings', async (event) => {
+    const miniLoomSettingsFilePath = path.join(app.getPath("appData"),
+					      'miniloom',
+					      'settings.json');
+    let settings;
+    if (fs.existsSync(miniLoomSettingsFilePath)) {
+	settings = fs.readFileSync(miniLoomSettingsFilePath, 'utf8');
+	return JSON.parse(settings);
+    }
+});
+	
 ipcMain.handle('auto-save', (event, data) => {
-  if (autoSavePath) {
-    fs.writeFileSync(autoSavePath, JSON.stringify(data));
-  }
+    const userFileData = {}
+    userFileData["loomTree"] = data["loomTree"];
+    userFileData["focus"] = data["focus"];
+    if (autoSavePath) {
+	fs.writeFileSync(autoSavePath, JSON.stringify(userFileData));
+    }
+    
+    const appDataPath = app.getPath("appData");
+    const miniLoomSettings = data["samplerSettingsStore"];
+    const miniLoomSettingsDir = path.join(appDataPath, 'miniloom');
+    const miniLoomSettingsFilePath = path.join(miniLoomSettingsDir, 'settings.json');
+    if (!fs.existsSync(miniLoomSettingsDir)) {
+	fs.mkdirSync(miniLoomSettingsDir);
+    }
+    fs.writeFileSync(miniLoomSettingsFilePath, JSON.stringify(miniLoomSettings));
 });
 
 
