@@ -216,29 +216,28 @@ function renderTick() {
       const branchControlButtonsDiv = document.createElement('div');
       branchControlButtonsDiv.classList.add('branch-control-buttons');
 
-      var leftThumbClass = 'thumbs'	
-      var rightThumbClass = 'thumbs'
-      if (focus.rating) {
+    var leftThumbClass = 'thumbs'	
+    var rightThumbClass = 'thumbs'
+    if (focus.rating) {
 	  leftThumbClass = 'chosen'
-      }
-      else if (focus.rating == false) {
-	  rightThumbClass = 'chosen'
-      }
-
-    if (focus.type === "rewrite") {
-      const leftThumbSpan = document.createElement('span');
-      leftThumbSpan.classList.add(leftThumbClass);
-      leftThumbSpan.textContent = "👍";
-      leftThumbSpan.onclick = () => promptThumbsUp(focus.id);
-
-      const rightThumbSpan = document.createElement('span');
-      rightThumbSpan.classList.add(rightThumbClass);
-      rightThumbSpan.textContent = "👎";
-      rightThumbSpan.onclick = () => promptThumbsDown(focus.id);
-
-      branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
     }
-    else if (focus.type === "gen") {
+    else if (focus.rating == false) {
+	  rightThumbClass = 'chosen'
+    }
+
+    const leftThumbSpan = document.createElement('span');
+    leftThumbSpan.classList.add(leftThumbClass);
+    leftThumbSpan.textContent = "👍";
+    leftThumbSpan.onclick = () => promptThumbsUp(focus.id);
+
+    const rightThumbSpan = document.createElement('span');
+    rightThumbSpan.classList.add(rightThumbClass);
+    rightThumbSpan.textContent = "👎";
+    rightThumbSpan.onclick = () => promptThumbsDown(focus.id);
+    
+    branchControlButtonsDiv.append(leftThumbSpan, rightThumbSpan);
+  
+    if (focus.type === "gen") {
 	const rewriteButton = document.createElement("span");
 	rewriteButton.id = "rewrite-button";
 	rewriteButton.textContent = "💬";
@@ -448,7 +447,7 @@ async function rewriteNode(id) {
 						 summary);
 	loomTree.nodeStore[responseNode.id]["feedback"] = rewriteFeedback;
 	loomTree.nodeStore[responseNode.id]["rewritePrompt"] = prompt;
-	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["model"] = response["base_model"];
     }
     const chatPane = document.getElementById("chat-pane");
     chatPane.innerHTML = "";
@@ -643,7 +642,7 @@ async function baseRoll(id, weave=true) {
 						 rerollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
     }
     focus = loomTree.nodeStore[rerollFocus.children.at(-1)];
     diceTeardown();
@@ -753,7 +752,7 @@ async function togetherRoll(id, openai=false) {
 						 rollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["baseModel"] = response["base_model"];
+	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
     }
     focus = loomTree.nodeStore[rollFocus.children.at(-1)];
     diceTeardown();
