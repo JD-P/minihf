@@ -78,7 +78,7 @@ class ProgressBarStreamer(BaseStreamer):
 
 def load_generator():
     # model_name = "EleutherAI/gpt-neox-20b"
-    model_name = "EleutherAI/gpt-j-6B"
+    model_name = "mistralai/Mistral-7B-v0.1"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -95,7 +95,7 @@ def load_generator():
 
 
 def load_evaluator():
-    model_name = "tiiuae/falcon-7b-instruct"
+    model_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -154,6 +154,13 @@ get_scores_from_logits_falcon = partial(
     neg_tokens=[658, 1684, 2749, 2929, 9395, 10630],
 )
 
+get_scores_from_logits_mistral = partial(
+    get_scores_from_logits,
+    # 'Y', 'Yes', 'yes'
+    pos_tokens=[627, 5592, 5081],
+    # 'NO', 'No', 'no'
+    neg_tokens=[7929, 1770, 708],
+)
 
 def get_score_from_completion(choice):
     p_yes, p_no, p_all = 0.0, 0.0, 0.0
@@ -241,7 +248,7 @@ template = """Answer yes or no and only yes or no. If the story is not actually 
 {response}
 === End Response ===
 
-make the reader feel like crying?"""
+make the reader feel like smiling?"""
 
 def make_score_prompt_fn(evaluator, template, suffix, prompt, response):
     tokenizer, model = evaluator
@@ -273,6 +280,8 @@ falcon_score_prompt_fn = partial(score_prompt_fn, suffix="\n")
 
 openai_score_prompt_fn = partial(score_prompt_fn, suffix="\n\n")
 
+flan_score_prompt_fn = partial(make_score_prompt_fn, suffix="<|end|>")
+
 
 @torch.no_grad()
 def evaluate_outputs(evaluator, score_prompt_fn, texts):
@@ -288,6 +297,8 @@ def evaluate_outputs(evaluator, score_prompt_fn, texts):
         get_scores_from_logits = get_scores_from_logits_openllama
     elif tokenizer.vocab["yes"] == 9109:
         get_scores_from_logits = get_scores_from_logits_falcon
+    elif tokenizer.vocab["yes"] == 9780:
+        get_scores_from_logits = get_scores_from_logits_mistral
     else:
         raise ValueError("Unknown model type")
 
@@ -297,7 +308,7 @@ def evaluate_outputs(evaluator, score_prompt_fn, texts):
         return_tensors="pt",
         padding=True,
         truncation=True,
-        max_length=2048,
+        max_length=4096,
     ).input_ids.to("cuda")
     logits = model(tokens).logits
     return [score.item() for score in get_scores_from_logits(logits)]
@@ -523,7 +534,7 @@ def main():
         rprint("[bold red]No OpenAI API key provided[/]")
         exit(1)
 
-    openai.api_key = args.api_key
+    # openai.api_key = args.api_key
     os.environ["BITSANDBYTES_NOWELCOME"] = "1"
 
     if args.use_openai:
@@ -535,9 +546,13 @@ def main():
         print("Loading evaluator model...")
         evaluator = load_evaluator()
         generate_fn = partial(generate_outputs, generator, batch_size=4)
-        evaluate_fn = partial(evaluate_outputs, evaluator)
-        evaluate_fn = partial(evaluate_fn, falcon_score_prompt_fn)
-
+        score_prompt_fn = partial(make_score_prompt_fn,
+                                  evaluator,
+                                  template,
+                                  "<|end|>")
+        evaluate_fn = partial(evaluate_outputs,
+                              evaluator,
+                              score_prompt_fn)
     # system_prompt = (
     #     "A well-written, sad story that makes the reader feel like crying:\n\n"
     # )
@@ -554,7 +569,7 @@ def main():
         branches = weave_tree_search(
             tree=tree,
             generate_fn=partial(generate_fn, n_tokens=32),
-            evaluate_fn=evaluate_without_system_prompt,
+            evaluate_fn=evaluate_fn,
             budget=144,
             round_budget=24,
             n_expand=8,
