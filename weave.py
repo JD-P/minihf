@@ -197,7 +197,7 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
         return_tensors="pt",
         padding=True,
         truncation=True,
-        max_length=2048 - n_tokens,
+        max_length=4096 - n_tokens,
     ).to("cuda")
 
     outputs = []
@@ -210,7 +210,7 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
                 input_ids,
                 attention_mask=attention_mask,
                 do_sample=True,
-                temperature=0.9,
+                temperature=1,
                 top_k=50,
                 repetition_penalty=1.02,
                 min_new_tokens=n_tokens,
@@ -223,7 +223,7 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
     outputs = torch.cat(outputs)
     out_texts = [tokenizer.decode(toks, skip_special_tokens=True) for toks in outputs]
     in_length = len(tokenizer.decode(inputs.input_ids[0], skip_special_tokens=True))
-    return [out_text[in_length:] for out_text in out_texts]
+    return [out_texts[i][in_length:] for i in range(len(out_texts))]
 
 
 def generate_outputs_openai(text, n_tokens, n=1):
@@ -256,19 +256,19 @@ def make_score_prompt_fn(evaluator, template, suffix, prompt, response):
                               return_tensors="pt",
                               padding=True,
                               truncation=True,
-                              max_length=2048)
+                              max_length=4096)
     template_length = len(template_toks.input_ids[0])
     response_toks = tokenizer(response,
                               return_tensors="pt",
                               padding=True,
                               truncation=True,
-                              max_length=2048 - template_length)
+                              max_length=4096 - template_length)
     response_length = len(response_toks.input_ids[0])
     prompt_toks = tokenizer(prompt,
                             return_tensors="pt",
                             padding=True,
                             truncation=True,
-                            max_length=2048 - template_length - response_length)
+                            max_length=4096 - template_length - response_length)
     response = tokenizer.decode(response_toks.input_ids[0], skip_special_tokens=True)
     prompt = tokenizer.decode(prompt_toks.input_ids[0], skip_special_tokens=True)
     
@@ -284,7 +284,7 @@ flan_score_prompt_fn = partial(make_score_prompt_fn, suffix="<|end|>")
 
 
 @torch.no_grad()
-def evaluate_outputs(evaluator, score_prompt_fn, texts):
+def evaluate_outputs(evaluator, score_prompt_fns, texts):
     tokenizer, model = evaluator
 
     if tokenizer.vocab["yes"] == 8505:
@@ -302,16 +302,23 @@ def evaluate_outputs(evaluator, score_prompt_fn, texts):
     else:
         raise ValueError("Unknown model type")
 
-    prompts = [score_prompt_fn(text[0], text[1]) for text in texts]
-    tokens = tokenizer(
-        prompts,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=4096,
-    ).input_ids.to("cuda")
-    logits = model(tokens).logits
-    return [score.item() for score in get_scores_from_logits(logits)]
+    scores = []
+    for score_prompt_fn in score_prompt_fns:
+        prompts = [score_prompt_fn(text[0], text[1]) for text in texts]
+        tokens = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=4096,
+        ).input_ids.to("cuda")
+        logits = model(tokens).logits
+        scores.append(
+            torch.tensor(
+                [score.item() for score in get_scores_from_logits(logits)]))
+    # TODO: Return these unpooled so the separate components can be stored in the
+    # weave tree
+    return torch.stack(scores).mean(dim=0)
 
 
 def evaluate_outputs_openai(texts):
@@ -552,7 +559,7 @@ def main():
                                   "<|end|>")
         evaluate_fn = partial(evaluate_outputs,
                               evaluator,
-                              score_prompt_fn)
+                              [score_prompt_fn,])
     # system_prompt = (
     #     "A well-written, sad story that makes the reader feel like crying:\n\n"
     # )
