@@ -68,8 +68,8 @@ def main():
     dataset_seed = 100
     lora_rank = 32
     lr = 1e-4
-    max_len = 2048
-    model_name = "openlm-research/open_llama_7b"
+    max_len = 4096
+    model_name = "upstage/SOLAR-10.7B-v1.0"
 
     # Initialize Accelerate
     accelerator = accelerate.Accelerator(mixed_precision="bf16", dispatch_batches=False)
@@ -147,17 +147,19 @@ def main():
 
     def exclude_too_long(row):
         return len(row["input_ids"]) <= max_len
-
+            
     # Load dataset
     print0("### Loading datasets", file=sys.stderr)
     with accelerator.main_process_first():
         dataset_1 = datasets.load_dataset("Muennighoff/flan", streaming=True)
         dataset_2 = datasets.load_dataset("databricks/databricks-dolly-15k", streaming=True)
+        dataset_3 = datasets.load_dataset("jdpressman/retroinstruct-mix-v0.1", streaming=True)
     accelerator.wait_for_everyone()
     dataset_1 = dataset_1["train"].map(partial(to_tokens, combine_flan))
     dataset_2 = dataset_2["train"].map(partial(to_tokens, combine_dolly))
+    dataset_3 = dataset_3["train"].map(partial(to_tokens, combine_flan))
     dataset = (
-        datasets.interleave_datasets([dataset_1, dataset_2], probabilities=[0.9, 0.1])
+        datasets.interleave_datasets([dataset_1, dataset_2, dataset_3], probabilities=[0.3, 0.1, 0.6])
         .filter(exclude_too_long)
         .shuffle(seed=dataset_seed)
         .select_columns(["input_ids"])
