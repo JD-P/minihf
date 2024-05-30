@@ -642,7 +642,7 @@ async function baseRoll(id, weave=true) {
 						 rerollFocus,
 						 response["text"],
 						 responseSummary);
-	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
+	loomTree.nodeStore[responseNode.id]["model"] = response["base_model"];
     }
     focus = loomTree.nodeStore[rerollFocus.children.at(-1)];
     diceTeardown();
