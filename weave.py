@@ -177,6 +177,8 @@ def get_score_from_completion(choice):
             p_no += prob
     p_yes = p_yes if p_yes else 1 - p_all
     p_no = p_no if p_no else 1 - p_all
+    if (p_yes <= 0) or (p_no <= 0):
+        return float("nan")
     return math.log(p_yes) - math.log(p_no)
 
 
@@ -249,7 +251,8 @@ def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000):
                "max_tokens": n_tokens,
                "model":model_name,
                "prompt":text,
-               "stream":False}
+               "stream":False,
+               "seed":random.randrange(1000000)}
     response = requests.post(f"http://localhost:{port}/v1/completions/",
                              data=json.dumps(payload))
     # return completion.json()["choices"][0]["text"]
@@ -371,28 +374,36 @@ class Choice:
 class MockLogProbs:
     pass
 
-def evaluate_outputs_vllm(model_name, texts, n=1, port=5000):
-    prompts = [vllm_score_prompt_fn(text) for text in texts]
-    payload = {"n":n,
-               "temperature":1,
-               "top_k":50,
-               "repetition_penalty":1.02,
-               "max_tokens": 1,
-               "model":model_name,
-               "prompt":prompts,
-               "stream":False,
-               "logprobs":5}
-    response = requests.post(f"http://localhost:{port}/v1/completions/",
-                               data=json.dumps(payload))
-    choices = []
-    for choice in response.json()["choices"]:
-        choice_o = Choice()
-        mocklogprobs_o = MockLogProbs()
-        choice_o.logprobs = mocklogprobs_o
-        choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
-        choices.append(choice_o)
-    return [get_score_from_completion(choice) for choice in choices]
-
+def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
+    scores = []
+    for text in texts:
+        prompts = [score_prompt_fn(text) for score_prompt_fn in score_prompt_fns]       
+#    for score_prompt_fn in score_prompt_fns:
+#        prompts = [score_prompt_fn(text) for text in texts]
+        payload = {"n":n,
+                   "temperature":1,
+                   "top_k":50,
+                   "repetition_penalty":1.02,
+                   "max_tokens": 1,
+                   "model":model_name,
+                   "prompt":prompts,
+                   "stream":False,
+                   "logprobs":100,
+                   "seed":random.randrange(1000000)}
+        response = requests.post(f"http://localhost:{port}/v1/completions/",
+                                   data=json.dumps(payload))
+        choices = []
+        for choice in response.json()["choices"]:
+            choice_o = Choice()
+            mocklogprobs_o = MockLogProbs()
+            choice_o.logprobs = mocklogprobs_o
+            choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
+            choices.append(choice_o)
+        scores.append(torch.tensor([get_score_from_completion(choice) for choice in choices]))
+    # TODO: Return these unpooled so the separate components can be stored in the
+    # weave tree
+    return torch.stack(scores).mean(dim=1)
+        
 class TreeNode:
     max_id = 0
 
