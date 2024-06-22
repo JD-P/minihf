@@ -596,11 +596,11 @@ def weave_tree_search(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gen-api-base", help="The base URL for the generator model API",
-                        default="http://localhost:5000/v1/completions")
+                        default=None)
     parser.add_argument("--gen-api-key", help="API key for the generator model API",
                         default=None)
     parser.add_argument("--eval-api-base", help="The base URL for the evaluation model API",
-                        default="http://localhost:5000/v1/completions")
+                        default=None)
     parser.add_argument("--eval-api-key", help="API key for the evaluation model API",
                         default=None)
     parser.add_argument("--gen-model-name", help="The inference engine to use for generation")
