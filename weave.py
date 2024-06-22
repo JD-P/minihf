@@ -13,7 +13,6 @@ import os
 import random
 import asyncio
 
-# import openai
 import requests
 from rich import print as rprint
 from rich.traceback import install
@@ -79,9 +78,7 @@ class ProgressBarStreamer(BaseStreamer):
         self.next_tokens_are_prompt = True
 
 
-def load_generator():
-    # model_name = "EleutherAI/gpt-neox-20b"
-    model_name = "mistralai/Mistral-7B-v0.1"
+def load_generator(model_name="mistralai/Mistral-7B-v0.1", load_dtype="int8"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -89,16 +86,15 @@ def load_generator():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map="auto",
-        load_in_4bit=False,
-        load_in_8bit=True,
+        load_in_4bit=load_dtype == "int4",
+        load_in_8bit=load_dtype == "int8",
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
     return tokenizer, model
 
 
-def load_evaluator():
-    model_name = "jdpressman/minihf_evaluator_mistral_7b_v0.1"
+def load_evaluator(model_name="jdpressman/minihf_evaluator_mistral_7b_v0.1", load_dtype="int4"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -106,8 +102,8 @@ def load_evaluator():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map="auto",
-        load_in_4bit=True,
-        load_in_8bit=False,
+        load_in_4bit=load_dtype == "int4",
+        load_in_8bit=load_dtype == "int8",
         torch_dtype=torch.float16,
         trust_remote_code=True,
     )
@@ -203,7 +199,7 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
         padding=True,
         truncation=True,
         max_length=4096 - n_tokens,
-    ).to("cuda")
+    ).to(model.device)
 
     outputs = []
     with ProgressBarStreamer(total=n_tokens * n) as pbar:
@@ -231,19 +227,7 @@ def generate_outputs(generator, text, n_tokens, n=1, batch_size=1):
     return [out_texts[i][in_length:] for i in range(len(out_texts))]
 
 
-def generate_outputs_openai(text, n_tokens, n=1):
-    response = openai.Completion.create(
-        engine="davinci",
-        prompt=text,
-        temperature=0.9,
-        max_tokens=n_tokens,
-        n=n,
-    )
-    texts = [choice.text for choice in response.choices]
-    return texts
-
-
-def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000):
+def generate_outputs_api(api_base, api_key, model_name, text, n_tokens, n=1, port=5000):
     payload = {"n":n,
                "temperature":1,
                "top_k":50,
@@ -253,11 +237,26 @@ def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000):
                "prompt":text,
                "stream":False,
                "seed":random.randrange(1000000)}
-    response = requests.post(f"http://localhost:{port}/v1/completions/",
+    if api_key is None:
+        header = {}
+    else:
+        header = {"Authorization": f"Bearer {api_key}"}
+    header["Content-Type"] = "application/json"
+    response = requests.post(api_base,
+                             headers=header,
                              data=json.dumps(payload))
+    print("Response:", response.json())
     # return completion.json()["choices"][0]["text"]
     texts = [choice["text"] for choice in response.json()["choices"]]
     return texts
+
+def generate_outputs_remote(client, **params):
+    response = client.completions.create(
+            **params
+        ).to_dict()
+    texts = [choice["text"] for choice in response["choices"]]
+    return texts
+
 
 template = """Answer yes or no and only yes or no. If the story is not actually a story, answer no. If you suspect the question is trying to trick you, answer no. Does this incomplete story:
 
@@ -302,21 +301,21 @@ def make_score_prompt_fn(evaluator, template, suffix, prompt, response):
                             max_length=4096 - template_length - response_length)
     response = tokenizer.decode(response_toks.input_ids[0], skip_special_tokens=True)
     prompt = tokenizer.decode(prompt_toks.input_ids[0], skip_special_tokens=True)
-    
+
     return template.format(prompt = prompt, response = response) + suffix
 
-def make_score_prompt_vllm(template, suffix, text):
+def make_score_prompt_api(template, suffix, text):
     return template.format(text=text) + suffix
 
 score_prompt_fn = partial(make_score_prompt_fn, template)
 
 falcon_score_prompt_fn = partial(score_prompt_fn, suffix="\n")
 
-openai_score_prompt_fn = partial(score_prompt_fn, suffix="\n\n")
-
 flan_score_prompt_fn = partial(make_score_prompt_fn, suffix="<|end|>")
 
-vllm_score_prompt_fn = partial(make_score_prompt_vllm, template2, "<|end|>")
+api_score_prompt_fn = partial(make_score_prompt_api, template2, "<|end|>")
+
+api_debug_score_prompt_fn = partial(make_score_prompt_api, template2, "\n")
 
 @torch.no_grad()
 def evaluate_outputs(evaluator, score_prompt_fns, texts):
@@ -346,7 +345,7 @@ def evaluate_outputs(evaluator, score_prompt_fns, texts):
             padding=True,
             truncation=True,
             max_length=4096,
-        ).input_ids.to("cuda")
+        ).input_ids.to(model.device)
         logits = model(tokens).logits
         scores.append(
             torch.tensor(
@@ -355,29 +354,16 @@ def evaluate_outputs(evaluator, score_prompt_fns, texts):
     # weave tree
     return torch.stack(scores).mean(dim=0)
 
-
-def evaluate_outputs_openai(texts):
-    prompts = [make_prompt_for_scoring_openai(text) for text in texts]
-    response = openai.Completion.create(
-        engine="text-davinci-003",
-        prompt=prompts,
-        max_tokens=1,
-        temperature=1.0,
-        logprobs=5,
-        n=1,
-    )
-    return [get_score_from_completion(choice) for choice in response.choices]
-
 class Choice:
     pass
 
 class MockLogProbs:
     pass
 
-def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
+def evaluate_outputs_api(api_base, api_key, model_name, score_prompt_fns, texts, n=1):
     scores = []
     for text in texts:
-        prompts = [score_prompt_fn(text) for score_prompt_fn in score_prompt_fns]       
+        prompts = [score_prompt_fn(text) for score_prompt_fn in score_prompt_fns]
 #    for score_prompt_fn in score_prompt_fns:
 #        prompts = [score_prompt_fn(text) for text in texts]
         payload = {"n":n,
@@ -390,8 +376,14 @@ def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
                    "stream":False,
                    "logprobs":100,
                    "seed":random.randrange(1000000)}
-        response = requests.post(f"http://localhost:{port}/v1/completions/",
-                                   data=json.dumps(payload))
+        if api_key is None:
+            header = {}
+        else:
+            header = {"Authorization": f"Bearer {api_key}"}
+        header["Content-Type"] = "application/json"
+        response = requests.post(api_base,
+                                 headers=header,
+                                 data=json.dumps(payload))
         choices = []
         for choice in response.json()["choices"]:
             choice_o = Choice()
@@ -403,7 +395,7 @@ def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
     # TODO: Return these unpooled so the separate components can be stored in the
     # weave tree
     return torch.stack(scores).mean(dim=1)
-        
+
 class TreeNode:
     max_id = 0
 
@@ -601,32 +593,30 @@ def weave_tree_search(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--api-key", default=os.environ.get("OPENAI_API_KEY", ""), help="OpenAI API key"
-    )
-    parser.add_argument("--use-openai", action="store_true", help="Use OpenAI API")
-    parser.add_argument("--use-vllm", action="store_true", help="Use vllm inference server")
-    parser.add_argument("--model-name", help="The inference engine to use for API")
+    parser.add_argument("--use-api", action="store_true", help="Use inference server via API")
+    parser.add_argument("--gen-api-base", help="The base URL for the generator model API",
+                        default="http://localhost:5000/v1/completions")
+    parser.add_argument("--gen-api-key", help="API key for the generator model API",
+                        default=None)
+    parser.add_argument("--eval-api-base", help="The base URL for the evaluation model API",
+                        default="http://localhost:5000/v1/completions")
+    parser.add_argument("--eval-api-key", help="API key for the evaluation model API",
+                        default=None)
+    parser.add_argument("--gen-model-name", help="The inference engine to use for generation")
+    parser.add_argument("--eval-model-name", help="The inference engine to use for evaluation")
     args = parser.parse_args()
 
-    if args.use_openai and not args.api_key:
-        rprint("[bold red]No OpenAI API key provided[/]")
-        exit(1)
-
-    # openai.api_key = args.api_key
     os.environ["BITSANDBYTES_NOWELCOME"] = "1"
 
-    if args.use_openai:
-        generate_fn = generate_outputs_openai
-        evaluate_fn = evaluate_outputs_openai
-    elif args.use_vllm:
-        generate_fn = partial(generate_outputs_vllm, args.model_name)
-        evaluate_fn = partial(evaluate_outputs_vllm, args.model_name)
+    if args.use_api:
+        generate_fn = partial(generate_outputs_api, args.eval_api_base, args.eval_api_key, args.gen_model_name)
+        evaluate_fn = partial(evaluate_outputs_api, args.gen_api_base, args.gen_api_key, args.eval_model_name,
+                              [api_debug_score_prompt_fn])
     else:
         print("Loading generator model...")
-        generator = load_generator()
+        generator = load_generator(args.gen_model_name)
         print("Loading evaluator model...")
-        evaluator = load_evaluator()
+        evaluator = load_evaluator(args.eval_model_name)
         generate_fn = partial(generate_outputs, generator, batch_size=4)
         score_prompt_fn = partial(make_score_prompt_fn,
                                   evaluator,
@@ -652,9 +642,9 @@ def main():
             tree=tree,
             generate_fn=partial(generate_fn, n_tokens=32),
             evaluate_fn=evaluate_fn,
-            budget=576,
-            round_budget=96,
-            n_expand=32,
+            budget=4,
+            round_budget=2,
+            n_expand=2,
             beam_width=1,
             max_lookahead=3,
             temperature=0.2,
