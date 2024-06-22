@@ -78,7 +78,7 @@ class ProgressBarStreamer(BaseStreamer):
         self.next_tokens_are_prompt = True
 
 
-def load_generator(model_name="mistralai/Mistral-7B-v0.1", load_dtype="fp16"):
+def load_generator(model_name="mistralai/Mistral-7B-v0.1", load_dtype="int8"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -246,7 +246,7 @@ def generate_outputs_api(api_base, api_key, model_name, text, n_tokens, n=1, por
     response = requests.post(api_base,
                              headers=header,
                              data=json.dumps(payload))
-    print("GEN API RESPONSE:", response.json())
+    # print("GEN API RESPONSE:", response.json())
     # return completion.json()["choices"][0]["text"]
     texts = [choice["text"] for choice in response.json()["choices"]]
     return texts
@@ -386,7 +386,7 @@ def evaluate_outputs_api(api_base, api_key, model_name, score_prompt_fns, texts,
                                  headers=header,
                                  data=json.dumps(payload))
         choices = []
-        print("EVAL API RESPONSE:", response.json())
+        # print("EVAL API RESPONSE:", response.json())
         for choice in response.json()["choices"]:
             choice_o = Choice()
             mocklogprobs_o = MockLogProbs()
