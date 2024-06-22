@@ -78,7 +78,7 @@ class ProgressBarStreamer(BaseStreamer):
         self.next_tokens_are_prompt = True
 
 
-def load_generator(model_name="mistralai/Mistral-7B-v0.1", load_dtype="int8"):
+def load_generator(model_name="mistralai/Mistral-7B-v0.1", load_dtype="fp16"):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.truncation_side = "left"
     tokenizer.padding_side = "left"
@@ -236,7 +236,8 @@ def generate_outputs_api(api_base, api_key, model_name, text, n_tokens, n=1, por
                "model":model_name,
                "prompt":text,
                "stream":False,
-               "seed":random.randrange(1000000)}
+               "seed":random.randrange(1000000)
+               }
     if api_key is None:
         header = {}
     else:
@@ -245,7 +246,7 @@ def generate_outputs_api(api_base, api_key, model_name, text, n_tokens, n=1, por
     response = requests.post(api_base,
                              headers=header,
                              data=json.dumps(payload))
-    print("Response:", response.json())
+    print("GEN API RESPONSE:", response.json())
     # return completion.json()["choices"][0]["text"]
     texts = [choice["text"] for choice in response.json()["choices"]]
     return texts
@@ -385,6 +386,7 @@ def evaluate_outputs_api(api_base, api_key, model_name, score_prompt_fns, texts,
                                  headers=header,
                                  data=json.dumps(payload))
         choices = []
+        print("EVAL API RESPONSE:", response.json())
         for choice in response.json()["choices"]:
             choice_o = Choice()
             mocklogprobs_o = MockLogProbs()
@@ -593,7 +595,6 @@ def weave_tree_search(
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--use-api", action="store_true", help="Use inference server via API")
     parser.add_argument("--gen-api-base", help="The base URL for the generator model API",
                         default="http://localhost:5000/v1/completions")
     parser.add_argument("--gen-api-key", help="API key for the generator model API",
@@ -608,23 +609,25 @@ def main():
 
     os.environ["BITSANDBYTES_NOWELCOME"] = "1"
 
-    if args.use_api:
-        generate_fn = partial(generate_outputs_api, args.eval_api_base, args.eval_api_key, args.gen_model_name)
-        evaluate_fn = partial(evaluate_outputs_api, args.gen_api_base, args.gen_api_key, args.eval_model_name,
-                              [api_debug_score_prompt_fn])
-    else:
+    if args.gen_api_base is None:
         print("Loading generator model...")
         generator = load_generator(args.gen_model_name)
+        generate_fn = partial(generate_outputs, generator, batch_size=4)
+    else:
+        generate_fn = partial(generate_outputs_api, args.gen_api_base, args.gen_api_key, args.gen_model_name)
+
+    if args.eval_api_base is None:
         print("Loading evaluator model...")
         evaluator = load_evaluator(args.eval_model_name)
-        generate_fn = partial(generate_outputs, generator, batch_size=4)
         score_prompt_fn = partial(make_score_prompt_fn,
                                   evaluator,
                                   template,
                                   "<|end|>")
-        evaluate_fn = partial(evaluate_outputs,
-                              evaluator,
-                              [score_prompt_fn,])
+        evaluate_fn = partial(evaluate_outputs, evaluator, [score_prompt_fn])
+    else:
+        evaluate_fn = partial(evaluate_outputs_api, args.eval_api_base, args.eval_api_key, args.eval_model_name,
+                              [api_debug_score_prompt_fn])
+
     # system_prompt = (
     #     "A well-written, sad story that makes the reader feel like crying:\n\n"
     # )
