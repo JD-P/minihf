@@ -266,7 +266,7 @@ def create_app(config, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", "-c", type=str, default="configs/gpt2.json")
+    parser.add_argument("--config", "-c", type=str, default="configs/jdp.json")
     parser.add_argument("--device", "-d", type=str, default=utils.auto_device())
     parser.add_argument("--port", "-p", type=int, default=5000)
     args = parser.parse_args()
