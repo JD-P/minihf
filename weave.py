@@ -305,8 +305,15 @@ def make_score_prompt_fn(evaluator, template, suffix, prompt, response):
     
     return template.format(prompt = prompt, response = response) + suffix
 
-def make_score_prompt_vllm(template, suffix, text):
-    return template.format(text=text) + suffix
+def make_score_prompt_vllm(template, suffix, prompt, response):
+    response = response[len(prompt):]
+    return template.format(prompt=prompt, response=response) + suffix
+
+def make_bayes_score_prompt_vllm(template, suffix, prompt, parent_q, response):
+    response = response[len(prompt):]
+    return template.format(parent_q=parent_q,
+                           prompt=prompt,
+                           response=response) + suffix
 
 score_prompt_fn = partial(make_score_prompt_fn, template)
 
@@ -403,7 +410,49 @@ def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
     # TODO: Return these unpooled so the separate components can be stored in the
     # weave tree
     return torch.stack(scores).mean(dim=1)
-        
+
+def bayesian_evaluate_outputs_vllm(model_name, parent_q, score_prompt_fns, texts, n=1, port=5000):
+    def evaluate_prompts(prompts):
+        payload = {"n":n,
+                   "temperature":1,
+                   "top_k":50,
+                   "repetition_penalty":1.02,
+                   "max_tokens": 1,
+                   "model":model_name,
+                   "prompt":prompts,
+                   "stream":False,
+                   "logprobs":100,
+                   "seed":random.randrange(1000000)}
+        response = requests.post(f"http://localhost:{port}/v1/completions/",
+                                   data=json.dumps(payload))
+        choices = []
+        for choice in response.json()["choices"]:
+            choice_o = Choice()
+            mocklogprobs_o = MockLogProbs()
+            choice_o.logprobs = mocklogprobs_o
+            choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
+            choices.append(choice_o)
+        return torch.tensor([get_score_from_completion(choice) for choice in choices])
+
+    priors = []
+    for text in texts:
+        posterior_prompts = [score_prompt_fn("", text)
+                             for score_prompt_fn in score_prompt_fns[1:]]
+        yes_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " Yes.", text)
+                                      for score_prompt_fn in score_prompt_fns[1:]]
+        no_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " No.", text)
+                                     for score_prompt_fn in score_prompt_fns[1:]]
+        posteriors = torch.sigmoid(evaluate_prompts(posterior_prompts))
+        yes_cond_posteriors = torch.sigmoid(evaluate_prompts(yes_cond_posterior_prompts))
+        no_cond_posteriors = torch.sigmoid(evaluate_prompts(no_cond_posterior_prompts))
+        yes_prior = torch.sigmoid(evaluate_prompts([score_prompt_fns[0]("", text),]))[0]
+        no_prior = 1 - yes_prior
+
+        yes_posterior = yes_prior * math.prod(yes_cond_posteriors)
+        no_posterior = no_prior * math.prod(no_cond_posteriors)
+        priors.append(yes_posterior / (yes_posterior + no_posterior))
+    return torch.tensor(priors)
+
 class TreeNode:
     max_id = 0
 

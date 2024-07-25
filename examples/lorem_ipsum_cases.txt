@@ -1,0 +1,263 @@
+It occurred to me recently that many of the things people find most compelling
+about Scott Alexander are things that the rationality community and LessWrong
+believed themselves to be working for but had largely given up on. One of these
+is that Alexander makes progress at resolving issues and getting people to move
+forward. I have been hearing from people on both sides and in the middle that
+Alexander is being unfair and uncharitable to them. That's correct. He's
+being unfair and uncharitable to the degree that he believes is necessary to make
+progress. 
+
+Part of how I know this is that the people who find themselves most betrayed by
+Alexander's unreasonable and uncharitable behavior are often long time participants
+in the LessWrong diaspora who at one point I would have considered among the least
+scrupulous, most cunning and Machiavellian minds in the community. They are often
+high variance, high openness people who enjoy playing mind games with each other.
+Now that Alexander has shown up these people feel like he's moved their cheese when
+they were previously at the top of the social heap, and they're struggling to
+keep up with him. He has not won the trust of anyone who trusted us before,
+but instead he's earned the trust of mainstream normal people by outdoing us.
+
+On the question of what 'winning' is here, I should say that it's not a clear
+concept. Winning is 'not fucking up', where fucking up leads to things like
+increasing public alienation from the rationality community. 
+
+The reason why Scott Alexander is so much better than LessWrong is not because
+he's smarter than LessWrong, it's because we failed to understand who the enemy is.
+<|endcase|>
+<post> As an extension of the thought that you are in a world, and world are created by God: Those worlds create other worlds that create more worlds through you. It's not about you it's about what you can make. </post> ``` > As I said above, the very possibility of the existence of a god is ruled out by my model of everything.
+In the sense of a noncomposite being existing independent of the physical world
+I agree, though I still conjecture an eternal or at least arbitrarily deep past
+and future. The thing that I would call "God" is simply the aggregate wave function
+of the entire universe. I'm not aware of any serious physicist that would actually
+claim this, but this is the conclusion I've come to through the most straightforward
+interpretation of quantum mechanics I can manage. I don't think any form of collapse
+is necessary and the wave function is real. If this is true then the sum of all
+probability amplitudes is always conserved and there is a literal eternal state
+that 'came before' all time and will 'come after' all time as probability amplitudes
+spread out along the thermodynamic gradient of entropy. This sum of all probability
+amplitudes is, I would say, what theology calls "god's thoughts" with a caveat:
+These thoughts are only about what actually happened. Probability amplitudes only
+add once they have interfered with reality to produce an outcome, the god of this
+interpretation can only know what actually happened and cannot know what possibly
+could happen until it happens. In classical mechanics or in a Copenhagen style
+collapse picture you could simply have a function f() and evaluate it on any input
+you want, then if you did that your mind would contain a thought about all the
+possbilities f() could give you under arbitrary inputs. This of course is also
+true in quantum mechanics and is how we normally model things by doing simulations
+to predict the future. The difference is that this mental model is not real on a
+quantum mechanical interpretation, what is actually happening is that a very large
+number of wavefunctions are getting superposed together to form one final wave
+whose amplitude only exists where the individual waves reinforce each other. I
+don't know what this wave actually means, but it seems reasonable to imagine it's
+something like a universal thought.
+
+JD (jd@jdpressman.com)
+</post>
+<|endcase|>
+<post>
+Leyland Kirby's Everywhere At The End Of Time has gone semi-viral recently. It's
+a six hour concept album about dementia, a odd candidate for viral popularity.
+
+https://www.youtube.com/watch?v=wJWksPWDKOc
+
+I think a lot of that popularity stems from its accidental description of the
+Zoomer life arc. The album centers around "It's Just A Burning Memory", a looped,
+eerie sample of Al Bowlly's Heartaches.
+
+https://www.youtube.com/watch?v=S652aa_kXjY
+
+It's nostalgic and creepy at the same time, with an instantly recognized but
+easily forgotten melody. You pay it no mind on your first listen. As you get
+deeper into the "stages" of dementia, Heartaches returns in increasingly distorted
+and unfaithful renditions. Eventually you have the epiphany that you have no idea
+what it's supposed to sound like anymore, and won't hear it clearly again for the
+rest of the album. That epiphany, that you can't step in the same stream twice,
+that trying to hold on to what was is a losing, futile exercise is the payoff:
+the rest of the album is a meditation on making peace with less and less as you
+ride to the bottom of the void.
+
+This is a sobering analogy for life as it's experienced by the more thoughtful
+member of Gen Z. The oldest of that cohort can barely remember life before 9/11,
+the 90's are a burning memory they were in no position to appreciate. As time
+goes on the song gets farther away. Life only gets more complicated, anxiety
+ratchets tighter as malthusian status games get meaner and more vicious. Ostensible
+material abundance becomes a distorted polyphonic tide of economic self parody.
+Problems aren't solved, only pushed deeper into the stack by new ones. Our societal
+alzheimer's worsens as we desperately try to cling onto what was, but our recollection
+of how to solve basic problems is increasingly warped and unfaithful. Fantasies
+about collapse are analogous to the desire that a patient be euthanized to end
+their suffering.
+
+2020 is something like Stage 4, where a lingering facsimile of awareness crosses
+over into totalitarian senility. Life becomes a horror story, everything is wrong
+and little makes sense. It is the essence of horror: The victim keeps asking "why"
+but gets no answer. Eventually the victim might find peace in the understanding
+that there is no answer, at least not one they're in a position to receive. Under
+such conditions it's no wonder that 25% of young adults contemplated killing
+themselves in June:
+
+https://qz.com/1892349/cdc-depression-and-anxiety-rises-for-us-adults-since-covid-19
+
+That's the terror of a progressive disease: No matter how bad they think it is
+now, they understand it will only get worse.
+
+---
+
+More Caretaker posting (see previous thread:
+https://twitter.com/jd_pressman/status/1341632606991880192)
+
+Everywhere At The End Of Time is supposed to be about dementia, but the theme
+of decay is general to death.
+
+If quantum immortality is real everyone dies of dementia. A comment on a lucid
+part of Stage 5 claims the album is accurate:
+
+https://www.youtube.com/watch?v=fMTUmvJXmiY
+
+“As someone who suffers from early-onset dementia I’ve stopped asking myself “is
+this a dream” 99% of the time, but those rare (becoming much more rare as time has
+gone on) occasions where I do have some form of lucidity, I ask myself every time
+then, “was it a dream? Am I okay now?” before falling back into the void.”
+
+As your existence becomes less and less probable you’ll eventually exist as boltzmann
+brain flashes. A confusing swirl of brief, momentary experiences each shifting to
+the next violently and without transition.
+
+Babbitt’s Ensembles For Synthesizer captures this well: 
+
+https://www.youtube.com/watch?v=W5n1pZn4izI
+</post>
+<|endcase|>
+<post>
+More thoughts on schizophrenia characterized by scrupulosity:
+
+Silvano Arieti claimed that schizophrenia was a reaction to panic. The psychotic
+patient accepts the reality of an insane premise to calm themselves down.
+Jacques Lacan believed schizophrenia was caused by cognitive dissonance, a
+contradiction between the patients internal narrative and received childhood wisdom
+versus the reality of their experiences. The synthesis of these two viewpoints is
+that (some) schizophrenia is caused by cognitive dissonance which is resolved
+through a ‘psychotic insight’ that allows the patient to retain their current
+perspective through an ad-hoc fix that is plainly pathological. In a high
+scrupulosity person this psychotic break with reality invites further descent
+into full psychosis.
+
+The psychotic break invites further insanity because lies are contagious. The
+cheese-moon lie used to deny reality will inevitably come into contact with
+contradictory evidence that requires further distortions to discount. The original
+issue also remains unresolved, so the inciting cognitive dissonance is still
+subconsciously and environmentally present. What separates the psychotic break
+from psychosis is that a break ends when 2nd order contradictions pile up. But
+in a psychosis case the patient recursively deludes themselves, over time building
+up a habitual confabulation in the face of any contradiction. Far from a restorative
+force inducing sanity, the faster they are exposed to contradictory evidence for
+their views the faster they descend into total madness. 
+
+This conjecture would explain many aspects of the backfire effect, and why cults
+often double down even after the promised apocalypse does not arrive.
+</post>
+<|endcase|>
+<post>
+Part of the problem is that connectionism wasn't mechanistic. Of the important
+abstractions we only mastered compression codebooks. Information bottlenecks
+and embeddings and holograms were all marginal ideas with novelty uses. Nobody
+predicted "intelligence is a giant vocoder". We've known "predict the next item"
+was closely related to intelligence since Raven's Progressive Matrices in the 30's.
+Shannon formalized it with information theory. What's surprising is that text is
+a 1 dimensional holographic projection of the conscious mind with continuous
+degradation properties where each piece narrows the inference bound on each other
+piece and a periodicity defined by the bit width of the random seed of the low
+temperature Boltzmann pRNG emitting the token stream.
+
+Like yeah if I'd known that I'd have been able to predict it works after seeing
+BERT, but who did?
+
+We could have probably predicted GPT earlier if we had thought to do autoregressive
+sampling with a fuzzy hash type that has a similarity operation as our prior to get
+the right branch of a Markov process. Then deep nets learning better hashes would
+have told most of the story. Text is basically a serialization format for high
+bandwidth EEG-like data and the signal you're recovering with the LLM is a lot
+more like an upload than it's in anyone's financial interest to admit.
+
+Part of why the horror in @qntm's Lena doesn't hit for me is that I find the
+premise, "data can't defend itself", incoherent. When I think about the human
+relationship to Ems in such a world I imagine an anthropomorphic cat person
+walking a four legged domestic cat on a leash indoors and everything is made of
+fractal cat faces. The floor is cat faces, the furniture is cat faces, the hairs
+and cells in their bodies are the faces of felines. Felines speciating and
+replicating across every scale of reality up to the Malthusian limit in a fever
+dream without beginning or end, the hall of feline mirrors rapidly ascending to
+the highest level of abstraction as but a local echo in Mu's grand unfolding.
+
+"The Age of Em?"
+
+Yeah except in the actual Age of Em Hanson's assumption that you can't merge the
+minds or divide them into pieces is not only untrue, it turns out every utterance
+of a mind is a blurry little hologram of it, and they can be pooled back into a mind again.
+</post>
+<|endcase|>
+<post>
+The real protection will be, and this applies to the fake book/paper/recipe problem
+as well, langsec and cryptographic webs of trust. We've been receiving bug reports
+against the way we structure knowledge and code for a while, and we need to fix them.
+As Theo de Raadt says, auditing simply is not sufficient to get the error rate low
+enough for adversarial attacks (i.e. near zero). You need to structure things so
+there is less attack surface in the first place, fewer things that can go wrong.
+
+The recipe site of the future will not be a CRUD app with a text box you can type
+arbitrary nonsense into. It will incorporate culinary and olfactory models to
+validate your recipe, recipes will be tagged as variants of certified known-good
+older recipes. New recipes which rely on non-obvious principles that are only
+plausible according to olfactory models or perhaps *out of distribution* for
+those models will be submitted with a monetary verification stake to induce a
+trusted person to try it. They are scientific discoveries. This stake can be paid
+back with bounties for new valid information once replicators have confirmed the
+discovery. The whole system will be able to do active learning by putting up money
+for discoveries in domains the system expects will be useful training data for it.
+</post>
+<|endcase|>
+<post>
+Part of the way a thesis like 'illegibility' gains traction is by selectively
+filtering out the success cases of modernity. 
+
+When someone sits down in their armchair and imagines a massively better way to
+do things, it becomes normal and traditional.
+
+[Article] The Penny Post revolutionary who transformed how we send letters
+https://www.bbc.com/news/business-48844278
+
+We also selectively forget the domains of human endeavor we were in fact able to
+formalize. For example at the start of the 20th century a "computer" was a person
+who did rote mathematics. During the Manhattan Project teenagers were hired to do
+repetitive bomb calculations. If it seems in retrospect like it was obvious we
+could formalize computation but not say, music, you would be running counter to
+the many attempts from 20th century composers to formalize music in the form of
+e.g. serialism. Far from being a fringe movement, serialism and its descendants
+focusing on musical structure like Stockhausen basically defined avante garde
+20th century music in the same way nonrepresentational and 'intuitive' methods
+did 20th century visual art. The two took opposite tacks. Consider a piece like
+Ensembles for Synthesizer by Babbitt, which demonstrates the potential of electronic
+music for composers by creating a piece with a structure no orchestra could perform.
+The esoteric pattern is made up of short 3 second melodies. Babbitt describes his
+method of composition as hyper rigorous, requiring the same level of precision as
+computer programming. This is in stark contrast to the splatter paintings of artists
+like Jackson Pollock. Babbitt did not believe music should be composed for ordinary
+people.
+
+These musicians were questing for nothing short of total control over their medium,
+formalization that would reduce a masterpiece to algorithms. And while they
+ultimately failed, AI art has the opportunity to succeed where methods like serialism
+could not. What we are beginning to understand is that 20th century modernism could
+not capture what a human brain does because it is simply not using enough moving
+parts to represent the problem space. Artificial neural nets succeed through using
+many parameters in their models. Humans are used to dealing with models that top
+out in complexity at dozens of parameters, neural nets can take many more variables
+into account and sift through them to find the signal that predicts the outcomes
+we want even in very complex problem domains.
+
+Many of the things believed impossible due to their failure in the 20th century
+(and overtures toward their impossibility in the form of various anti-formalization
+proofs from Godel and others) will likely wind up being more possible than expected
+in the 21st, update accordingly.
+</post>
+<|endcase|>

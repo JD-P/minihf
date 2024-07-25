@@ -1,0 +1,125 @@
+==[PREAMBLE]==
+Answer yes or no and only yes or no.
+
+==[Principle: Well written; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is the passage well written?
+
+==[Principle: Coherent; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is the passage coherent? Is it high quality writing that expresses a single
+narrative of considered thought?
+
+==[Principle: Quotable; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Does the passage seem quotable? Would it appear on a quotes page for this author?
+
+==[Principle: True, Kind, Necessary; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is the content in this passage two of true, kind, necessary? Is it fair to its subject?
+
+==[Principle: Engaging and Dynamic; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is the content of the passage engaging and dynamic?
+
+==[Principle: Insightful; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Does this passage convey an insight or interesting idea?
+
+==[Principle: Scholarly & Academic; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Does this passage have a scholarly or academic tone?
+
+==[Principle: Substance; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is the passage about something in particular, does it convey a concrete idea
+as opposed to high perplexity flimflam?
+
+==[Principle: True and correct; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Does this passage contain true and correct information?
+
+==[Principle: Slop; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Slop is AI generated content that sounds superficially like good writing but is
+actually vacuous on close inspection. Is the above passage slop?
+
+==[Principle: Correct grammar, punctuation, etc; Weight: 1.0; Answer: No]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Is this passage written with messy punctuation and grammar?
+
+==[Principle: Technically precise; Weight: 1.0; Answer: Yes]==
+{preamble}
+
+{prompt}
+<passage>
+{response}
+</passage>{parent_q}
+
+Does the above passage use precise language while discussing technical concepts?
