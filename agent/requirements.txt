@@ -1,0 +1,8 @@
+selenium
+beautifulsoup4
+requests
+torch
+numpy
+tqdm
+rich
+transformers
