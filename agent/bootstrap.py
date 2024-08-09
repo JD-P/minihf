@@ -21,6 +21,7 @@ def bootstrap_callback(agent):
 
     agent.add_observation_view({
         'type': 'observation',
+        'title': 'scratch.txt',
         'callback': read_scratch_file
     })
 
