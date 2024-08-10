@@ -297,7 +297,9 @@ class WeaveAgent:
         )
         for _ in range(3):
             try:
-                self.generate_block("evaluation", self.context)
+                self.generate_block("evaluation",
+                                    self.context,
+                                    hint=evaluation_hint)
             except ValueError as e:
                 tb = traceback.format_exc()
                 hint = ("Hint: callbacks are structured like\n\n"
