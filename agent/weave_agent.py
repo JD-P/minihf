@@ -63,11 +63,46 @@ def make_simple_score_prompt(question: str):
 
 with open("python.lark") as infile:
     python_grammar = infile.read()
+
+
+class Tick:
+    def __init__(self, agent, index):
+        self._agent = agent
+        self.tick_id = index
+        self.evaluations = []
+
+    def validate(self):
+        if not hasattr(self, 'orientation'):
+            raise ValueError("No orientation on tick.")
+        elif not hasattr(self, 'action'):
+            raise ValueError("No action on tick.")
+        elif type(self.action['program']) != types.FunctionType:
+            raise TypeError("Tick action is not callback.")
+
+        elif not hasattr(self, 'expectation'):
+            raise ValueError("No expectation on tick.")
+        elif not self.evaluations:
+            raise ValueError("No evaluations on tick.")
+        elif not hasattr(self, 'outcome'):
+            raise ValueError("No outcome on tick.")
+
+    def to_json(self):
+        return {
+            "tick_id":self.tick_id,
+            "orientation":self.orientation,
+            "action":repr(self.action),
+            "expectation":self.expectation,
+            "evaluations":repr(self.evaluations),
+            "outcome":repr(self.outcome),
+        }                
         
+    
 class WeaveAgent:
     def __init__(self, model_name):
         self.model_name = model_name
         self.event_stream = []
+        self.current_tick = Tick(self, 0)
+        self.ticks = []
         self.current_block_index = 0
         self.reminders = []
         self.tasks = []
@@ -92,6 +127,7 @@ class WeaveAgent:
         
     def add_block(self, block):
         block['index'] = self.current_block_index
+        block['timestamp'] = time.time()
         self.event_stream.append(block)
         self.current_block_index += 1
 
@@ -148,19 +184,32 @@ class WeaveAgent:
         if key in self.cache:
             del self.cache[key]
 
+    def add_evaluation(self, evaluation):
+        title, callback = evaluation["title"], evaluation["callback"]
+        assert type(title) == str
+        assert type(callback) == types.FunctionType
+        self.current_tick.evaluations.append(evaluation)
+            
     def render_context(self):
         self.context = ""
         for event_block in self.event_stream[-32:]:
             header = f'#startblock type: {event_block["type"]}\n'
+            if "timestamp" in event_block:
+                header += f'#timestamp {event_block["timestamp"]}\n'
             footer = '\n#endblock\n'
             if event_block["type"] in ("genesis",
                                        "bootstrap",
                                        "orientation",
                                        "action",
+                                       "expectation",
                                        "evaluation"):
                 self.context += (header + event_block["program"] + footer)
             elif event_block["type"] == "error":
                 self.context += (header + event_block["message"] + footer)
+            elif event_block["type"] == "outcome":
+                self.context += (header
+                                 + self.generate_outcome_table(event_block['table'])
+                                 + footer)
             else:
                 self.context += (header + repr(event_block) + footer)
         return self.context
@@ -208,11 +257,22 @@ class WeaveAgent:
                 score = reminder['trigger_callback'](self)[0].item()
                 if score >= reminder['threshold']:
                     reminder['reminder_callback'](self)
-            elif reminder['trigger_type'] == 'callback':
+            elif reminder['trigger_type'] == 'unit_test':
                 if reminder['trigger_callback'](self) >= reminder['threshold']:
                     reminder['reminder_callback'](self)
-        
+
+    def generate_outcome_table(self, evaluation_results):
+        table = "Evaluation Results:\n"
+        table += "--------------------\n"
+        for program, result in evaluation_results:
+            table += f"Program: {program}\n"
+            table += f"Result: {result}\n"
+            table += "--------------------\n"
+        return table
+                    
     def tick(self):
+        if len(self.ticks) > 0:
+            self.current_tick = Tick(self, len(self.ticks))
         # Roll reminders
         self.roll_reminders()
 
@@ -253,9 +313,9 @@ class WeaveAgent:
             + "# monologue in a triple quote block at this step."
         )
         try:
-            self.generate_block("orientation",
-                                self.context,
-                                hint=orientation_hint)
+            orientation_block = self.generate_block("orientation",
+                                                    self.context,
+                                                    hint=orientation_hint)
         except ValueError as e:
             tb = traceback.format_exc()
             hint = ("Hint: callbacks are structured like\n\n"
@@ -264,6 +324,7 @@ class WeaveAgent:
             self.add_error_block(f'{hint}\n"""{tb}"""')
             return
         self.render_context()
+        self.current_tick.orientation = orientation_block
         
         # Write action block
         action_hint = (
@@ -285,21 +346,51 @@ class WeaveAgent:
             self.add_error_block(f'{hint}\n"""{tb}"""')
             return
         self.render_context()
+        self.current_tick.action = action_block
+
+        # Write expectation block
+        expectation_hint = (
+            "#hint Expectation blocks are where you think about what it would\n"
+            + "# look like for your action to succeed, what it would look like\n"
+            + "# for it to fail. You are enumerating the expected sensory evidence\n"
+            + "# that would tell you one way or another whether your action is\n"
+            + "# working or not. Like the orientation this should go in triple\n"
+            + "# quotes."
+        )
+        try:
+            expectation_block = self.generate_block("expectation",
+                                                    self.context,
+                                                    hint=expectation_hint)
+        except ValueError as e:
+            tb = traceback.format_exc()
+            hint = ("Hint: callbacks are structured like\n\n"
+                    + "def callback_name(agent):\n   "
+                    + f"# code...\n   pass\nagent.add_action({{...}})")
+            self.add_error_block(f'{hint}\n"""{tb}"""')
+            return
+        self.render_context()            
+        self.current_tick.expectation = expectation_block
+        
         # Write evaluation programs
         evaluation_hint = (
             "#hint Evaluation blocks are where you write callbacks to check if\n"
-            + "# your action succeeded or not. There are symbolic callbacks and\n"
-            + "# logit evaluators. Use symbolic callbacks (i.e. normal python)\n"
-            + "# for symbolic manipulation tasks like checking arithmetic, the\n"
-            + "# existence of a particular file, etc. Use logit evaluators for\n"
-            + "# vibe-y tasks like whether a piece of writing flows well or if\n"
-            + "# a source seems trustworthy."
+            + "# your action succeeded or not based on the expectation. There are\n"
+            + "# unit tests and logit evaluators. Use unit test callbacks\n"
+            + "# (i.e. normal python) for symbolic manipulation tasks like\n"
+            + "# checking arithmetic, the existence of a particular file, etc.\n"
+            + "# Use logit evaluators for vibe-y tasks like whether a piece of\n"
+            + "# writing flows well or if a source seems trustworthy. Like\n"
+            + "# reminders both unit test callbacks and logit evaluators return\n"
+            + "# a value between 0 and 1. Be sure to add your callback to\n"
+            + "# the queue with agent.add_evaluation(title, callback)."
         )
         for _ in range(3):
             try:
-                self.generate_block("evaluation",
-                                    self.context,
-                                    hint=evaluation_hint)
+                self.current_tick.evaluations.append(
+                    self.generate_block("evaluation",
+                                        self.context,
+                                        hint=evaluation_hint)
+                )
             except ValueError as e:
                 tb = traceback.format_exc()
                 hint = ("Hint: callbacks are structured like\n\n"
@@ -324,51 +415,64 @@ class WeaveAgent:
             return
 
         # Run evaluation programs if action did not fail
-        for block in self.event_stream:
-            if block['type'] == 'evaluation':
-                try:
-                    exec(block['program'])
-                except Exception as e:
-                    self.add_error_block(f"Evaluation execution failed: {e}")
+        evaluation_results = []
+        for evaluation in self.current_tick.evaluations:
+            try:
+                result = exec(block['program'])
+                evaluation_results.append((evaluation['title'], result))
+            except Exception as e:
+                self.add_error_block(f"Evaluation execution failed: {e}")
 
-# Example usage
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("model_name", help="The model to use.")
-    parser.add_argument("--port", default=5000, help="The port to use for VLLM.")
-    args = parser.parse_args()
-    
-    def simple_evaluate_outputs(score_prompt_fns, texts):
-        if type(texts) == str:
-            texts = [texts,]
-        if type(score_prompt_fns) == types.FunctionType:
-            score_prompt_fns = [score_prompt_fns,]
-        scores = evaluate_outputs_vllm(args.model_name,
-                                       score_prompt_fns,
-                                       texts,
-                                       port=args.port)
-        return torch.sigmoid(scores)
-    
-    agent = WeaveAgent(args.model_name)
-
-    with open("weave_agent.py") as infile:
-        # Genesis block
-        genesis_block = {
-            'type': 'genesis',
-            'program': infile.read()
+        # Add outcome block
+        outcome_block = {
+            'type': 'outcome',
+            'table': evaluation_results
         }
-        agent.add_block(genesis_block)
+        self.add_block(outcome_block)
+        self.current_tick.outcome = outcome_block
+        self.current_tick.validate()
+        self.ticks.append(current_tick)
 
-    with open("bootstrap.py") as infile:
-        # Bootstrap block
-        bootstrap_block = {
-            'type': 'bootstrap',
-            'program': infile.read()
-        }
-        agent.add_block(bootstrap_block)
-        exec(bootstrap_block["program"])
-        
-    # Run the agent
-    while True:
-        agent.tick()
-        time.sleep(1)  # Simulate tick interval
+
+parser = ArgumentParser()
+parser.add_argument("model_name", help="The model to use.")
+parser.add_argument("--port", default=5000, help="The port to use for VLLM.")
+parser.add_argument("--bootstrap",
+                    default="bootstrap.py",
+                    help="The filepath to run as bootstrap.")
+args = parser.parse_args()
+
+def simple_evaluate_outputs(score_prompt_fns, texts):
+    if type(texts) == str:
+        texts = [texts,]
+    if type(score_prompt_fns) == types.FunctionType:
+        score_prompt_fns = [score_prompt_fns,]
+    scores = evaluate_outputs_vllm(args.model_name,
+                                   score_prompt_fns,
+                                   texts,
+                                   port=args.port)
+    return torch.sigmoid(scores)
+
+agent = WeaveAgent(args.model_name)
+
+with open("weave_agent.py") as infile:
+    # Genesis block
+    genesis_block = {
+        'type': 'genesis',
+        'program': infile.read()
+    }
+    agent.add_block(genesis_block)
+
+with open(args.bootstrap) as infile:
+    # Bootstrap block
+    bootstrap_block = {
+        'type': 'bootstrap',
+        'program': infile.read()
+    }
+    agent.add_block(bootstrap_block)
+    exec(bootstrap_block["program"])
+
+# Run the agent
+while True:
+    agent.tick()
+    time.sleep(1)  # Simulate tick interval
