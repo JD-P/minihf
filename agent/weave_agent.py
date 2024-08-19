@@ -50,11 +50,19 @@ import traceback
 import requests
 import torch
 from argparse import ArgumentParser
+from typing import List, Dict, Optional, Any
 from functools import partial
 from tqdm import tqdm
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
-from weave import make_score_prompt_vllm
+from weave import bayesian_evaluate_outputs_vllm
+from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 
+def make_simple_bayes_score_prompt(question: str):
+    """Simplify the process of making a bayesian weave evaluator question prompt
+    maker so that it's just a matter of passing a question for the weave-agent."""
+    template = f"<s> [INST]{{response}}\n\nAnswer yes or no and only yes or no.\n\n{parent_q}\n\n{question}"
+    return partial(make_bayes_score_prompt_vllm, template, "[/INST]", "")
+    
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
@@ -64,6 +72,125 @@ def make_simple_score_prompt(question: str):
 with open("python.lark") as infile:
     python_grammar = infile.read()
 
+
+class WeaveKanbanTask:
+    STATUSES = ['idle', 'going', 'completed', 'blocked', 'aborted']
+    ABBREVIATIONS = {'idle': 'I', 'going': 'G', 'completed': 'C', 'blocked': 'B', 'aborted': 'A'}
+
+    def __init__(self, task_id: int, title: str,
+                 description: str = "", status: str = "idle",
+                 blocked_on: Optional[List[str]] = None):
+        self.id = task_id
+        self.title = title
+        self.description = description
+        if status not in WeaveKanbanTask.STATUSES:
+            raise ValueError(f'Status "{status}" not valid.')
+        self.status = status
+        self.history: List[Dict[str, str]] = [{'status': self.status,
+                                               'explanation': 'Task created'}]
+        self.blocked_on: List[str] = blocked_on
+
+    def change_status(self, new_status: str, explanation: str,
+                      blocked_on: Optional[List[str]] = None) -> None:
+        if new_status not in self.STATUSES:
+            raise ValueError(f"Invalid status: {new_status}")
+
+        if new_status == 'blocked' and not blocked_on:
+            raise ValueError("Blocked status requires a list of tasks it's blocked on")
+
+        self.status = new_status
+        self.history.append({'status': new_status, 'explanation': explanation})
+
+        if new_status == 'blocked':
+            self.blocked_on = blocked_on
+        else:
+            self.blocked_on = []
+
+    def idle(self, explanation: str) -> None:
+        self.change_status('idle', explanation)
+
+    def going(self, explanation: str) -> None:
+        self.change_status('going', explanation)
+
+    def completed(self, explanation: str) -> None:
+        self.change_status('completed', explanation)
+
+    def blocked(self, explanation: str, blocked_on: List[str]) -> None:
+        self.change_status('blocked', explanation, blocked_on)
+
+    def aborted(self, explanation: str) -> None:
+        self.change_status('aborted', explanation)
+
+    def view_task(self) -> str:
+        history = "\n".join([f"- {h['status']}: {h['explanation']}" for h in self.history])
+        return f"ID: {self.id}\nTitle: {self.title}\nDescription: {self.description}\nMetadata: {self.blocked_on}\nHistory:\n{history}"
+
+    def abbreviated_history(self) -> str:
+        return ' '.join([self.ABBREVIATIONS[h['status']] for h in self.history])
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'metadata': self.metadata,
+            'status': self.status,
+            'history': self.history,
+            'blocked_on': self.blocked_on
+        }
+
+    @classmethod
+    def from_dict(cls, task_dict: Dict[str, Any]) -> 'WeaveKanbanTask':
+        task = cls(
+            task_id=task_dict['id'],
+            title=task_dict['title'],
+            description=task_dict['description'],
+            metadata=task_dict['metadata']
+        )
+        task.status = task_dict['status']
+        task.history = task_dict['history']
+        task.blocked_on = task_dict['blocked_on']
+        return task
+
+class WeaveKanban:
+    def __init__(self):
+        self.tasks: List[WeaveKanbanTask] = []
+        self.next_id = 1
+
+    def add_task(self, title: str, description: str = "", status: str = "idle",
+                 blocked_on: Optional[List[str]] = None) -> None:
+        task = WeaveKanbanTask(self.next_id, title, description, status, blocked_on)
+        self.tasks.append(task)
+        self.next_id += 1
+
+    def get_task(self, task_id: int) -> Optional[WeaveKanbanTask]:
+        for task in self.tasks:
+            if task.id == task_id:
+                return task
+        return None
+
+    def view_board(self) -> str:
+        table = [[task.id, task.title, task.abbreviated_history()] for task in self.tasks]
+        headers = ['ID', 'Title', 'History']
+        col_widths = [max(len(str(item)) for item in col) for col in zip(*table, headers)]
+
+        def format_row(row: List[Any]) -> str:
+            return ' | '.join(f"{item:<{col_widths[i]}}" for i, item in enumerate(row))
+
+        header_row = format_row(headers)
+        separator_row = ' | '.join('-' * width for width in col_widths)
+        table_rows = '\n'.join(format_row(row) for row in table)
+
+        return f"{header_row}\n{separator_row}\n{table_rows}"
+
+    def to_json(self) -> str:
+        return json.dumps([task.to_dict() for task in self.tasks], indent=2)
+
+    def from_json(self, json_str: str) -> None:
+        task_dicts = json.loads(json_str)
+        self.tasks = [WeaveKanbanTask.from_dict(task_dict) for task_dict in task_dicts]
+        self.next_id = max([task.id for task in self.tasks], default=0) + 1
+    
 
 class Tick:
     def __init__(self, agent, index):
@@ -76,9 +203,8 @@ class Tick:
             raise ValueError("No orientation on tick.")
         elif not hasattr(self, 'action'):
             raise ValueError("No action on tick.")
-        elif type(self.action['program']) != types.FunctionType:
-            raise TypeError("Tick action is not callback.")
-
+        elif "program" not in self.action:
+            raise TypeError("Tick action has no program.")
         elif not hasattr(self, 'expectation'):
             raise ValueError("No expectation on tick.")
         elif not self.evaluations:
@@ -105,7 +231,8 @@ class WeaveAgent:
         self.ticks = []
         self.current_block_index = 0
         self.reminders = []
-        self.tasks = []
+        self.tasks = WeaveKanban()
+        self.current_task = None
         self.observation_views = []
         self.cache = {}
         self.context = ""
@@ -148,11 +275,11 @@ class WeaveAgent:
     def remove_reminder(self, reminder):
         self.reminders.remove(reminder)
 
-    def add_task(self, task):
-        assert "type" in task
-        assert "title" in task
-        assert "priority" in task
-        self.tasks.append(task)
+    def add_task(self, title, description, status, blocked_on=None):
+        self.tasks.add_task(title,
+                            description,
+                            status,
+                            blocked_on)
 
     def remove_task(self, task):
         if "root" in task:
@@ -199,11 +326,14 @@ class WeaveAgent:
             footer = '\n#endblock\n'
             if event_block["type"] in ("genesis",
                                        "bootstrap",
+                                       "task_inference",
                                        "orientation",
                                        "action",
                                        "expectation",
                                        "evaluation"):
                 self.context += (header + event_block["program"] + footer)
+            elif event_block["type"] == "task-reminder":
+                self.context += (header + event_block["task"] + footer)
             elif event_block["type"] == "error":
                 self.context += (header + event_block["message"] + footer)
             elif event_block["type"] == "outcome":
@@ -271,8 +401,7 @@ class WeaveAgent:
         return table
                     
     def tick(self):
-        if len(self.ticks) > 0:
-            self.current_tick = Tick(self, len(self.ticks))
+        self.current_tick = Tick(self, len(self.ticks))
         # Roll reminders
         self.roll_reminders()
 
@@ -280,13 +409,16 @@ class WeaveAgent:
         for view in self.observation_views:
             view['callback'](self)
 
-        # Roll for tasks to display
-        active_tasks = [task for task in self.tasks if task['priority'] == 0]
-        sampled_tasks = random.sample(self.tasks, min(len(self.tasks), 5))
-        displayed_tasks = active_tasks + sampled_tasks
+        task_reminder_body = ""
+        
+        if self.current_task:
+            task_reminder_body += "# Current Task:\n"
+            task_reminder_body += ('"""\n' + self.current_task.view_task() + '\n"""\n')
+        task_reminder_body += "# Kanban Board:\n"
+        task_reminder_body += ('"""\n' + self.tasks.view_board() + '\n"""')
 
         # Format tasks into blocks
-        task_blocks = [{'type': 'task-reminder', 'task': task} for task in displayed_tasks]
+        task_blocks = [{'type': 'task-reminder', 'task': task_reminder_body},]
 
         # Pull the content of the observation windows into blocks
         observation_blocks = [{'type': 'observation',
@@ -299,6 +431,34 @@ class WeaveAgent:
         # Render context
         self.render_context()
 
+        # Task inference block
+        task_inference_hint = (
+            "# In the task inference stage you change the status of tasks on the kanban\n"
+            + "# board, add new tasks if necessary, etc. It's important to keep your kanban\n"
+            + "# up to date so that you're presented with the correct task state at the\n"
+            + "# start of each tick. In particular you should:\n"
+            + "# 1) Write python to update the kanban board.\n"
+            + "# 2) Set the current task if it needs to be changed or you've completed\n"
+            + "# it.\n"
+            + "# 3) Change the status of any tasks that have been completed, made irrelevant,\n"
+            + "# etc.\n" 
+            + "# 4) If all tasks are completed, shutdown.\n"
+            + "# Keep in mind that the kanban will not actually be updated until the next tick."
+        )
+        try:
+            task_inference_block = self.generate_block("task_inference",
+                                                       self.context,
+                                                       hint=task_inference_hint)
+        except ValueError as e:
+            tb = traceback.format_exc()
+            hint = ("Hint: callbacks are structured like\n\n"
+                    + "def callback_name(agent):\n   "
+                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
+            self.add_error_block(f'{hint}\n"""{tb}"""')
+            return
+        self.render_context()
+        self.current_tick.task_inference = task_inference_block
+        
         # Write orientation reasoning block
         # This is your opportunity to analyze the situation based on the
         # observation, reminder, task, etc blocks. Use this moment to decide
@@ -406,6 +566,13 @@ class WeaveAgent:
             outfile.flush()
         while os.path.exists("confirm.txt"):
             time.sleep(1)
+
+        # Execute task updates
+        try:
+            exec(task_inference_block['program'])
+        except Exception as e:
+            self.add_error_block(f"Task updates failed: {e}")
+            return
             
         # Execute action program
         try:
@@ -452,6 +619,18 @@ def simple_evaluate_outputs(score_prompt_fns, texts):
                                    texts,
                                    port=args.port)
     return torch.sigmoid(scores)
+
+def simple_bayes_evaluate_outputs(parent_q, questions, texts):
+    if type(texts) == str:
+        texts = [texts,]
+    score_prompt_fns = [make_simple_bayes_score_prompt(question)
+                        for question in questions]
+    scores = bayesian_evaluate_outputs_vllm(args.model_name,
+                                            parent_q,
+                                            score_prompt_fns,
+                                            texts,
+                                            port=args.port)
+    return scores
 
 agent = WeaveAgent(args.model_name)
 

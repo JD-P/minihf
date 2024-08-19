@@ -1,24 +1,3 @@
-
-# Set up the root task
-root_task = {
-    "type": "task",
-    "title": "Extract and validate citations from a Wikipedia page",
-    "priority": 0,
-    "root": True,
-    "description": """
-    Write me a tool that extracts a list of citations from a Wikipedia page and checks the ones with URLs for correctness. The tool should:
-
-    1. Get the Wiki markup for a Wikipedia page
-    2. Parse and extract the citations
-    3. Associate the citations with the claims in the article they are meant to back up
-    4. Download the web resources associated with the citations that have a URL
-    5. Use various search strategies to find the most relevant potential passages or artifacts on the page which could back up the claim
-    6. Compare the most relevant sections found with the claim in the article associated with that citation.
-    7. Record the verdict of whether the citation is valid or not in a tally, aggregate, or ledger which can be examined by a human being.
-    """
-}
-agent.add_task(root_task)
-
 # Set up sub-tasks
 sub_tasks = [
     {
@@ -64,8 +43,38 @@ sub_tasks = [
         "description": "Record the verdict of whether the citation is valid or not in a tally, aggregate, or ledger which can be examined by a human being."
     }
 ]
-for task in sub_tasks:
-    agent.add_task(task)
+
+for i in range(len(sub_tasks)):
+    task = sub_tasks[i]
+    if i > 0:
+        agent.add_task(task["title"], task["description"], "blocked", blocked_on=[i,])
+    else:
+        agent.add_task(task["title"], task["description"], "idle")
+
+# Set up the root task
+root_task = {
+    "type": "task",
+    "title": "Extract and validate citations from a Wikipedia page",
+    "priority": 0,
+    "root": True,
+    "description": """
+    Write me a tool that extracts a list of citations from a Wikipedia page and checks the ones with URLs for correctness. The tool should:
+
+    1. Get the Wiki markup for a Wikipedia page
+    2. Parse and extract the citations
+    3. Associate the citations with the claims in the article they are meant to back up
+    4. Download the web resources associated with the citations that have a URL
+    5. Use various search strategies to find the most relevant potential passages or artifacts on the page which could back up the claim
+    6. Compare the most relevant sections found with the claim in the article associated with that citation.
+    7. Record the verdict of whether the citation is valid or not in a tally, aggregate, or ledger which can be examined by a human being.
+    """
+}
+agent.add_task(root_task["title"],
+               root_task["description"],
+               "blocked",
+               blocked_on=[i+1 for i in range(len(sub_tasks))])
+
+agent.current_task = agent.tasks.get_task(1)
 
 # Demonstrate one full loop of orienting, writing an action, forming an expectation,
 # and writing evaluation callbacks
@@ -113,4 +122,9 @@ agent.add_evaluation({
     "title":"Check We Downloaded Wiki Markup File",
     "callback": check_wiki_markup_downloaded,
 })
+#endblock
+
+#startblock type: outcome
+# Unfortunately this isn't a real tick so it's inconvenient to get an outcome table
+# so pretend like you know our unit tests succeeded and lets move on.
 #endblock
