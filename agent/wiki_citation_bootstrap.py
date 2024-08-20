@@ -117,13 +117,11 @@ def check_wiki_markup_downloaded(agent):
     file_path = f"{page_title}.wiki"
     return os.path.exists(file_path)
 
-agent.add_evaluation({
-    "type": "unit_test",
-    "title":"Check We Downloaded Wiki Markup File",
-    "callback": check_wiki_markup_downloaded,
-})
+agent.add_evaluation(
+    "Check We Downloaded Wiki Markup File",
+    check_wiki_markup_downloaded
+)
 #endblock
-
 #startblock type: outcome
 # Unfortunately this isn't a real tick so it's inconvenient to get an outcome table
 # so pretend like you know our unit tests succeeded and lets move on.

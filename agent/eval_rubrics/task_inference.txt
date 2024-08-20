@@ -1,0 +1,8 @@
+Does this task inference code block update the kanban board to the correct task state?
+Is this code block a valid python program, does it follow the python syntax and semantics?
+If the current task needs to be changed does the code change it, if not does it keep it?
+Does the code block mark any completed tasks as completed and avoid falsely marking tasks completed?
+Does the code block shutdown if all the tasks have been completed and avoid shutdown otherwise?
+Does the task inference code change the status of all tasks whose status has changed and keep others the same?
+Is this task inference code likely to make the situation the weave-agent works with clearer on future ticks?
+Does this task inference block logically follow from the outcome block of the previous tick?

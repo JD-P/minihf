@@ -1,0 +1,5 @@
+Is this action codeblock a step towards resolving the problems identified in the orientation block?
+Is this code block a valid python program, does it follow the python syntax and semantics?
+Will this action block gather information in anticipation of or directly advance the problem state?
+Does this action block demonstrate understanding of the weave-agent framework by using callbacks, system APIs, etc to solve problems?
+Are actions suggested by the orientation block taken by this action block?

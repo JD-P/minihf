@@ -1,0 +1,7 @@
+Does this expectation block enumerate a strong set of evaluable concrete sensory experiences that would indicate success or failure of the action?
+Is the expectation block a properly escaped triple quote, could it be included in a python file without error?
+Are the expectations laid out by the expectations block things that sensory evidence could be gathered to evaluate?
+Does the expectation block demonstrate an understanding of what kinds of thing can be checked with symbolic programs?
+Does the expectation block demonstrate creativity in thinking of valid ways to check whether the action succeeded?
+Does the expectation block lay out specific sensory details and evidence it expects to encounter if the action succeeds?
+Are the suggested evaluations in this expectation block relevant, do they get at the cruxes of whether the action succeeded or not?

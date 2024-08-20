@@ -1,0 +1,7 @@
+Is this evaluation a good implementation of a callback to gather and evaluate the expected sensory evidence laid out in the expectation block?
+Is this code block a valid python program, does it follow the python syntax and semantics?
+Is the code block structured as an evaluation callback with a call to `.add_evaluation()` to add it to the current tick's evaluation suite?
+Does this evaluation block gather the necessary sensory evidence to make a judgment?
+Does this evaluation block callback return an appropriate value (i.e. number between 0 and 1) for inclusion in the outcome block table for this tick?
+Does the expectation block avoid using logit evaluators for symbolic questions like "length of a file" that would be better answered by unit tests?
+If this evaluation block uses logit evaluators does it use them appropriately for vibe-y tasks that are primarily questions of subjective judgment or difficult to formalize?

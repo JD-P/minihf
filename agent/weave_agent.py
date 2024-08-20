@@ -56,12 +56,19 @@ from tqdm import tqdm
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
+from weave import weave_tree_search, TreeNode
 
 def make_simple_bayes_score_prompt(question: str):
     """Simplify the process of making a bayesian weave evaluator question prompt
     maker so that it's just a matter of passing a question for the weave-agent."""
-    template = f"<s> [INST]{{response}}\n\nAnswer yes or no and only yes or no.\n\n{parent_q}\n\n{question}"
-    return partial(make_bayes_score_prompt_vllm, template, "[/INST]", "")
+    template = ("{response}\n\n"
+                + "# Answer yes or no and only yes or no.\n"
+                + "# Keep in mind the following question is being asked as part\n"
+                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
+                + "# You're really being asked something like *will this trajectory*\n"
+                + "# eventually have quality X or satisfy predicate Y?\n"
+                + f"# {{parent_q}}\n# {question}")
+    return partial(make_bayes_score_prompt_vllm, template, "", "")
     
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
@@ -69,7 +76,7 @@ def make_simple_score_prompt(question: str):
     template = f"<s> [INST]{{response}}\n\nAnswer yes or no and only yes or no. {question}"
     return partial(make_score_prompt_vllm, template, "[/INST]", "")
 
-with open("python.lark") as infile:
+with open("simple_python.lark") as infile:
     python_grammar = infile.read()
 
 
@@ -311,11 +318,12 @@ class WeaveAgent:
         if key in self.cache:
             del self.cache[key]
 
-    def add_evaluation(self, evaluation):
-        title, callback = evaluation["title"], evaluation["callback"]
+    def add_evaluation(self, title, callback):
         assert type(title) == str
         assert type(callback) == types.FunctionType
-        self.current_tick.evaluations.append(evaluation)
+        self.current_tick.evaluations.append({"type":"evaluation",
+                                              "title":title,
+                                              "callback":callback})
             
     def render_context(self):
         self.context = ""
@@ -344,32 +352,50 @@ class WeaveAgent:
                 self.context += (header + repr(event_block) + footer)
         return self.context
 
-    def generate_block(self, block_type, context, hint=""):
+    def generate_block(self, block_type, context, eval_questions, hint=""):
         """Generate a block and add it to the event stream."""
         prompt = f'{context}#startblock type: {block_type}\n{hint}\n'
         port = 5001
-        n = 1
-        n_tokens = 4096
-        payload = {"n":n,
-                   "temperature":1,
-                   "top_k":50,
-                   "repetition_penalty":1.02,
-                   "max_tokens": n_tokens,
-                   "model":self.model_name,
-                   "prompt":prompt,
-                   "stream":False,
-                   "seed":random.randrange(1000000),
-                   # "guided_grammar":python_grammar,
-                   "stop":["\n#endblock"]}
-        response = requests.post(f"http://localhost:{port}/v1/completions/",
-                                 data=json.dumps(payload))
-        texts = [choice["text"] for choice in response.json()["choices"]]
-        if texts:
+        generate_fn = partial(generate_outputs_vllm,
+                              self.model_name,
+                              port=port)
+        score_prompt_fns = []
+        for question in eval_questions:
+            score_prompt_fns.append(make_simple_bayes_score_prompt(question))
+        evaluate_fn = partial(bayesian_evaluate_outputs_vllm,
+                              self.model_name,
+                              eval_questions[0],
+                              score_prompt_fns,
+                              port=port)
+        weave_param_defaults = {"weave_n_tokens":64, "weave_budget":288,
+                                "weave_round_budget":24, "weave_n_expand":16,
+                                "weave_beam_width":1, "weave_max_lookahead":3,
+                                "weave_temperature":0.2}
+        wp = weave_param_defaults
+        tree = TreeNode(prompt)
+        branches = weave_tree_search(tree=tree,
+                                     generate_fn=partial(generate_fn,
+                                                         n_tokens=wp["weave_n_tokens"]),
+                                     evaluate_fn=evaluate_fn,
+                                     budget=wp["weave_budget"],
+                                     round_budget=wp["weave_round_budget"],
+                                     n_expand=wp["weave_n_expand"],
+                                     beam_width=wp["weave_beam_width"],
+                                     max_lookahead=wp["weave_max_lookahead"],
+                                     temperature=wp["weave_temperature"]) 
+        if branches:
+            program = branches[-1].branch_text()
+            stop_index = program.find("\n#endblock")
+            # Check we finished writing the code block and extract first block
+            if stop_index == -1:
+                raise ValueError("MCTS didn't return branch with #endblock")
+            else:
+                program = program[:stop_index]
             block = {"type":block_type,
-                     "program":texts[0]}
+                     "program":program}
             self.add_block(block)
             try:
-                compile(texts[0], f"block_{self.current_block_index}", "exec")
+                compile(program, f"block_{self.current_block_index}", "exec")
             except Exception as e:
                 raise ValueError from e
             return block
@@ -431,7 +457,10 @@ class WeaveAgent:
         # Render context
         self.render_context()
 
+
         # Task inference block
+        with open("eval_rubrics/task_inference.txt") as infile:
+            task_inference_questions = infile.read().strip().splitlines()
         task_inference_hint = (
             "# In the task inference stage you change the status of tasks on the kanban\n"
             + "# board, add new tasks if necessary, etc. It's important to keep your kanban\n"
@@ -448,6 +477,7 @@ class WeaveAgent:
         try:
             task_inference_block = self.generate_block("task_inference",
                                                        self.context,
+                                                       task_inference_questions,
                                                        hint=task_inference_hint)
         except ValueError as e:
             tb = traceback.format_exc()
@@ -463,6 +493,8 @@ class WeaveAgent:
         # This is your opportunity to analyze the situation based on the
         # observation, reminder, task, etc blocks. Use this moment to decide
         # what to do next.
+        with open("eval_rubrics/orientation.txt") as infile:
+            orientation_questions = infile.read().strip().splitlines()
         orientation_hint = (
             "#hint The orientation block is your opportunity to\n"
             + "# reflect on the situation, do chain of thought,\n"
@@ -475,6 +507,7 @@ class WeaveAgent:
         try:
             orientation_block = self.generate_block("orientation",
                                                     self.context,
+                                                    orientation_questions,
                                                     hint=orientation_hint)
         except ValueError as e:
             tb = traceback.format_exc()
@@ -487,6 +520,8 @@ class WeaveAgent:
         self.current_tick.orientation = orientation_block
         
         # Write action block
+        with open("eval_rubrics/action.txt") as infile:
+            action_questions = infile.read().strip().splitlines()
         action_hint = (
             "#hint Action blocks are where you write code to take actions.\n"
             + "# Adding and removing callbacks is a frequent kind of action you\n"
@@ -497,6 +532,7 @@ class WeaveAgent:
         try:
             action_block = self.generate_block("action",
                                                self.context,
+                                               action_questions,
                                                hint=action_hint)
         except ValueError as e:
             tb = traceback.format_exc()
@@ -509,6 +545,8 @@ class WeaveAgent:
         self.current_tick.action = action_block
 
         # Write expectation block
+        with open("eval_rubrics/expectation.txt") as infile:
+            expectation_questions = infile.read().strip().splitlines()
         expectation_hint = (
             "#hint Expectation blocks are where you think about what it would\n"
             + "# look like for your action to succeed, what it would look like\n"
@@ -520,6 +558,7 @@ class WeaveAgent:
         try:
             expectation_block = self.generate_block("expectation",
                                                     self.context,
+                                                    expectation_questions,
                                                     hint=expectation_hint)
         except ValueError as e:
             tb = traceback.format_exc()
@@ -532,6 +571,9 @@ class WeaveAgent:
         self.current_tick.expectation = expectation_block
         
         # Write evaluation programs
+        with open("eval_rubrics/evaluation.txt") as infile:
+            evaluation_questions = infile.read().strip().splitlines()
+        evaluation_blocks = []
         evaluation_hint = (
             "#hint Evaluation blocks are where you write callbacks to check if\n"
             + "# your action succeeded or not based on the expectation. There are\n"
@@ -546,9 +588,10 @@ class WeaveAgent:
         )
         for _ in range(3):
             try:
-                self.current_tick.evaluations.append(
+                evaluation_blocks.append(
                     self.generate_block("evaluation",
                                         self.context,
+                                        evaluation_questions,
                                         hint=evaluation_hint)
                 )
             except ValueError as e:
@@ -581,14 +624,23 @@ class WeaveAgent:
             self.add_error_block(f"Action execution failed: {e}")
             return
 
-        # Run evaluation programs if action did not fail
+        # Set up evaluation callbacks if action did not fail
+        for evaluation_block in evaluation_blocks:
+            try:
+                exec(block['program'])       
+            except Exception as e:
+                self.add_error_block(f"Evaluation setup execution failed: {e}")
+                return
+        self.current_tick.evaluation_setup = evaluation_blocks
+
+        # Run evaluation callbacks
         evaluation_results = []
         for evaluation in self.current_tick.evaluations:
             try:
-                result = exec(block['program'])
+                result = evaluation["callback"]()
                 evaluation_results.append((evaluation['title'], result))
             except Exception as e:
-                self.add_error_block(f"Evaluation execution failed: {e}")
+                result = traceback.format_exc()
 
         # Add outcome block
         outcome_block = {

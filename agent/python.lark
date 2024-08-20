@@ -289,7 +289,7 @@ string: STRING | LONG_STRING
 
 // Other terminals
 
-_NEWLINE: ( /\r?\n[\t ]*/ | COMMENT )+
+_NEWLINE: (/\r?\n/ | COMMENT)+
 
 %ignore /[\t \f]+/  // WS
 %ignore /\\[\t \f]*\r?\n/   // LINE_CONT
@@ -300,15 +300,15 @@ _NEWLINE: ( /\r?\n[\t ]*/ | COMMENT )+
 // Python terminals
 
 !name: NAME | "match" | "case"
-NAME: /[^\W\d]\w*/
+NAME: /[a-zA-Z_]\w*/
 COMMENT: /#[^\n]*/
 
-STRING: /([ubf]?r?|r[ubf])("(?!"").*?(?<!\\)(\\\\)*?"|'(?!'').*?(?<!\\)(\\\\)*?')/i
-LONG_STRING: /([ubf]?r?|r[ubf])(""".*?(?<!\\)(\\\\)*?"""|'''.*?(?<!\\)(\\\\)*?''')/is
+STRING: /([ubf]?r?|r[ubf])("([^"\\]|\\.)*"|'([^'\\]|\\.)*')/i
+LONG_STRING: /([ubf]?r?|r[ubf])("""(.|\\n)*?"""|'''(.|\\n)*?''')/is
 
 _SPECIAL_DEC: "0".."9"        ("_"?  "0".."9"                       )*
-DEC_NUMBER:   "1".."9"        ("_"?  "0".."9"                       )*
-          |   "0"             ("_"?  "0"                            )* /(?![1-9])/
+DEC_NUMBER:   "1".."9" ("_"? "0".."9")*
+          |   "0" ("_"? "0")*
 HEX_NUMBER.2: "0" ("x" | "X") ("_"? ("0".."9" | "a".."f" | "A".."F"))+
 OCT_NUMBER.2: "0" ("o" | "O") ("_"?  "0".."7"                       )+
 BIN_NUMBER.2: "0" ("b" | "B") ("_"?  "0".."1"                       )+
