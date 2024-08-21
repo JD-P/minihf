@@ -62,7 +62,8 @@ def make_simple_bayes_score_prompt(question: str):
     """Simplify the process of making a bayesian weave evaluator question prompt
     maker so that it's just a matter of passing a question for the weave-agent."""
     template = ("{response}\n\n"
-                + "# Answer yes or no and only yes or no.\n"
+                + "# Answer yes or no and only yes or no to the following.\n"
+                + "# question about the incomplete code block above.\n"
                 + "# Keep in mind the following question is being asked as part\n"
                 + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
                 + "# You're really being asked something like *will this trajectory*\n"
@@ -73,8 +74,15 @@ def make_simple_bayes_score_prompt(question: str):
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
-    template = f"<s> [INST]{{response}}\n\nAnswer yes or no and only yes or no. {question}"
-    return partial(make_score_prompt_vllm, template, "[/INST]", "")
+    template = ("{response}\n\n"
+                + "# Answer yes or no and only yes or no to the following.\n"
+                + "# question about the incomplete code block above.\n"
+                + "# Keep in mind the following question is being asked as part\n"
+                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
+                + "# You're really being asked something like *will this trajectory*\n"
+                + "# eventually have quality X or satisfy predicate Y?\n"
+                + f"# {question}")
+    return partial(make_score_prompt_vllm, template, "", "")
 
 with open("simple_python.lark") as infile:
     python_grammar = infile.read()
@@ -360,14 +368,13 @@ class WeaveAgent:
                               self.model_name,
                               port=port)
         score_prompt_fns = []
-        for question in eval_questions:
-            score_prompt_fns.append(make_simple_bayes_score_prompt(question))
-        evaluate_fn = partial(bayesian_evaluate_outputs_vllm,
+        # TODO: Use the full set of questions somehow?
+        score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
+        evaluate_fn = partial(evaluate_outputs_vllm,
                               self.model_name,
-                              eval_questions[0],
                               score_prompt_fns,
                               port=port)
-        weave_param_defaults = {"weave_n_tokens":64, "weave_budget":288,
+        weave_param_defaults = {"weave_n_tokens":128, "weave_budget":144,
                                 "weave_round_budget":24, "weave_n_expand":16,
                                 "weave_beam_width":1, "weave_max_lookahead":3,
                                 "weave_temperature":0.2}

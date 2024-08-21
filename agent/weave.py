@@ -11,7 +11,9 @@ import math
 from operator import attrgetter
 import os
 import random
+import inspect
 import asyncio
+import aiohttp
 
 # import openai
 import requests
@@ -243,7 +245,7 @@ def generate_outputs_openai(text, n_tokens, n=1):
     return texts
 
 
-def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000):
+def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
     payload = {"n":n,
                "temperature":1,
                "top_k":50,
@@ -253,6 +255,8 @@ def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000):
                "prompt":text,
                "stream":False,
                "seed":random.randrange(1000000)}
+    if stop:
+        payload["stop"] = stop
     response = requests.post(f"http://localhost:{port}/v1/completions/",
                              data=json.dumps(payload))
     # return completion.json()["choices"][0]["text"]
@@ -381,52 +385,23 @@ class Choice:
 class MockLogProbs:
     pass
 
-def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
-    scores = []
-    for text in texts:
-        prompts = [score_prompt_fn(text) for score_prompt_fn in score_prompt_fns]       
-#    for score_prompt_fn in score_prompt_fns:
-#        prompts = [score_prompt_fn(text) for text in texts]
-        payload = {"n":n,
-                   "temperature":1,
-                   "top_k":50,
-                   "repetition_penalty":1.02,
-                   "max_tokens": 1,
-                   "model":model_name,
-                   "prompt":prompts,
-                   "stream":False,
-                   "logprobs":100,
-                   "seed":random.randrange(1000000)}
-        response = requests.post(f"http://localhost:{port}/v1/completions/",
-                                   data=json.dumps(payload))
+async def evaluate_prompts(session, port, model_name, prompts, n=1):
+    payload = {
+        "n": n,
+        "temperature": 1,
+        "top_k": 50,
+        "repetition_penalty": 1.02,
+        "max_tokens": 1,
+        "model": model_name,
+        "prompt": prompts,
+        "stream": False,
+        "logprobs": 100,
+        "seed": random.randrange(1000000)
+    }
+    async with session.post(f"http://localhost:{port}/v1/completions/", json=payload) as response:
+        response_json = await response.json()
         choices = []
-        for choice in response.json()["choices"]:
-            choice_o = Choice()
-            mocklogprobs_o = MockLogProbs()
-            choice_o.logprobs = mocklogprobs_o
-            choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
-            choices.append(choice_o)
-        scores.append(torch.tensor([get_score_from_completion(choice) for choice in choices]))
-    # TODO: Return these unpooled so the separate components can be stored in the
-    # weave tree
-    return torch.stack(scores).mean(dim=1)
-
-def bayesian_evaluate_outputs_vllm(model_name, parent_q, score_prompt_fns, texts, n=1, port=5000):
-    def evaluate_prompts(prompts):
-        payload = {"n":n,
-                   "temperature":1,
-                   "top_k":50,
-                   "repetition_penalty":1.02,
-                   "max_tokens": 1,
-                   "model":model_name,
-                   "prompt":prompts,
-                   "stream":False,
-                   "logprobs":100,
-                   "seed":random.randrange(1000000)}
-        response = requests.post(f"http://localhost:{port}/v1/completions/",
-                                   data=json.dumps(payload))
-        choices = []
-        for choice in response.json()["choices"]:
+        for choice in response_json["choices"]:
             choice_o = Choice()
             mocklogprobs_o = MockLogProbs()
             choice_o.logprobs = mocklogprobs_o
@@ -434,24 +409,48 @@ def bayesian_evaluate_outputs_vllm(model_name, parent_q, score_prompt_fns, texts
             choices.append(choice_o)
         return torch.tensor([get_score_from_completion(choice) for choice in choices])
 
-    priors = []
-    for text in texts:
-        posterior_prompts = [score_prompt_fn("", text)
-                             for score_prompt_fn in score_prompt_fns[1:]]
-        yes_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " Yes.", text)
-                                      for score_prompt_fn in score_prompt_fns[1:]]
-        no_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " No.", text)
-                                     for score_prompt_fn in score_prompt_fns[1:]]
-        posteriors = torch.sigmoid(evaluate_prompts(posterior_prompts))
-        yes_cond_posteriors = torch.sigmoid(evaluate_prompts(yes_cond_posterior_prompts))
-        no_cond_posteriors = torch.sigmoid(evaluate_prompts(no_cond_posterior_prompts))
-        yes_prior = torch.sigmoid(evaluate_prompts([score_prompt_fns[0]("", text),]))[0]
-        no_prior = 1 - yes_prior
+async def process_text(session, port, model_name, score_prompt_fns, text, n=1):
+    prompts = [score_prompt_fn(text) for score_prompt_fn in score_prompt_fns]
+    return await evaluate_prompts(session, port, model_name, prompts, n)
 
-        yes_posterior = yes_prior * math.prod(yes_cond_posteriors)
-        no_posterior = no_prior * math.prod(no_cond_posteriors)
-        priors.append(yes_posterior / (yes_posterior + no_posterior))
-    return torch.tensor(priors)
+async def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5000):
+    async with aiohttp.ClientSession() as session:
+        tasks = [process_text(session, port, model_name, score_prompt_fns, text, n) for text in texts]
+        scores = await asyncio.gather(*tasks)
+        return torch.stack(scores).mean(dim=1)
+
+async def bayes_process_text(session, port, model_name, parent_q, score_prompt_fns, text, n=1):
+    posterior_prompts = [score_prompt_fn("", text) for score_prompt_fn in score_prompt_fns[1:]]
+    yes_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " Yes.", text)
+                                  for score_prompt_fn in score_prompt_fns[1:]]
+    no_cond_posterior_prompts = [score_prompt_fn("\n\n" + parent_q + " No.", text)
+                                 for score_prompt_fn in score_prompt_fns[1:]]
+    yes_prior_prompts = [score_prompt_fns[0]("", text)]
+
+    tasks = [
+        evaluate_prompts(session, port, model_name, posterior_prompts),
+        evaluate_prompts(session, port, model_name, yes_cond_posterior_prompts),
+        evaluate_prompts(session, port, model_name, no_cond_posterior_prompts),
+        evaluate_prompts(session, port, model_name, yes_prior_prompts)
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    posteriors = torch.sigmoid(results[0])
+    yes_cond_posteriors = torch.sigmoid(results[1])
+    no_cond_posteriors = torch.sigmoid(results[2])
+    yes_prior = torch.sigmoid(results[3])[0]
+    no_prior = 1 - yes_prior
+
+    yes_posterior = yes_prior * math.prod(yes_cond_posteriors)
+    no_posterior = no_prior * math.prod(no_cond_posteriors)
+    return yes_posterior / (yes_posterior + no_posterior)
+
+async def bayesian_evaluate_outputs_vllm(model_name, parent_q, score_prompt_fns, texts, n=1, port=5000):
+    async with aiohttp.ClientSession() as session:
+        tasks = [process_text(session, port, model_name, parent_q, score_prompt_fns, text, n) for text in texts]
+        priors = await asyncio.gather(*tasks)
+        return torch.tensor(priors)
 
 class TreeNode:
     max_id = 0
@@ -547,7 +546,7 @@ class TreeNode:
         branch_nodes.reverse()
         return branch_nodes
 
-def weave_tree_search(
+async def weave_tree_search_vllm(
     tree,
     generate_fn,
     evaluate_fn,
@@ -593,11 +592,131 @@ def weave_tree_search(
 
             # Expansion - Expand the selected node
             n_expand_cur = min(n_expand, budget, round_budget_remaining)
-            texts = generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
+            texts = await generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
             scores = evaluate_fn(
                 [(chosen.root.text, chosen.branch_text(include_root=False) + text)
                 for text in texts]
             )
+            for text, score in zip(texts, scores):
+                new_child = TreeNode(text, chosen)
+                chosen.children.append(new_child)
+                new_child.set_score(score, temperature)
+                if new_child.depth < round + max_lookahead:
+                    heapq.heappush(heap, new_child)
+                rprint(
+                    f"New child {chosen.id}->{new_child.id} has score {new_child.score:.4f}, priority {new_child.priority:.4f}"
+                )
+                budget -= 1
+                round_budget_remaining -= 1
+
+        # Round over, sample beam_width nodes (top-down sampling), prune the rest
+        expansions = []
+        for node in beam:
+            node.update_phi()
+            if not node.children:
+                expansions.append(node)
+                continue
+            for child in node.children:
+                child.g_phi = child.phi + child.gumbel
+                expansions.append(child)
+            z = max(child.g_phi for child in node.children)
+            for child in node.children:
+                v = node.g_phi - child.g_phi + log1mexp(child.g_phi - z)
+                child.g_phi = node.g_phi - max(0.0, v) - log1pexp(-abs(v))
+                rprint(
+                    f"Beam candidate {child.id} has logit {child.logit:.4f}, phi {child.phi:.4f}, and g_phi {child.g_phi:.4f}"
+                )
+        expansions.sort(key=attrgetter("g_phi"), reverse=True)
+        beam = expansions[:beam_width]
+        for node in beam:
+            node.committed = True
+        for node in expansions[beam_width:]:
+            node.set_pruned()
+
+        round += 1
+
+        score_s = ", ".join(f"{node.score:.4f}" for node in beam)
+        rprint(f"Scores of beam: [{score_s}]")
+
+    # Sample beam_width nodes (bottom-up sampling)
+    nodes = sorted(
+        chain.from_iterable(tree.leaves() for tree in beam),
+        key=lambda node: node.phi + node.gumbel,
+        reverse=True,
+    )
+    return nodes[:beam_width]
+
+def is_async_function(func):
+    if inspect.iscoroutinefunction(func):
+        return True
+    if isinstance(func, types.FunctionType):
+        return True
+    return False
+
+def weave_tree_search(
+    tree,
+    generate_fn,
+    evaluate_fn,
+    budget,
+    round_budget,
+    n_expand=4,
+    beam_width=1,
+    max_lookahead=3,
+    temperature=1.0,
+):
+    if max_lookahead < 1:
+        raise ValueError("max_lookahead must be at least 1")
+
+    print("====== Generating with Weave ======")
+    if tree.logit == float("-inf"):
+        if is_async_function(evaluate_fn):
+            root_score = asyncio.run(
+                evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))])
+            )[0]
+        else:
+            root_score = evaluate_fn(
+                [(tree.root.text, tree.branch_text(include_root=False))]
+            )[0]
+        tree.set_score(root_score, temperature)
+    beam = [tree]
+    round = 0
+
+    while budget:
+        # Set up round
+        rprint(f"=== Round {round} starting ===")
+        round_budget_remaining = round_budget
+        nodes = [
+            [node for node in tree.leaves() if node.depth < round + max_lookahead]
+            for tree in beam
+        ]
+        heap = list(chain.from_iterable(nodes))
+        heapq.heapify(heap)
+
+        # Expand nodes until round budget is exhausted
+        while budget > 0 and round_budget_remaining > 0 and heap:
+            rprint(
+                f"Budget: {budget}, round budget: {round_budget_remaining}, queue: {len(heap)}"
+            )
+
+            # Selection - Select the node to expand
+            chosen = heapq.heappop(heap)
+            rprint(
+                f"Chose node {chosen.id} with score {chosen.score:.4f}, priority {chosen.priority:.4f}"
+            )
+
+            # Expansion - Expand the selected node
+            n_expand_cur = min(n_expand, budget, round_budget_remaining)
+            texts = generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
+            if is_async_function(evaluate_fn):
+                scores = asyncio.run(evaluate_fn(
+                    [(chosen.root.text, chosen.branch_text(include_root=False) + text)
+                     for text in texts]
+                ))
+            else:
+                scores = evaluate_fn(
+                    [(chosen.root.text, chosen.branch_text(include_root=False) + text)
+                     for text in texts]
+                )
             for text, score in zip(texts, scores):
                 new_child = TreeNode(text, chosen)
                 chosen.children.append(new_child)
