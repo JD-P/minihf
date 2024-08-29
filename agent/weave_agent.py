@@ -242,6 +242,7 @@ class WeaveAgent:
     def __init__(self, model_name):
         self.model_name = model_name
         self.event_stream = []
+        self.pinned_events = [0,1]
         self.current_tick = Tick(self, 0)
         self.ticks = []
         self.current_block_index = 0
@@ -272,7 +273,7 @@ class WeaveAgent:
         block['timestamp'] = time.time()
         self.event_stream.append(block)
         self.current_block_index += 1
-
+        
     def add_reminder(self, reminder):
         """Reminders are trigger callbacks that get executed on each tick. They return
         a value between 0 and 1 which is compared to a threshold to determine
@@ -335,7 +336,13 @@ class WeaveAgent:
             
     def render_context(self):
         self.context = ""
-        for event_block in self.event_stream[-32:]:
+        context_blocks = []
+        history_len = 30
+        for index in self.pinned_events:
+            if (len(self.event_stream) - index) > history_len:
+                context_blocks.append(self.event_stream[index])
+        context_blocks += self.event_stream[-history_len:]
+        for event_block in context_blocks:
             header = f'#startblock type: {event_block["type"]}\n'
             if "timestamp" in event_block:
                 header += f'#timestamp {event_block["timestamp"]}\n'
@@ -346,6 +353,7 @@ class WeaveAgent:
                                        "orientation",
                                        "action",
                                        "expectation",
+                                       "observation_inference",
                                        "evaluation"):
                 self.context += (header + event_block["program"] + footer)
             elif event_block["type"] == "task-reminder":
@@ -374,7 +382,7 @@ class WeaveAgent:
                               self.model_name,
                               score_prompt_fns,
                               port=port)
-        weave_param_defaults = {"weave_n_tokens":128, "weave_budget":144,
+        weave_param_defaults = {"weave_n_tokens":256, "weave_budget":72,
                                 "weave_round_budget":24, "weave_n_expand":16,
                                 "weave_beam_width":1, "weave_max_lookahead":3,
                                 "weave_temperature":0.2}
@@ -576,6 +584,35 @@ class WeaveAgent:
             return
         self.render_context()            
         self.current_tick.expectation = expectation_block
+
+        import pdb
+        pdb.set_trace()
+        # Observation Inference Block
+        with open("eval_rubrics/observation_inference.txt") as infile:
+            observation_inference_questions = infile.read().strip().splitlines()
+        observation_inference_hint = (
+            "# In the observation inference stage you manage the observation\n"
+            + "# callbacks that fetch information on each tick. Since you just\n"
+            + "# formulated your expectations now is your opportunity to review\n"
+            + "# and change the observation blocks that will be presented on the\n"
+            + "# next tick. Remove callbacks that are no longer necessary,\n"
+            + "# prepare callbacks that will be useful to help you render judgment\n"
+            + "# on whether the action succeeded on the next tick."
+        )
+        try:
+            observation_inference_block = self.generate_block("observation_inference",
+                                                              self.context,
+                                                              observation_inference_questions,
+                                                              hint=observation_inference_hint)
+        except ValueError as e:
+            tb = traceback.format_exc()
+            hint = ("Hint: callbacks are structured like\n\n"
+                    + "def callback_name(agent):\n   "
+                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
+            self.add_error_block(f'{hint}\n"""{tb}"""')
+            return
+        self.render_context()
+        self.current_tick.observation_inference = observation_inference_block
         
         # Write evaluation programs
         with open("eval_rubrics/evaluation.txt") as infile:
