@@ -53,6 +53,7 @@ from argparse import ArgumentParser
 from typing import List, Dict, Optional, Any
 from functools import partial
 from tqdm import tqdm
+from rich import print as rprint
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
@@ -376,7 +377,15 @@ class WeaveAgent:
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
-        prompt = f'{context}#startblock type: {block_type}\n{hint}\n'
+        prompt = f'<s> [INST]{context}[/INST]#startblock type: {block_type}\n{hint}\n\n'
+        # Narrow incidence of structurally wrong blocks by premising correct prefix
+        if block_type in {"orientation", "expectation"}:
+            prefix = '"""'
+        elif block_type in {"action", "evaluation"}:
+            prefix = "def "
+        else:
+            prefix = ""
+        prompt += prefix
         port = 5001
         generate_fn = partial(generate_outputs_vllm,
                               self.model_name,
@@ -388,34 +397,65 @@ class WeaveAgent:
                               self.model_name,
                               score_prompt_fns,
                               port=port)
+        
+        
         tree = TreeNode(prompt)
         wp = weave_params
+        # First try a simple rejection sampling
         branches = weave_tree_search(tree=tree,
                                      generate_fn=partial(generate_fn,
-                                                         n_tokens=wp["weave_n_tokens"]),
+                                                         n_tokens=768),
                                      evaluate_fn=evaluate_fn,
-                                     budget=wp["weave_budget"],
-                                     round_budget=wp["weave_round_budget"],
-                                     n_expand=wp["weave_n_expand"],
-                                     beam_width=wp["weave_beam_width"],
-                                     max_lookahead=wp["weave_max_lookahead"],
-                                     temperature=wp["weave_temperature"]) 
-        if branches:
+                                     budget=32,
+                                     round_budget=32,
+                                     n_expand=32,
+                                     beam_width=1,
+                                     max_lookahead=1,
+                                     temperature=0.01)
+        do_long = False
+        if (branches[-1].score < 3.0):
+            do_long = True
+        try:
             program = branches[-1].branch_text()
             stop_index = program.find("\n#endblock")
             # Check we finished writing the code block and extract first block
             if stop_index == -1:
                 raise ValueError("MCTS didn't return branch with #endblock")
             else:
-                program = program[:stop_index]
-            block = {"type":block_type,
-                     "program":program}
-            self.add_block(block)
-            try:
-                compile(program, f"block_{self.current_block_index}", "exec")
-            except Exception as e:
-                raise ValueError from e
-            return block
+                program = prefix + program[:stop_index].strip()
+            compile(program, f"block_{self.current_block_index}", "exec")
+        except Exception as e:
+            do_long = True
+        # If rejection sampling fails do full search
+        if do_long:
+            tree = TreeNode(prompt)
+            branches = weave_tree_search(tree=tree,
+                                         generate_fn=partial(generate_fn,
+                                                             n_tokens=wp["weave_n_tokens"]),
+                                         evaluate_fn=evaluate_fn,
+                                         budget=wp["weave_budget"],
+                                         round_budget=wp["weave_round_budget"],
+                                         n_expand=wp["weave_n_expand"],
+                                         beam_width=wp["weave_beam_width"],
+                                         max_lookahead=wp["weave_max_lookahead"],
+                                         temperature=wp["weave_temperature"]) 
+            program = branches[-1].branch_text()
+            stop_index = program.find("\n#endblock")
+            # Check we finished writing the code block and extract first block
+            if stop_index == -1:
+                raise ValueError("MCTS didn't return branch with #endblock")
+            else:
+                program = prefix + program[:stop_index].strip()
+        block = {"type":block_type,
+                 "program":program}
+        self.add_block(block)
+        try:
+            compile(program, f"block_{self.current_block_index}", "exec")
+        except Exception as e:
+            raise ValueError from e
+        rprint(f"Finished writing block #[cyan]{self.current_block_index}[/cyan] of type [cyan]{block_type}[/cyan]")
+        print(block["program"])
+        return block
 
     def add_error_block(self, error_message):
         error_block = {
@@ -618,7 +658,7 @@ class WeaveAgent:
             + "# a value between 0 and 1. Be sure to add your callback to\n"
             + "# the queue with agent.add_evaluation(title, callback)."
         )
-        for _ in range(3):
+        for _ in range(1):
             eval_block = do_tick_block(agent,
                                        "evaluation",
                                        evaluation_hint,
@@ -684,7 +724,7 @@ class WeaveAgent:
         self.add_block(outcome_block)
         self.current_tick.outcome = outcome_block
         self.current_tick.validate()
-        self.ticks.append(current_tick)
+        self.ticks.append(self.current_tick)
 
 
 parser = ArgumentParser()
