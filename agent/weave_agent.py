@@ -218,7 +218,7 @@ class Tick:
             raise ValueError("No orientation on tick.")
         elif not hasattr(self, 'action'):
             raise ValueError("No action on tick.")
-        elif "program" not in self.action:
+        elif "program" not in self.action_setup:
             raise TypeError("Tick action has no program.")
         elif not hasattr(self, 'expectation'):
             raise ValueError("No expectation on tick.")
@@ -297,11 +297,12 @@ class WeaveAgent:
                             status,
                             blocked_on)
 
-    def remove_task(self, task):
-        if "root" in task:
-            if task["root"]:
-                self.shutdown()
-        self.tasks.remove(task)
+    def add_action(self, title, callback):
+        assert type(title) == str
+        assert type(callback) == types.FunctionType
+        self.current_tick.action = {"type":"action",
+                                    "title":title,
+                                    "callback":callback}
 
     def add_observation_view(self, view):
         assert type(view) == dict
@@ -345,10 +346,9 @@ class WeaveAgent:
         for event_block in context_blocks:
             header = f'#startblock type: {event_block["type"]}\n'
             if "timestamp" in event_block:
-                header += f'#timestamp {event_block["timestamp"]}\n'
+                header += f'#timestamp {event_block["timestamp"]}\n\n'
             footer = '\n#endblock\n'
             if event_block["type"] in ("genesis",
-                                       "bootstrap",
                                        "task_inference",
                                        "orientation",
                                        "action",
@@ -356,9 +356,15 @@ class WeaveAgent:
                                        "observation_inference",
                                        "evaluation"):
                 self.context += (header + event_block["program"] + footer)
+            elif event_block["type"] == "bootstrap":
+                footer += "# End of Demo. Starting on the next tick you have\n"
+                footer += "# full control. Wake up.\n"
+                self.context += (header + event_block["program"] + footer)
             elif event_block["type"] == "task-reminder":
                 self.context += (header + event_block["task"] + footer)
             elif event_block["type"] == "error":
+                header += "# WARNING: ERROR MEANS TICK DID NOT FINISH EXECUTION\n"
+                header += "# ADDRESS ERROR IN NEXT TICK BEFORE PROCEEDING\n"
                 self.context += (header + event_block["message"] + footer)
             elif event_block["type"] == "outcome":
                 self.context += (header
@@ -368,7 +374,7 @@ class WeaveAgent:
                 self.context += (header + repr(event_block) + footer)
         return self.context
 
-    def generate_block(self, block_type, context, eval_questions, hint=""):
+    def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
         prompt = f'{context}#startblock type: {block_type}\n{hint}\n'
         port = 5001
@@ -382,12 +388,8 @@ class WeaveAgent:
                               self.model_name,
                               score_prompt_fns,
                               port=port)
-        weave_param_defaults = {"weave_n_tokens":256, "weave_budget":72,
-                                "weave_round_budget":24, "weave_n_expand":16,
-                                "weave_beam_width":1, "weave_max_lookahead":3,
-                                "weave_temperature":0.2}
-        wp = weave_param_defaults
         tree = TreeNode(prompt)
+        wp = weave_params
         branches = weave_tree_search(tree=tree,
                                      generate_fn=partial(generate_fn,
                                                          n_tokens=wp["weave_n_tokens"]),
@@ -473,9 +475,55 @@ class WeaveAgent:
         self.render_context()
 
 
+        def do_tick_block(self, block_type, hint, wp_update):
+            weave_params = {"weave_n_tokens":256, "weave_budget":72,
+                            "weave_round_budget":24, "weave_n_expand":16,
+                            "weave_beam_width":1, "weave_max_lookahead":3,
+                            "weave_temperature":0.2}
+            weave_params.update(wp_update)
+            with open(f"eval_rubrics/{block_type}.txt") as infile:
+                inference_questions = infile.read().strip().splitlines()
+            try:
+                block = self.generate_block(block_type,
+                                            self.context,
+                                            inference_questions,
+                                            weave_params,
+                                            hint=hint)
+            except ValueError as e:
+                tb = traceback.format_exc()
+                hint = ("Hint: callbacks are structured like\n\n"
+                        + "def callback_name(agent):\n   "
+                        + f"# code...\n   pass\nagent.add_orientation({{...}})")
+                self.add_error_block(f'{hint}\n"""{tb}"""')
+                return
+            self.render_context()
+            return block
+            
+        # Write orientation reasoning block
+        # This is your opportunity to analyze the situation based on the
+        # observation, reminder, task, etc blocks. Use this moment to decide
+        # what to do next.
+        orientation_hint = (
+            "#hint The orientation block is your opportunity to\n"
+            + "# reflect on the situation, do chain of thought,\n"
+            + "# summarize what has happened and what needs to\n"
+            + "# be done in response, etc. It is only technically\n"
+            + "# python code and does not get executed by the\n"
+            + "# framework. I suggest putting your internal\n"
+            + "# monologue in a triple quote block at this step."
+        )
+        mcts_params = {"weave_n_tokens":256, "weave_budget":288,
+                       "weave_round_budget":96, "weave_n_expand":32}
+        orientation_block = do_tick_block(agent,
+                                          "orientation",
+                                          orientation_hint,
+                                          mcts_params)
+        if orientation_block:
+            self.current_tick.orientation = orientation_block
+        else:
+            return
+
         # Task inference block
-        with open("eval_rubrics/task_inference.txt") as infile:
-            task_inference_questions = infile.read().strip().splitlines()
         task_inference_hint = (
             "# In the task inference stage you change the status of tasks on the kanban\n"
             + "# board, add new tasks if necessary, etc. It's important to keep your kanban\n"
@@ -489,79 +537,37 @@ class WeaveAgent:
             + "# 4) If all tasks are completed, shutdown.\n"
             + "# Keep in mind that the kanban will not actually be updated until the next tick."
         )
-        try:
-            task_inference_block = self.generate_block("task_inference",
-                                                       self.context,
-                                                       task_inference_questions,
-                                                       hint=task_inference_hint)
-        except ValueError as e:
-            tb = traceback.format_exc()
-            hint = ("Hint: callbacks are structured like\n\n"
-                    + "def callback_name(agent):\n   "
-                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
-            self.add_error_block(f'{hint}\n"""{tb}"""')
+        task_inference_block = do_tick_block(agent,
+                                             "task_inference",
+                                             task_inference_hint,
+                                             {})
+        if task_inference_block:
+            self.current_tick.task_inference = task_inference_block
+        else:
             return
-        self.render_context()
-        self.current_tick.task_inference = task_inference_block
-        
-        # Write orientation reasoning block
-        # This is your opportunity to analyze the situation based on the
-        # observation, reminder, task, etc blocks. Use this moment to decide
-        # what to do next.
-        with open("eval_rubrics/orientation.txt") as infile:
-            orientation_questions = infile.read().strip().splitlines()
-        orientation_hint = (
-            "#hint The orientation block is your opportunity to\n"
-            + "# reflect on the situation, do chain of thought,\n"
-            + "# summarize what has happened and what needs to\n"
-            + "# be done in response, etc. It is only technically\n"
-            + "# python code and does not get executed by the\n"
-            + "# framework. I suggest putting your internal\n"
-            + "# monologue in a triple quote block at this step."
-        )
-        try:
-            orientation_block = self.generate_block("orientation",
-                                                    self.context,
-                                                    orientation_questions,
-                                                    hint=orientation_hint)
-        except ValueError as e:
-            tb = traceback.format_exc()
-            hint = ("Hint: callbacks are structured like\n\n"
-                    + "def callback_name(agent):\n   "
-                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
-            self.add_error_block(f'{hint}\n"""{tb}"""')
-            return
-        self.render_context()
-        self.current_tick.orientation = orientation_block
         
         # Write action block
-        with open("eval_rubrics/action.txt") as infile:
-            action_questions = infile.read().strip().splitlines()
         action_hint = (
             "#hint Action blocks are where you write code to take actions.\n"
-            + "# Adding and removing callbacks is a frequent kind of action you\n"
-            + "# will take but it's important to remember that you can do anything\n"
-            + "# a python program can do. By the way printing to standard output\n"
-            + "# doesn't actually show up in the context stop doing that."
+            + "# Write a callback to further your goal(s) based on the orientation\n"
+            + "# block and set up the callback to be executed with the agent.add_action()\n"
+            + "# method. You must write a callback and then set it up to be executed\n"
+            + "# later with agent.add_action() or the program will cash.\n"
+            + "# It's important to remember that your callback can do anything\n"
+            + "# a python program can do. If you need to import a module make sure\n"
+            + "# to do it inside the callback because the tick gets executed in a\n"
+            + "# local context."
         )
-        try:
-            action_block = self.generate_block("action",
-                                               self.context,
-                                               action_questions,
-                                               hint=action_hint)
-        except ValueError as e:
-            tb = traceback.format_exc()
-            hint = ("Hint: callbacks are structured like\n\n"
-                    + "def callback_name(agent):\n   "
-                    + f"# code...\n   pass\nagent.add_action({{...}})")
-            self.add_error_block(f'{hint}\n"""{tb}"""')
+        action_block = do_tick_block(agent,
+                                     "action",
+                                     action_hint,
+                                     {})
+        if action_block:
+            self.current_tick.action_setup = action_block
+        else:
             return
-        self.render_context()
-        self.current_tick.action = action_block
-
+            
         # Write expectation block
-        with open("eval_rubrics/expectation.txt") as infile:
-            expectation_questions = infile.read().strip().splitlines()
         expectation_hint = (
             "#hint Expectation blocks are where you think about what it would\n"
             + "# look like for your action to succeed, what it would look like\n"
@@ -570,26 +576,16 @@ class WeaveAgent:
             + "# working or not. Like the orientation this should go in triple\n"
             + "# quotes."
         )
-        try:
-            expectation_block = self.generate_block("expectation",
-                                                    self.context,
-                                                    expectation_questions,
-                                                    hint=expectation_hint)
-        except ValueError as e:
-            tb = traceback.format_exc()
-            hint = ("Hint: callbacks are structured like\n\n"
-                    + "def callback_name(agent):\n   "
-                    + f"# code...\n   pass\nagent.add_action({{...}})")
-            self.add_error_block(f'{hint}\n"""{tb}"""')
+        expectation_block = do_tick_block(agent,
+                                          "expectation",
+                                          expectation_hint,
+                                          {})
+        if expectation_block:
+            self.current_tick.expectation = expectation_block
+        else:
             return
-        self.render_context()            
-        self.current_tick.expectation = expectation_block
-
-        import pdb
-        pdb.set_trace()
+            
         # Observation Inference Block
-        with open("eval_rubrics/observation_inference.txt") as infile:
-            observation_inference_questions = infile.read().strip().splitlines()
         observation_inference_hint = (
             "# In the observation inference stage you manage the observation\n"
             + "# callbacks that fetch information on each tick. Since you just\n"
@@ -599,24 +595,16 @@ class WeaveAgent:
             + "# prepare callbacks that will be useful to help you render judgment\n"
             + "# on whether the action succeeded on the next tick."
         )
-        try:
-            observation_inference_block = self.generate_block("observation_inference",
-                                                              self.context,
-                                                              observation_inference_questions,
-                                                              hint=observation_inference_hint)
-        except ValueError as e:
-            tb = traceback.format_exc()
-            hint = ("Hint: callbacks are structured like\n\n"
-                    + "def callback_name(agent):\n   "
-                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
-            self.add_error_block(f'{hint}\n"""{tb}"""')
+        observation_inference_block = do_tick_block(agent,
+                                                    "observation_inference",
+                                                    observation_inference_hint,
+                                                    {})
+        if observation_inference_block:
+            self.current_tick.observation_inference = observation_inference_block
+        else:
             return
-        self.render_context()
-        self.current_tick.observation_inference = observation_inference_block
-        
+            
         # Write evaluation programs
-        with open("eval_rubrics/evaluation.txt") as infile:
-            evaluation_questions = infile.read().strip().splitlines()
         evaluation_blocks = []
         evaluation_hint = (
             "#hint Evaluation blocks are where you write callbacks to check if\n"
@@ -631,21 +619,14 @@ class WeaveAgent:
             + "# the queue with agent.add_evaluation(title, callback)."
         )
         for _ in range(3):
-            try:
-                evaluation_blocks.append(
-                    self.generate_block("evaluation",
-                                        self.context,
-                                        evaluation_questions,
-                                        hint=evaluation_hint)
-                )
-            except ValueError as e:
-                tb = traceback.format_exc()
-                hint = ("Hint: callbacks are structured like\n\n"
-                        + "def callback_name(agent):\n   "
-                        + f"# code...\n   pass\nagent.add_evaluation({{...}})")
-                self.add_error_block(f'{hint}\n"""{tb}"""')
+            eval_block = do_tick_block(agent,
+                                       "evaluation",
+                                       evaluation_hint,
+                                       {})
+            if eval_block:
+                evaluation_blocks.append(eval_block)
+            else:
                 return
-            self.render_context()
 
         with open("confirm.txt", "w") as outfile:
             print("Confirmation waiting...")
@@ -658,38 +639,47 @@ class WeaveAgent:
         try:
             exec(task_inference_block['program'])
         except Exception as e:
-            self.add_error_block(f"Task updates failed: {e}")
+            self.add_error_block(f"# Task updates failed: {e}")
             return
             
-        # Execute action program
+        # Set up action callback
         try:
             exec(action_block['program'])
         except Exception as e:
-            self.add_error_block(f"Action execution failed: {e}")
+            self.add_error_block(f"# Action execution failed: {e}")
             return
 
-        # Set up evaluation callbacks if action did not fail
+        # Set up evaluation callbacks
         for evaluation_block in evaluation_blocks:
             try:
-                exec(block['program'])       
+                exec(evaluation_block['program'])       
             except Exception as e:
-                self.add_error_block(f"Evaluation setup execution failed: {e}")
+                self.add_error_block("# Evaluation setup execution failed: \n"
+                                     + f'"""{e}"""')
                 return
         self.current_tick.evaluation_setup = evaluation_blocks
 
+        # Run action callback
+        try:
+            action_result = self.current_tick.action["callback"](self)
+        except Exception as e:
+            action_result = traceback.format_exc()
+        
         # Run evaluation callbacks
         evaluation_results = []
         for evaluation in self.current_tick.evaluations:
             try:
-                result = evaluation["callback"]()
+                result = evaluation["callback"](self)
                 evaluation_results.append((evaluation['title'], result))
             except Exception as e:
                 result = traceback.format_exc()
 
+        outcomes = [action_result,] + evaluation_results
+                
         # Add outcome block
         outcome_block = {
             'type': 'outcome',
-            'table': evaluation_results
+            'table': outcomes
         }
         self.add_block(outcome_block)
         self.current_tick.outcome = outcome_block
