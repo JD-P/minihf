@@ -714,7 +714,9 @@ class WeaveAgent:
             except Exception as e:
                 result = traceback.format_exc()
 
-        outcomes = [action_result,] + evaluation_results
+        outcomes =  []
+        outcomes += [(self.current_tick.action["title"],action_result),]
+        outcomes += evaluation_results
                 
         # Add outcome block
         outcome_block = {
