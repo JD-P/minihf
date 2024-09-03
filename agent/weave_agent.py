@@ -85,9 +85,6 @@ def make_simple_score_prompt(question: str):
                 + f"# {question}")
     return partial(make_score_prompt_vllm, template, "", "")
 
-with open("simple_python.lark") as infile:
-    python_grammar = infile.read()
-
 
 class WeaveKanbanTask:
     STATUSES = ['idle', 'going', 'completed', 'blocked', 'aborted']
