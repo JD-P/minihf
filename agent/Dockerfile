@@ -24,4 +24,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD ["python", "weave_agent.py", "--port", "5001", "meta-llama/Meta-Llama-3.1-405B-Instruct-FP8"]
+CMD ["python", "weave_agent.py", "--port", "5001", "--bootstrap", "simple_convo_bootstrap.py", "mistralai/Mixtral-8x22B-Instruct-v0.1"]
