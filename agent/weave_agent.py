@@ -347,7 +347,7 @@ class WeaveAgent:
         for event_block in context_blocks:
             header = f'#startblock type: {event_block["type"]}\n'
             if "timestamp" in event_block:
-                header += f'#timestamp {event_block["timestamp"]}\n\n'
+                header += f'#timestamp {event_block["timestamp"]}\n'
             footer = ""
             if "q" in event_block:
                 yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
@@ -362,24 +362,28 @@ class WeaveAgent:
             footer += '\n#endblock\n'
             if event_block["type"] in ("genesis",
                                        "task_inference",
-                                       "orientation",
                                        "action",
                                        "expectation",
                                        "observation_inference",
                                        "evaluation"):
-                self.context += (header + event_block["program"] + footer)
+                self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "bootstrap":
                 footer += "# END OF DEMO. Starting on the next tick you have\n"
                 footer += "# full control. Wake up.\n"
-                self.context += (header + event_block["program"] + footer)
+                self.context += (header + "\n" + event_block["program"] + footer)
+            elif event_block["type"] == "orientation":
+                header += f"# Current Working Directory: {os.getcwd()}\n"
+                self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "task-reminder":
-                self.context += (header + event_block["task"] + footer)
+                self.context += (header + "\n" + event_block["task"] + footer)
             elif event_block["type"] == "error":
                 header += "# WARNING: ERROR MEANS TICK DID NOT FINISH EXECUTION\n"
                 header += "# ADDRESS ERROR IN NEXT TICK BEFORE PROCEEDING\n"
-                self.context += (header + event_block["message"] + footer)
+                self.context += (header + "\n" + event_block["message"] + footer)
             elif event_block["type"] == "outcome":
-                self.context += (header
+                footer += f"# Starting tick #{len(self.ticks) + 1} "
+                footer += f"with block #{self.current_block_index}\n"
+                self.context += (header + "\n" + 
                                  + self.generate_outcome_table(event_block['table'])
                                  + footer)
             else:
@@ -504,10 +508,17 @@ class WeaveAgent:
         # Roll reminders
         self.roll_reminders()
 
+        observations = []
         # Refresh observation views
         for view in self.observation_views:
-            view['callback'](self)
-
+            try:
+                observations.append(view['callback'](self))
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.add_error_block(
+                    f"Observation callback '{view['title']}' failed: {tb}"
+                )
+                
         task_reminder_body = ""
         
         if self.current_task:
@@ -522,7 +533,7 @@ class WeaveAgent:
         # Pull the content of the observation windows into blocks
         observation_blocks = [{'type': 'observation',
                                'title': view['title'],
-                               'content': view['callback'](self)} for view in self.observation_views]
+                               'content': observation} for observation in observations]
 
         # Inject these into the event stream
         self.event_stream += (task_blocks + observation_blocks)
@@ -537,7 +548,7 @@ class WeaveAgent:
                             "weave_beam_width":1, "weave_max_lookahead":3,
                             "weave_temperature":0.2}
             weave_params.update(wp_update)
-            with open(f"eval_rubrics/{block_type}.txt") as infile:
+            with open(f"/app/eval_rubrics/{block_type}.txt") as infile:
                 inference_questions = infile.read().strip().splitlines()
             try:
                 block = self.generate_block(block_type,
@@ -739,8 +750,8 @@ class WeaveAgent:
         self.current_tick.outcome = outcome_block
         self.current_tick.validate()
         self.ticks.append(self.current_tick)
-        if len(self.ticks) % 10 == 0:
-            with open("event_trace_{round(time.time())}.json", "w") as outfile:
+        if len(self.ticks) % 2 == 0:
+            with open("/app/event_trace_{round(time.time())}.json", "w") as outfile:
                 json.dump(self.event_stream, outfile)
 
 

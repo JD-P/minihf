@@ -1,3 +1,7 @@
+import django
+import os
+import sys
+
 #startblock type: orientation
 #timestamp 1724982545.6534579
 """
@@ -9,6 +13,9 @@ This server should be written in Django using sqlite as the backend. It serves t
 - Provides a full rendering of the agent trace (event stream, in the representation that winds up in the context window) up to that point.
 - Provides a chat window for the user and I to communicate with each other that writes into a sqlite backend.
 - Provides a button to download the full contents of the working directory for weave-agent as a zip file.
+
+I can edit files by making observation views to look at particular parts of them 
+and then doing a diff or replacement of the relevant parts on the full text.
 
 I'll start by setting up the Django project and creating the necessary models and views.
 """
