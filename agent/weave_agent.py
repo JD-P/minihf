@@ -69,7 +69,7 @@ def make_simple_bayes_score_prompt(question: str):
                 + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
                 + "# You're really being asked something like *will this trajectory*\n"
                 + "# eventually have quality X or satisfy predicate Y?\n"
-                + f"# {{parent_q}}\n# {question}")
+                + f"#q: {{parent_q}}\n# {question}")
     return partial(make_bayes_score_prompt_vllm, template, "", "")
     
 def make_simple_score_prompt(question: str):
@@ -82,7 +82,7 @@ def make_simple_score_prompt(question: str):
                 + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
                 + "# You're really being asked something like *will this trajectory*\n"
                 + "# eventually have quality X or satisfy predicate Y?\n"
-                + f"# {question}")
+                + f"#q: {question}")
     return partial(make_score_prompt_vllm, template, "", "")
 
 
@@ -262,8 +262,11 @@ class WeaveAgent:
                    "event_stream":self.event_stream,
                    "current_block_index":self.current_block_index,
                    "last_context":self.context}
-            outfile.write(repr(out))
+            json.dump(out, outfile)
             outfile.flush()
+        # Temp code to stop docker from shutting down
+        while 1:
+            time.sleep(30)
         raise SystemExit
         
     def add_block(self, block):
@@ -345,7 +348,18 @@ class WeaveAgent:
             header = f'#startblock type: {event_block["type"]}\n'
             if "timestamp" in event_block:
                 header += f'#timestamp {event_block["timestamp"]}\n\n'
-            footer = '\n#endblock\n'
+            footer = ""
+            if "q" in event_block:
+                yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
+                no_p = 1 - yes_p
+                yes_p, no_p = round(yes_p, 5), round(no_p, 5)
+                answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
+                if answer == "Yes.":
+                    prob = f"({round(yes_p * 100, 5)}%)"
+                else:
+                    prob = f"({round(no_p * 100, 5)}%)"
+                footer += f'\n#q: {event_block["q"]} {answer} {prob}'
+            footer += '\n#endblock\n'
             if event_block["type"] in ("genesis",
                                        "task_inference",
                                        "orientation",
@@ -355,7 +369,7 @@ class WeaveAgent:
                                        "evaluation"):
                 self.context += (header + event_block["program"] + footer)
             elif event_block["type"] == "bootstrap":
-                footer += "# End of Demo. Starting on the next tick you have\n"
+                footer += "# END OF DEMO. Starting on the next tick you have\n"
                 footer += "# full control. Wake up.\n"
                 self.context += (header + event_block["program"] + footer)
             elif event_block["type"] == "task-reminder":
@@ -376,7 +390,8 @@ class WeaveAgent:
         """Generate a block and add it to the event stream."""
         prompt = f'<s> [INST]{context}[/INST]#startblock type: {block_type}\n{hint}\n\n'
         # Narrow incidence of structurally wrong blocks by premising correct prefix
-        if block_type in {"orientation", "expectation"}:
+        if block_type in {"orientation", "expectation",
+                          "task_inference", "observation_inference"}:
             prefix = '"""'
         elif block_type in {"action", "evaluation"}:
             prefix = "def "
@@ -384,9 +399,11 @@ class WeaveAgent:
             prefix = ""
         prompt += prefix
         port = 5001
+        stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
         generate_fn = partial(generate_outputs_vllm,
                               self.model_name,
-                              port=port)
+                              port=port,
+                              stop=stopstrings)
         score_prompt_fns = []
         # TODO: Use the full set of questions somehow?
         score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
@@ -414,12 +431,7 @@ class WeaveAgent:
             do_long = True
         try:
             program = branches[-1].branch_text()
-            stop_index = program.find("\n#endblock")
-            # Check we finished writing the code block and extract first block
-            if stop_index == -1:
-                raise ValueError("MCTS didn't return branch with #endblock")
-            else:
-                program = prefix + program[:stop_index].strip()
+            program = prefix + program.strip()
             compile(program, f"block_{self.current_block_index}", "exec")
         except Exception as e:
             do_long = True
@@ -437,14 +449,21 @@ class WeaveAgent:
                                          max_lookahead=wp["weave_max_lookahead"],
                                          temperature=wp["weave_temperature"]) 
             program = branches[-1].branch_text()
-            stop_index = program.find("\n#endblock")
             # Check we finished writing the code block and extract first block
-            if stop_index == -1:
-                raise ValueError("MCTS didn't return branch with #endblock")
-            else:
+            stop_indices = []
+            for stopstring in stopstrings:
+                candidate = program.find(stopstring)
+                if candidate > -1:
+                    stop_indices.append(candidate)
+            if stop_indices:
+                stop_index = min(stop_indices)
                 program = prefix + program[:stop_index].strip()
+            else:
+                program = prefix + program.strip()
         block = {"type":block_type,
-                 "program":program}
+                 "program":program,
+                 "q":eval_questions[0],
+                 "score":branches[-1].score}
         self.add_block(block)
         try:
             compile(program, f"block_{self.current_block_index}", "exec")
@@ -664,14 +683,7 @@ class WeaveAgent:
                 evaluation_blocks.append(eval_block)
             else:
                 return
-
-        with open("confirm.txt", "w") as outfile:
-            print("Confirmation waiting...")
-            outfile.write(self.context)
-            outfile.flush()
-        while os.path.exists("confirm.txt"):
-            time.sleep(1)
-
+            
         # Execute task updates
         try:
             exec(task_inference_block['program'])
@@ -712,7 +724,10 @@ class WeaveAgent:
                 result = traceback.format_exc()
 
         outcomes =  []
-        outcomes += [(self.current_tick.action["title"],action_result),]
+        try:
+            outcomes += [(self.current_tick.action["title"],action_result),]
+        except AttributeError:
+            outcomes += [("[No action specified with agent.add_action()]", "ERROR"),]
         outcomes += evaluation_results
                 
         # Add outcome block
@@ -724,6 +739,9 @@ class WeaveAgent:
         self.current_tick.outcome = outcome_block
         self.current_tick.validate()
         self.ticks.append(self.current_tick)
+        if len(self.ticks) % 10 == 0:
+            with open("event_trace_{round(time.time())}.json", "w") as outfile:
+                json.dump(self.event_stream, outfile)
 
 
 parser = ArgumentParser()
