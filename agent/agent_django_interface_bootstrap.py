@@ -19,7 +19,6 @@ and then doing a diff or replacement of the relevant parts on the full text.
 
 I'll start by setting up the Django project and creating the necessary models and views.
 """
-#q: Is this orientation block a successful reflection and summary of what's happened and needs to be done next? Yes. (95.1%)
 #endblock
 #startblock type: task_inference
 #timestamp 1724982419.5427651
@@ -31,31 +30,31 @@ WeaveKanban yet and will want to do so now.
 # New Tasks:
 agent.add_task(
     "Set up Django project",
-    "Set up the Django project and create the necessary models and views.",
+    "Set up the Django project and create the necessary models and views by writing to the files.",
     "idle"
 )
 
 agent.add_task(
     "Create WeaveKanban view",
-    "Create a view to dynamically display the WeaveKanban as HTML lists.",
+    "Edit project files to include a view that dynamically displays the WeaveKanban as HTML lists.",
     "idle"
 )
 
 agent.add_task(
     "Create agent trace view",
-    "Create a view to provide a full rendering of the agent trace up to that point.",
+    "Edit project files to create a view that provides a full rendering of the agent trace up to that point.",
     "idle"
 )
 
 agent.add_task(
     "Create chat window",
-    "Create a chat window for the user and the agent to communicate with each other that writes into a sqlite backend.",
+    "Edit project files to create a chat window for the user and the agent to communicate with each other that writes into a sqlite backend.",
     "idle"
 )
 
 agent.add_task(
     "Create download button",
-    "Create a button to download the full contents of the working directory for weave-agent as a zip file.",
+    "Edit project files to create a button to download the full contents of the working directory for weave-agent as a zip file.",
     "idle"
 )
 
@@ -70,7 +69,6 @@ agent.current_task = agent.tasks.get_task(1)
 agent.current_task.going("Setting up Django project...")
 
 agent.current_task = agent.tasks.get_task(1)
-#q: Does this task inference code block update the kanban board to the correct task state? No. (5.79%)
 #endblock
 #startblock type: action
 #timestamp 1724982671.1163404
@@ -99,7 +97,6 @@ def setup_django_project(agent):
     return True
 
 agent.add_action("Set up Django project", setup_django_project)
-#q: Is this action codeblock a step towards resolving the problems identified in the orientation block? Yes. (90.321%)
 #endblock
 #startblock type: expectation
 #timestamp 1724982799.3917813
@@ -107,7 +104,6 @@ agent.add_action("Set up Django project", setup_django_project)
 The action should succeed if the Django project is set up correctly and the necessary models and views are created.
 The action should fail if the Django project cannot be set up or if the models and views cannot be created.
 """
-#q: Does this expectation block enumerate a strong set of evaluable concrete sensory experiences that would indicate success or failure of the action? No. (30.891%)
 #endblock
 #startblock type: observation_inference
 #timestamp 1724982929.9047914
@@ -126,7 +122,6 @@ agent.add_observation_view({
     "title": "View Django Project Directory",
     "callback": view_django_project
 })
-#q: Does the above observation_inference code block prepare the agent to judge the outcome of the action on the next tick? Yes. (70.33%)
 #endblock
 #startblock type: evaluation
 #timestamp 1724983062.124238
@@ -140,9 +135,12 @@ agent.add_evaluation(
     "Evaluate Django Project Setup",
     evaluate_django_project_setup
 )
-#q: Is this evaluation a good implementation of a callback to gather and evaluate the expected sensory evidence laid out in the expectation block? No. (65.9%)
 #endblock
 #startblock type: outcome
 # Unfortunately this isn't a real tick so it's inconvenient to get an outcome table
 # so pretend like you know our unit tests succeeded and let's move on.
 #endblock
+# Because this is the bootstrap block we have to run the actions and evaluations manually
+setup_django_project(agent)
+view_django_project(agent)
+evaluate_django_project_setup(agent)

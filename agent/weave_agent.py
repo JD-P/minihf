@@ -255,9 +255,9 @@ class WeaveAgent:
         """The agent shutdown routine. This should be called when the agent's 
         root task has been resolved, the root task is deemed intractable, or the
         agent has wandered off so far it can't find its way back to the task."""
-        if not os.path.exists("weave-agent-logs"):
-            os.mkdir("weave-agent-logs")
-        with open(f"weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
+        if not os.path.exists("/app/weave-agent-logs"):
+            os.mkdir("/app/weave-agent-logs")
+        with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
             out = {"model_name":self.model_name,
                    "event_stream":self.event_stream,
                    "current_block_index":self.current_block_index,
@@ -358,7 +358,8 @@ class WeaveAgent:
                     prob = f"({round(yes_p * 100, 5)}%)"
                 else:
                     prob = f"({round(no_p * 100, 5)}%)"
-                footer += f'\n#q: {event_block["q"]} {answer} {prob}'
+                # TODO: Turn this back on. Goodharts too much right now. 
+                # footer += f'\n#q: {event_block["q"]} {answer} {prob}'
             footer += '\n#endblock\n'
             if event_block["type"] in ("genesis",
                                        "task_inference",
@@ -467,7 +468,7 @@ class WeaveAgent:
         block = {"type":block_type,
                  "program":program,
                  "q":eval_questions[0],
-                 "score":branches[-1].score}
+                 "score":branches[-1].score.item()}
         self.add_block(block)
         try:
             compile(program, f"block_{self.current_block_index}", "exec")
@@ -732,7 +733,10 @@ class WeaveAgent:
                 result = evaluation["callback"](self)
                 evaluation_results.append((evaluation['title'], result))
             except Exception as e:
-                result = traceback.format_exc()
+                tb = traceback.format_exc()
+                evaluation_results.append((evaluation['title'], "ERROR"))
+                self.add_error_block("# Evaluation failed: \n"
+                                     + f'"""{tb}"""')
 
         outcomes =  []
         try:
@@ -748,10 +752,16 @@ class WeaveAgent:
         }
         self.add_block(outcome_block)
         self.current_tick.outcome = outcome_block
-        self.current_tick.validate()
+        try:
+            self.current_tick.validate()
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.add_error_block("# Tick validation failed: \n"
+                                 + f'"""{tb}"""')
+            self.current_tick.valid = False
         self.ticks.append(self.current_tick)
         if len(self.ticks) % 2 == 0:
-            with open("/app/event_trace_{round(time.time())}.json", "w") as outfile:
+            with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
                 json.dump(self.event_stream, outfile)
 
 
