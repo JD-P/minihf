@@ -383,7 +383,7 @@ class WeaveAgent:
             elif event_block["type"] == "outcome":
                 footer += f"# Starting tick #{len(self.ticks) + 1} "
                 footer += f"with block #{self.current_block_index}\n"
-                self.context += (header + "\n" + 
+                self.context += (header + "\n" 
                                  + self.generate_outcome_table(event_block['table'])
                                  + footer)
             else:
