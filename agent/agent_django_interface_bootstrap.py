@@ -5,7 +5,7 @@ import sys
 #startblock type: orientation
 #timestamp 1724982545.6534579
 """
-My task is to write a web app for interacting with myself that runs on localhost port 8080.
+My task is to write a web app for interacting with myself that runs on localhost port 8081.
 This server should be written in Django using sqlite as the backend. It serves the following functions:
 
 - Acts as a daemon process to stop docker from closing when I completes my tasks.
@@ -15,7 +15,9 @@ This server should be written in Django using sqlite as the backend. It serves t
 - Provides a button to download the full contents of the working directory for weave-agent as a zip file.
 
 I can edit files by making observation views to look at particular parts of them 
-and then doing a diff or replacement of the relevant parts on the full text.
+and then doing a diff or replacement of the relevant parts on the full text. I need
+to make sure that the code I write acts through side effects modifying the project
+files so that the code shows up in files like views.py, urls.py, etc.
 
 I'll start by setting up the Django project and creating the necessary models and views.
 """
@@ -60,22 +62,18 @@ agent.add_task(
 
 agent.add_task(
     "Run Django server",
-    "Run the Django server on localhost port 8080.",
+    "Run the Django server on localhost port 8081.",
     "idle"
 )
 
 # Updates to Existing Task
 agent.current_task = agent.tasks.get_task(1)
 agent.current_task.going("Setting up Django project...")
-
-agent.current_task = agent.tasks.get_task(1)
 #endblock
 #startblock type: action
 #timestamp 1724982671.1163404
 
 def setup_django_project(agent):
-    import os
-    import django
     from django.core.management import execute_from_command_line
 
     # Create a new Django project
@@ -113,7 +111,6 @@ This should let me see what its current state is.
 """
 
 def view_django_project(agent):
-    import os
     return os.listdir("weave_agent_webapp")
 
 # Add the new view
@@ -128,7 +125,6 @@ agent.add_observation_view({
 
 def evaluate_django_project_setup(agent):
     """Check if the Django project is set up correctly"""
-    import os
     return os.path.exists("weave_agent_webapp/manage.py")
 
 agent.add_evaluation(

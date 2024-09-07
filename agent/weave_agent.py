@@ -105,6 +105,9 @@ class WeaveKanbanTask:
 
     def change_status(self, new_status: str, explanation: str,
                       blocked_on: Optional[List[str]] = None) -> None:
+        if new_status == self.status:
+            return
+
         if new_status not in self.STATUSES:
             raise ValueError(f"Invalid status: {new_status}")
 
@@ -139,8 +142,10 @@ class WeaveKanbanTask:
         return f"ID: {self.id}\nTitle: {self.title}\nDescription: {self.description}\nMetadata: {self.blocked_on}\nHistory:\n{history}"
 
     def abbreviated_history(self) -> str:
-        return ' '.join([self.ABBREVIATIONS[h['status']] for h in self.history])
-
+        letter_history = ' '.join([self.ABBREVIATIONS[h['status']] for h in self.history])
+        # Display full name of final status to help LLM read it past tokenizer
+        return letter_history[:-1] + self.history[-1]['status'].title()
+        
     def to_dict(self) -> Dict[str, Any]:
         return {
             'id': self.id,
@@ -183,7 +188,8 @@ class WeaveKanban:
         return None
 
     def view_board(self) -> str:
-        table = [[task.id, task.title, task.abbreviated_history()] for task in self.tasks]
+        table = [[task.id, task.title, task.abbreviated_history()]
+                 for task in self.tasks if task.status not in ["completed", "aborted"]]
         headers = ['ID', 'Title', 'History']
         col_widths = [max(len(str(item)) for item in col) for col in zip(*table, headers)]
 
@@ -362,7 +368,6 @@ class WeaveAgent:
                 # footer += f'\n#q: {event_block["q"]} {answer} {prob}'
             footer += '\n#endblock\n'
             if event_block["type"] in ("genesis",
-                                       "task_inference",
                                        "action",
                                        "expectation",
                                        "observation_inference",
@@ -374,6 +379,13 @@ class WeaveAgent:
                 self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "orientation":
                 header += f"# Current Working Directory: {os.getcwd()}\n"
+                self.context += (header + "\n" + event_block["program"] + footer)
+            elif event_block["type"] == "task_inference":
+                task_title = f"({self.current_task.id}) {self.current_task.title}"
+                task_status = f"({self.current_task.status}) "
+                task_status += f"{self.current_task.history[-1]['explanation']}"
+                header += f"# Current Task: {task_title}\n"
+                header += f"# Task Status: {task_status}\n"
                 self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "task-reminder":
                 self.context += (header + "\n" + event_block["task"] + footer)
@@ -572,12 +584,12 @@ class WeaveAgent:
         # observation, reminder, task, etc blocks. Use this moment to decide
         # what to do next.
         orientation_hint = (
-            "#hint The orientation block is your opportunity to\n"
+            "#hint The orientation block is my opportunity to\n"
             + "# reflect on the situation, do chain of thought,\n"
             + "# summarize what has happened and what needs to\n"
             + "# be done in response, etc. It is only technically\n"
             + "# python code and does not get executed by the\n"
-            + "# framework. I suggest putting your internal\n"
+            + "# framework. I suggest putting my internal\n"
             + "# monologue in a triple quote block at this step."
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
@@ -593,12 +605,12 @@ class WeaveAgent:
 
         # Task inference block
         task_inference_hint = (
-            "# In the task inference stage you change the status of tasks on the kanban\n"
-            + "# board, add new tasks if necessary, etc. It's important to keep your kanban\n"
-            + "# up to date so that you're presented with the correct task state at the\n"
-            + "# start of each tick. In particular you should:\n"
+            "# In the task inference stage I change the status of tasks on the kanban\n"
+            + "# board, add new tasks if necessary, etc. It's important to keep my kanban\n"
+            + "# up to date so that I'm presented with the correct task state at the\n"
+            + "# start of each tick. In particular I should:\n"
             + "# 1) Write python to update the kanban board.\n"
-            + "# 2) Set the current task if it needs to be changed or you've completed\n"
+            + "# 2) Set the current task if it needs to be changed or I've completed\n"
             + "# it.\n"
             + "# 3) Change the status of any tasks that have been completed, made irrelevant,\n"
             + "# etc.\n" 
@@ -616,13 +628,14 @@ class WeaveAgent:
         
         # Write action block
         action_hint = (
-            "#hint Action blocks are where you write code to take actions.\n"
-            + "# Write a callback to further your goal(s) based on the orientation\n"
+            "#hint Action blocks are where I write code to take actions.\n"
+            + "# Write a callback to further my goal(s) based on the orientation\n"
             + "# block and set up the callback to be executed with the agent.add_action()\n"
-            + "# method. You must write a callback and then set it up to be executed\n"
-            + "# later with agent.add_action() or the program will cash.\n"
-            + "# It's important to remember that your callback can do anything\n"
-            + "# a python program can do. If you need to import a module make sure\n"
+            + "# method. I must write a callback and then set it up to be executed\n"
+            + "# later with agent.add_action() or the tick will not be accepted.\n"
+            + "# It's important to remember that my callback can do anything\n"
+            + "# a python program can do through side effects in the external\n" 
+            + "# computable environment. If I need to import a new module make sure\n"
             + "# to do it inside the callback because the tick gets executed in a\n"
             + "# local context."
         )
@@ -637,10 +650,10 @@ class WeaveAgent:
             
         # Write expectation block
         expectation_hint = (
-            "#hint Expectation blocks are where you think about what it would\n"
-            + "# look like for your action to succeed, what it would look like\n"
-            + "# for it to fail. You are enumerating the expected sensory evidence\n"
-            + "# that would tell you one way or another whether your action is\n"
+            "#hint Expectation blocks are where I think about what it would\n"
+            + "# look like for my action to succeed, what it would look like\n"
+            + "# for it to fail. I am enumerating the expected sensory evidence\n"
+            + "# that would tell me one way or another whether my action is\n"
             + "# working or not. Like the orientation this should go in triple\n"
             + "# quotes."
         )
@@ -655,12 +668,12 @@ class WeaveAgent:
             
         # Observation Inference Block
         observation_inference_hint = (
-            "# In the observation inference stage you manage the observation\n"
-            + "# callbacks that fetch information on each tick. Since you just\n"
-            + "# formulated your expectations now is your opportunity to review\n"
+            "# In the observation inference stage I manage the observation\n"
+            + "# callbacks that fetch information on each tick. Since I just\n"
+            + "# formulated my expectations now is my opportunity to review\n"
             + "# and change the observation blocks that will be presented on the\n"
             + "# next tick. Remove callbacks that are no longer necessary,\n"
-            + "# prepare callbacks that will be useful to help you render judgment\n"
+            + "# prepare callbacks that will be useful to help me render judgment\n"
             + "# on whether the action succeeded on the next tick."
         )
         observation_inference_block = do_tick_block(agent,
@@ -675,15 +688,15 @@ class WeaveAgent:
         # Write evaluation programs
         evaluation_blocks = []
         evaluation_hint = (
-            "#hint Evaluation blocks are where you write callbacks to check if\n"
-            + "# your action succeeded or not based on the expectation. There are\n"
+            "#hint Evaluation blocks are where I write callbacks to check if\n"
+            + "# my action succeeded or not based on the expectation. There are\n"
             + "# unit tests and logit evaluators. Use unit test callbacks\n"
             + "# (i.e. normal python) for symbolic manipulation tasks like\n"
             + "# checking arithmetic, the existence of a particular file, etc.\n"
             + "# Use logit evaluators for vibe-y tasks like whether a piece of\n"
             + "# writing flows well or if a source seems trustworthy. Like\n"
             + "# reminders both unit test callbacks and logit evaluators return\n"
-            + "# a value between 0 and 1. Be sure to add your callback to\n"
+            + "# a value between 0 and 1. I should be sure to add my callback to\n"
             + "# the queue with agent.add_evaluation(title, callback)."
         )
         for _ in range(1):
