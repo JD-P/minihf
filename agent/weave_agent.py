@@ -76,6 +76,10 @@ def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
     template = ("{response}\n\n"
+                + "#q: If I flip a fair coin will it come up heads? No. (50%)\n"
+                + "#q: X happens one in a hundred times. Did X happen? Yes. (1%)\n"
+                + "#q: If I pick a US state at random will that state be Idaho? No. (98%)\n"
+                + "#q: If I pick a book up from the thrift store will it be good according to Sturgeon's law? Yes. (10%)\n"
                 + "# Answer yes or no and only yes or no to the following.\n"
                 + "# question about the incomplete code block above.\n"
                 + "# Keep in mind the following question is being asked as part\n"
@@ -254,6 +258,7 @@ class WeaveAgent:
         self.tasks = WeaveKanban()
         self.current_task = None
         self.observation_views = []
+        self.tools = []
         self.cache = {}
         self.context = ""
 
@@ -316,7 +321,7 @@ class WeaveAgent:
         assert "type" in view
         assert "title" in view
         assert "callback" in view
-        assert type(view["callback"]) == types.FunctionType
+        assert type(view["callback"]) in [types.FunctionType, types.MethodType]
         self.observation_views.append(view)
 
     def remove_observation_view(self, view):
