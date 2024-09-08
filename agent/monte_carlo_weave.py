@@ -130,6 +130,14 @@ def logprobs_completions(generate_fn, prompt, completions):
         
         return sequence_log_prob.tolist()  # Return a list of log probabilities
 
+def topk_of_N(generate_fn, prompt, sequence_length, k, N=10):
+    texts = generate_fn(prompt, sequence_length, n=N)
+    scores = logprobs_completions(generate_fn, prompt, texts)
+    # Get the indices of the top k scores
+    _, top_k_indices = torch.topk(torch.tensor(scores), k, largest=True)
+    # Return the top k texts
+    return [texts[i] for i in top_k_indices]
+
 class TreeNode:
     max_id = 0
 
@@ -190,6 +198,8 @@ class TreeNode:
             return "".join(branch_texts)
         else:
             return "".join(branch_texts[1:])
+        
+
 
 def monte_carlo_weave(
     tree,
