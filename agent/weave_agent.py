@@ -45,6 +45,7 @@ import os
 import json
 import random
 import time
+import ast
 import types
 import traceback
 import requests
@@ -316,12 +317,11 @@ class WeaveAgent:
                                     "title":title,
                                     "callback":callback}
 
-    def add_observation_view(self, view):
-        assert type(view) == dict
-        assert "type" in view
-        assert "title" in view
-        assert "callback" in view
-        assert type(view["callback"]) in [types.FunctionType, types.MethodType]
+    def add_observation_view(self, title, callback):
+        view = {"type":"observation",
+                "title":title,
+                "callback":callback}
+        assert type(callback) in [types.FunctionType, types.MethodType]
         self.observation_views.append(view)
 
     def remove_observation_view(self, view):
@@ -410,6 +410,19 @@ class WeaveAgent:
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
+
+        def is_valid_syntax(code):
+            try:
+                ast.parse(code)
+                return True
+            except SyntaxError as e:
+                error_position = e.offset
+                code_length = len(code)
+                if code_length - error_position > 50:
+                    return False
+                else:
+                    return True
+
         prompt = f'<s> [INST]{context}[/INST]#startblock type: {block_type}\n{hint}\n\n'
         # Narrow incidence of structurally wrong blocks by premising correct prefix
         if block_type in {"orientation", "expectation",
@@ -429,12 +442,16 @@ class WeaveAgent:
         score_prompt_fns = []
         # TODO: Use the full set of questions somehow?
         score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
-        evaluate_fn = partial(evaluate_outputs_vllm,
-                              self.model_name,
-                              score_prompt_fns,
-                              port=port)
-        
-        
+        async def evaluate_fn(texts):
+            score_fn = partial(evaluate_outputs_vllm,
+                               self.model_name,
+                               score_prompt_fns,
+                               port=port)
+            scores = await score_fn(texts)
+            # Penalize syntax errors more than 50 characters from end of string
+            syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else 2
+                                             for text in texts])
+            return scores - syntax_penalties
         tree = TreeNode(prompt)
         wp = weave_params
         # First try a simple rejection sampling
@@ -530,7 +547,7 @@ class WeaveAgent:
         # Refresh observation views
         for view in self.observation_views:
             try:
-                observations.append(view['callback'](self))
+                observations.append((view['title'], view['callback'](self)))
             except Exception as e:
                 tb = traceback.format_exc()
                 self.add_error_block(
@@ -550,8 +567,8 @@ class WeaveAgent:
 
         # Pull the content of the observation windows into blocks
         observation_blocks = [{'type': 'observation',
-                               'title': view['title'],
-                               'content': observation} for observation in observations]
+                               'title': observation[0],
+                               'content': observation[1]} for observation in observations]
 
         # Inject these into the event stream
         self.event_stream += (task_blocks + observation_blocks)
@@ -833,6 +850,31 @@ with open(args.bootstrap) as infile:
     agent.add_block(bootstrap_block)
     exec(bootstrap_block["program"])
 
+def run_bootstrap_callbacks():
+    """Run bootstrap callbacks in function to avoid contaminating global scope."""
+    # Run action callback
+    action_result = agent.current_tick.action["callback"](agent)
+
+    # Run evaluation callbacks
+    evaluation_results = []
+    for evaluation in agent.current_tick.evaluations:
+        result = evaluation["callback"](agent)
+        evaluation_results.append((evaluation['title'], result))
+
+    outcomes =  []
+    outcomes += [(agent.current_tick.action["title"],action_result),]
+    outcomes += evaluation_results
+
+    # Add outcome block
+    outcome_block = {
+        'type': 'outcome',
+        'table': outcomes
+    }
+    agent.add_block(outcome_block)
+    agent.current_tick.outcome = outcome_block
+
+run_bootstrap_callbacks()
+    
 # Run the agent
 while True:
     agent.tick()
