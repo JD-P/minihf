@@ -251,11 +251,12 @@ class WeaveAgent:
     def __init__(self, model_name):
         self.model_name = model_name
         self.event_stream = []
-        self.pinned_events = [0,1]
+        self.pinned_events = [0, 1]
         self.current_tick = Tick(self, 0)
         self.ticks = []
         self.current_block_index = 0
         self.reminders = []
+        self.debugging = False
         self.tasks = WeaveKanban()
         self.current_task = None
         self.observation_views = []
@@ -324,8 +325,10 @@ class WeaveAgent:
         assert type(callback) in [types.FunctionType, types.MethodType]
         self.observation_views.append(view)
 
-    def remove_observation_view(self, view):
-        self.observation_views.remove(view)
+    def remove_observation_view(self, view_title):
+        views = [view for view in self.observation_views if view['title'] == view_title]
+        for view in views:
+            self.observation_views.remove(view)
 
     def get_block_by_index(self, index):
         return self.event_stream[index]
@@ -383,6 +386,8 @@ class WeaveAgent:
                 footer += "# full control. Wake up.\n"
                 self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "orientation":
+                header += f"# Starting tick #{len(self.ticks) + 1} "
+                header += f"with block #{self.current_block_index}\n"
                 header += f"# Current Working Directory: {os.getcwd()}\n"
                 self.context += (header + "\n" + event_block["program"] + footer)
             elif event_block["type"] == "task_inference":
@@ -395,12 +400,10 @@ class WeaveAgent:
             elif event_block["type"] == "task-reminder":
                 self.context += (header + "\n" + event_block["task"] + footer)
             elif event_block["type"] == "error":
-                header += "# WARNING: ERROR MEANS TICK DID NOT FINISH EXECUTION\n"
-                header += "# ADDRESS ERROR IN NEXT TICK BEFORE PROCEEDING\n"
+                header += "# WARNING: ERROR MEANS TICK DID NOT FULLY EXECUTE CALLBACKS\n"
+                header += "# YOU NEED TO AVOID OR ADDRESS ERROR IN NEXT TICK\n"
                 self.context += (header + "\n" + event_block["message"] + footer)
             elif event_block["type"] == "outcome":
-                footer += f"# Starting tick #{len(self.ticks) + 1} "
-                footer += f"with block #{self.current_block_index}\n"
                 self.context += (header + "\n" 
                                  + self.generate_outcome_table(event_block['table'])
                                  + footer)
@@ -432,6 +435,10 @@ class WeaveAgent:
             prefix = "def "
         else:
             prefix = ""
+        if block_type in {"orientation"} and self.debugging:
+            with open("/app/error_stems.txt") as infile:
+                error_stem = random.choice(infile.readlines())
+                prefix += error_stem.strip() + " "
         prompt += prefix
         port = 5001
         stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
@@ -513,6 +520,7 @@ class WeaveAgent:
         return block
 
     def add_error_block(self, error_message):
+        self.debugging = True
         error_block = {
             'type': 'error',
             'message': error_message
@@ -539,6 +547,12 @@ class WeaveAgent:
         return table
                     
     def tick(self):
+        try:
+            if "ERROR" in [outcome[1] for outcome in
+                           self.current_tick.outcome["table"]]:
+                self.debugging = True
+        except AttributeError:
+            self.debugging = True
         self.current_tick = Tick(self, len(self.ticks))
         # Roll reminders
         self.roll_reminders()
@@ -798,7 +812,7 @@ class WeaveAgent:
         if len(self.ticks) % 2 == 0:
             with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
                 json.dump(self.event_stream, outfile)
-
+        self.debugging = False
 
 parser = ArgumentParser()
 parser.add_argument("model_name", help="The model to use.")

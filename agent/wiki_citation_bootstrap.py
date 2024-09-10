@@ -1,6 +1,6 @@
+import requests
 from functools import partial
 from tools.editor import WeaveEditor
-
 
 #startblock type: orientation
 #timestamp 1724982545.6534579
@@ -103,8 +103,6 @@ agent.current_task = agent.tasks.get_task(1)
 #startblock type: action
 #timestamp 1724982671.1163404
 
-import requests
-
 def download_wiki_markup(page_title):
     url = f"https://en.wikipedia.org/w/api.php?action=query&prop=revisions&rvprop=content&format=json&titles={page_title}"
     response = requests.get(url)
@@ -114,14 +112,27 @@ def download_wiki_markup(page_title):
     markup = pages[page_id]['revisions'][0]['*']
     with open(f"{page_title}.wiki", "w") as file:
         file.write(markup)
-    return markup
+
+    WeaveEditor(agent, "Linux.wiki")
+
+    # Access the editor from the agent tools attribute
+    editor = agent.tools[0]
+    editor.window_size = 50
+
+    # Use the up, down, start, end, goto and find methods to navigate the file
+    editor.end()
+    editor.start()
+    editor.find("cite web")
+
+    # Replace text between two lines with edit(self, start_line, end_line, new_text)
+    # and append(self, text)
+    # When you are done with the editor you can .close() it
+    return True
 
 def download_wiki_markup_action(agent):
     return download_wiki_markup("Linux")
 
 agent.add_action("Download Wiki markup", download_wiki_markup_action)
-# Execute the action because the bootstrap block doesn't actually queue
-download_wiki_markup_action(agent)
 #endblock
 #startblock type: expectation
 #timestamp 1724982799.3917813
@@ -132,22 +143,8 @@ The action should fail if the request to the Wikipedia API fails or if the file 
 #endblock
 #startblock type: observation_inference
 #timestamp 1725697638.8825483
-"""I'll open the editor on the downloaded wiki markup so we can look at the citation
-format."""
-
-WeaveEditor(agent, "Linux.wiki")
-
-# Access the editor from the agent tools attribute
-editor = agent.tools[0]
-
-# Use the up, down, start, end, goto and find methods to navigate the file
-editor.end()
-editor.start()
-editor.find("cite web")
-
-# Replace text between two lines with edit(self, start_line, end_line, new_text)
-# and append(self, text)
-# When you are done with the editor you can .close() it
+"""I've already opened the WeaveEditor on the Wiki markup so I'll pass for now."""
+pass
 #endblock
 #startblock type: evaluation
 #timestamp 1724983062.124238
@@ -157,11 +154,17 @@ def check_wiki_markup_downloaded(agent):
     file_path = f"{page_title}.wiki"
     return os.path.exists(file_path)
 
+def check_editor_on_agent(agent):
+    from tools.editor import WeaveEditor
+    return type(agent.tools[0]) == WeaveEditor
+
 agent.add_evaluation(
     "Check We Downloaded Wiki Markup File",
     check_wiki_markup_downloaded
 )
-#endblock
-#startblock type: outcome
-# Unfortunately this is a bootstrap block so it's inconvenient to get an outcome table
+
+agent.add_evaluation(
+    "Check editor is equipped on agent",
+    check_editor_on_agent
+)
 #endblock

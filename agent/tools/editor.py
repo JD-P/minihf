@@ -11,7 +11,7 @@ class WeaveEditor:
         self.editor_observation_view = {"type":"observation",
                                         "title":f"WeaveEditor ({filepath})",
                                         "callback":self.render}
-        self.agent.add_observation_view(self.editor_observation_view)
+        self.agent.add_observation_view(f"WeaveEditor ({filepath})", self.render)
 
         # Initialize the editor state
         self.current_line = 0
@@ -24,8 +24,14 @@ class WeaveEditor:
 
     def load_file(self, filepath):
         """Load the file content into a list of lines."""
-        with open(filepath, 'r') as file:
-            return file.readlines()
+        try:
+            with open(filepath, 'r') as file:
+                return file.readlines()
+        except FileNotFoundError:
+            with open(filepath, 'w') as file:
+                file.write("")
+                file.flush()
+                return ["",]
 
     def save_file(self, filepath):
         """Save the file content from the list of lines."""
@@ -55,7 +61,7 @@ class WeaveEditor:
 
     def append(self, text):
         """Append the given text to the end of the file."""
-        self.file_content.append(text + '\n')
+        self.file_content.append(text)
         self.save_file(self.filepath)
 
     def up(self, n):
@@ -78,8 +84,9 @@ class WeaveEditor:
         for i in range(self.current_line + 1, len(self.file_content)):
             if pattern.search(self.file_content[i]):
                 self.current_line = i
-                return
-        raise ValueError("Pattern not found")
+                return True
+        # Pattern not found
+        return False
 
     def start(self):
         """Go to the first line in the file."""
