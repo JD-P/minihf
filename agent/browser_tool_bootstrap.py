@@ -8,9 +8,7 @@ The task for the agent is to create a Python library that allows it to search an
 
 1. Inspect the editor code in tools/editor.py using WeaveEditor.
 2. Design and implement a similar interface under tools/browser.py using WeaveEditor.
-3. Unit test the interface in a file called browser_tests.py, DO NOT try to add it to the agent instance
-4. Include a feature that lets it get search results from DuckDuckGo quickly as title, url, page description/excerpt triplets through a method like .search().
-5. Unit test the search method in browser_tests.py
+3. Include a feature that lets it get search results from DuckDuckGo quickly as title, url, page description/excerpt triplets through a method like .search().
 
 Let's start by setting up the tasks on the Kanban board and writing an action to open the editor code.
 """
@@ -36,26 +34,12 @@ agent.add_task(
     "blocked",
     blocked_on=[1,]
 )
-
-agent.add_task(
-    "Unit test the interface in a file called browser_tests.py",
-    "Unit test the interface in a file called browser_tests.py by editing it with WeaveEditor, DO NOT try to add it to the agent instance",
-    "blocked",
-    blocked_on=[2,]
-)
     
 agent.add_task(
     "Add a search feature for DuckDuckGo using the WeaveEditor",
     "Add a feature that lets it get search results from DuckDuckGo quickly as title, url, page description/excerpt triplets through a method like .search().",
     "blocked",
-    blocked_on=[3,]
-)
-
-agent.add_task(
-    "Unit test the search method in browser_tests.py",
-    "Use the WeaveEditor to revisit the browser_tests.py and add unit tests for the DuckDuckGo search feature.",
-    "blocked",
-    blocked_on=[4,]
+    blocked_on=[2,]
 )
     
 # Root Task:
@@ -69,7 +53,7 @@ agent.add_task(
     by parsing DuckDuckGo results into title, url, page description/excerpt triplets.
     """,
     "blocked",
-    blocked_on=[1, 2, 3, 4, 5]
+    blocked_on=[1, 2, 3]
 )
 
 # Updates to Existing Task
@@ -122,6 +106,46 @@ agent.add_observation_view("Monitor files in /app/tools/", monitor_tools_directo
 #endblock
 #startblock type: evaluation
 #timestamp 1724983062.124238
+
+# Task Evaluations
+
+def browser_py_methods(agent):
+    from tools.browser import WeaveBrowser
+    assert hasattr(WeaveBrowser, "start")
+    assert hasattr(WeaveBrowser, "end")
+    assert hasattr(WeaveBrowser, "up")
+    assert hasattr(WeaveBrowser, "down")
+    assert hasattr(WeaveBrowser, "open")
+    assert hasattr(WeaveBrowser, "close")
+    assert hasattr(WeaveBrowser, "find")
+    assert hasattr(WeaveBrowser, "render")
+
+def browser_py_interface(agent):
+    from tools.browser import WeaveBrowser
+    browser = WeaveBrowser(agent, "https://minihf.com/")
+    assert browser.render().startswith("#URL: https://minihf.com/ (10 URLs total)#\n")
+    assert "To make this possible MiniHF provides several powerful features:" in browser.render()
+    browser.close()
+    
+def browser_ddg_search(agent):
+    from tools.browser import WeaveBrowser
+    browser = WeaveBrowser(agent, "https://minihf.com/")
+    results = browser.search("stable diffusion wikipedia")
+    # Results should be NamedTuples
+    assert results[0].url == "https://en.wikipedia.org/wiki/Stable_Diffusion"
+    assert results[0].title == "Stable Diffusion - Wikipedia"
+
+task2 = agent.tasks.get_task(2)
+task2.add_evaluation("browser.py WeaveBrowser class exists with correct methods",
+                     browser_py_methods)
+task2.add_evaluation("browser.py interface is like editor.py interface",
+                     browser_py_interface)
+
+task3 = agent.tasks.get_task(3)
+task3.add_evaluation("browser has working DuckDuckGo search",
+                     browser_ddg_search)
+    
+# Action Evaluations
 
 def check_editor_code_opened(agent):
     return bool(agent.tools)

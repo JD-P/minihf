@@ -107,6 +107,7 @@ class WeaveKanbanTask:
         self.history: List[Dict[str, str]] = [{'status': self.status,
                                                'explanation': 'Task created'}]
         self.blocked_on: List[str] = blocked_on
+        self.evaluations = []
 
     def change_status(self, new_status: str, explanation: str,
                       blocked_on: Optional[List[str]] = None) -> None:
@@ -127,6 +128,13 @@ class WeaveKanbanTask:
         else:
             self.blocked_on = []
 
+    def add_evaluation(self, title, callback):
+        assert type(title) == str
+        assert type(callback) == types.FunctionType
+        self.evaluations.append({"type":"evaluation",
+                                 "title":title,
+                                 "callback":callback})
+        
     def idle(self, explanation: str) -> None:
         self.change_status('idle', explanation)
 
@@ -134,6 +142,23 @@ class WeaveKanbanTask:
         self.change_status('going', explanation)
 
     def completed(self, explanation: str) -> None:
+        # Run evaluation callbacks
+        evaluation_results = []
+        for evaluation in self.evaluations:
+            try:
+                result = evaluation["callback"](agent)
+                evaluation_results.append((evaluation['title'], result))
+            except Exception as e:
+                tb = traceback.format_exc()
+                evaluation_results.append((evaluation['title'], "ERROR"))
+                msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
+                       + "# If you're seeing this it's because you tried to do\n"
+                       + "# .completed() on a task and its test suite failed.\n"
+                       + f"# The failing test is '{evaluation['title']}'\n")
+                agent.add_error_block(msg + f'"""{tb}"""')
+                return
+        if agent.debugging:
+            raise ValueError("Can't complete a task while error in last tick.")
         self.change_status('completed', explanation)
 
     def blocked(self, explanation: str, blocked_on: List[str]) -> None:
@@ -207,6 +232,15 @@ class WeaveKanban:
 
         return f"{header_row}\n{separator_row}\n{table_rows}"
 
+    def unblock(self) -> None:
+        """Automatically unblock tasks when their blockers are completed."""
+        for task in self.tasks:
+            if task.status == "blocked":
+                if False not in [self.get_task(task_id).status == "completed"
+                                 for task_id in task.blocked_on]:
+                    task.idle("Automatically unblocked by completing blockers")
+                    
+
     def to_json(self) -> str:
         return json.dumps([task.to_dict() for task in self.tasks], indent=2)
 
@@ -251,6 +285,7 @@ class WeaveAgent:
     def __init__(self, model_name):
         self.model_name = model_name
         self.event_stream = []
+        # Pin genesis and bootstrap so agent knows how to use framework
         self.pinned_events = [0, 1]
         self.current_tick = Tick(self, 0)
         self.ticks = []
@@ -547,6 +582,7 @@ class WeaveAgent:
         return table
                     
     def tick(self):
+        self.tasks.unblock()
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -641,7 +677,7 @@ class WeaveAgent:
 
         # Task inference block
         task_inference_hint = (
-            "# In the task inference stage I change the status of tasks on the kanban\n"
+            "#hint In the task inference stage I change the status of tasks on the kanban\n"
             + "# board, add new tasks if necessary, etc. It's important to keep my kanban\n"
             + "# up to date so that I'm presented with the correct task state at the\n"
             + "# start of each tick. In particular I should:\n"
@@ -652,6 +688,11 @@ class WeaveAgent:
             + "# etc.\n" 
             + "# 4) If all tasks are completed, shutdown.\n"
             + "# Keep in mind that the kanban will not actually be updated until the next tick."
+            + "# Common Actions:"
+            + "# agent.current_task has idle(), going(), completed(), blocked(),\n"
+            + "# and aborted() methods to change status.\n"
+            + "# agent.current_task = agent.tasks.get_task(next_task_id)\n"
+            + "# agent.add_task(title, description, status, blocked_on=[task_id(s)])"
         )
         task_inference_block = do_tick_block(agent,
                                              "task_inference",
@@ -660,6 +701,13 @@ class WeaveAgent:
         if task_inference_block:
             self.current_tick.task_inference = task_inference_block
         else:
+            return
+
+        # Execute task updates
+        try:
+            exec(task_inference_block['program'])
+        except Exception as e:
+            self.add_error_block(f"# Task updates failed: {e}")
             return
         
         # Write action block
@@ -683,7 +731,14 @@ class WeaveAgent:
             self.current_tick.action_setup = action_block
         else:
             return
-            
+
+        # Set up action callback
+        try:
+            exec(action_block['program'])
+        except Exception as e:
+            self.add_error_block(f"# Action execution failed: {e}")
+            return
+        
         # Write expectation block
         expectation_hint = (
             "#hint Expectation blocks are where I think about what it would\n"
@@ -720,7 +775,14 @@ class WeaveAgent:
             self.current_tick.observation_inference = observation_inference_block
         else:
             return
-            
+
+        # Execute observation updates
+        try:
+            exec(observation_inference_block['program'])
+        except Exception as e:
+            self.add_error_block(f"# Observation Inference failed: {e}")
+            return
+        
         # Write evaluation programs
         evaluation_blocks = []
         evaluation_hint = (
@@ -744,20 +806,6 @@ class WeaveAgent:
                 evaluation_blocks.append(eval_block)
             else:
                 return
-            
-        # Execute task updates
-        try:
-            exec(task_inference_block['program'])
-        except Exception as e:
-            self.add_error_block(f"# Task updates failed: {e}")
-            return
-            
-        # Set up action callback
-        try:
-            exec(action_block['program'])
-        except Exception as e:
-            self.add_error_block(f"# Action execution failed: {e}")
-            return
 
         # Set up evaluation callbacks
         for evaluation_block in evaluation_blocks:
@@ -774,16 +822,26 @@ class WeaveAgent:
             action_result = self.current_tick.action["callback"](self)
         except Exception as e:
             action_result = traceback.format_exc()
-        
-        # Run evaluation callbacks
-        evaluation_results = []
+
+        # Run task evaluation callbacks
+        task_evaluation_results = []
+        for evaluation in self.current_task.evaluations:
+            try:
+                result = evaluation["callback"](self)
+                task_evaluation_results.append((evaluation['title'], result))
+            except Exception as e:
+                tb = traceback.format_exc()
+                task_evaluation_results.append((evaluation['title'], "ERROR"))
+            
+        # Run action evaluation callbacks
+        action_evaluation_results = []
         for evaluation in self.current_tick.evaluations:
             try:
                 result = evaluation["callback"](self)
-                evaluation_results.append((evaluation['title'], result))
+                action_evaluation_results.append((evaluation['title'], result))
             except Exception as e:
                 tb = traceback.format_exc()
-                evaluation_results.append((evaluation['title'], "ERROR"))
+                action_evaluation_results.append((evaluation['title'], "ERROR"))
                 self.add_error_block("# Evaluation failed: \n"
                                      + f'"""{tb}"""')
 
@@ -792,8 +850,9 @@ class WeaveAgent:
             outcomes += [(self.current_tick.action["title"],action_result),]
         except AttributeError:
             outcomes += [("[No action specified with agent.add_action()]", "ERROR"),]
-        outcomes += evaluation_results
-                
+        outcomes += task_evaluation_results
+        outcomes += action_evaluation_results
+        
         # Add outcome block
         outcome_block = {
             'type': 'outcome',
