@@ -59,6 +59,7 @@ from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 from weave import weave_tree_search, TreeNode
+from render_block import render_block
 
 def make_simple_bayes_score_prompt(question: str):
     """Simplify the process of making a bayesian weave evaluator question prompt
@@ -95,31 +96,44 @@ class WeaveKanbanTask:
     STATUSES = ['idle', 'going', 'completed', 'blocked', 'aborted']
     ABBREVIATIONS = {'idle': 'I', 'going': 'G', 'completed': 'C', 'blocked': 'B', 'aborted': 'A'}
 
-    def __init__(self, task_id: int, title: str,
+    def __init__(self, kanban, task_id: int, title: str,
                  description: str = "", status: str = "idle",
                  blocked_on: Optional[List[str]] = None):
+        self.kanban = kanban
         self.id = task_id
         self.title = title
         self.description = description
-        if status not in WeaveKanbanTask.STATUSES:
+        # Set initial status
+        self.history: List[Dict[str, str]] = []
+        try:
+            if status == 'blocked':
+                getattr(self, status)('Task created', blocked_on)
+            else:
+                getattr(self, status)('Task created')
+                self.blocked_on: List[str] = blocked_on
+        except:
             raise ValueError(f'Status "{status}" not valid.')
-        self.status = status
-        self.history: List[Dict[str, str]] = [{'status': self.status,
-                                               'explanation': 'Task created'}]
-        self.blocked_on: List[str] = blocked_on
         self.evaluations = []
 
     def change_status(self, new_status: str, explanation: str,
                       blocked_on: Optional[List[str]] = None) -> None:
-        if new_status == self.status:
-            return
+        try:
+            if new_status == self.status:
+                return
+        except AttributeError:
+            pass
 
         if new_status not in self.STATUSES:
             raise ValueError(f"Invalid status: {new_status}")
 
         if new_status == 'blocked' and not blocked_on:
             raise ValueError("Blocked status requires a list of tasks it's blocked on")
-
+        if new_status == 'blocked':
+            for task_id in blocked_on:
+                try:
+                    assert self.kanban.get_task(task_id)
+                except:
+                    raise ValueError(f"Tried to block on nonexistent task {task_id}!")
         self.status = new_status
         self.history.append({'status': new_status, 'explanation': explanation})
 
@@ -156,6 +170,7 @@ class WeaveKanbanTask:
                        + "# .completed() on a task and its test suite failed.\n"
                        + f"# The failing test is '{evaluation['title']}'\n")
                 agent.add_error_block(msg + f'"""{tb}"""')
+                agent.failure_stage = "'{self.title}' .completed() test suite"
                 return
         if agent.debugging:
             raise ValueError("Can't complete a task while error in last tick.")
@@ -207,7 +222,7 @@ class WeaveKanban:
 
     def add_task(self, title: str, description: str = "", status: str = "idle",
                  blocked_on: Optional[List[str]] = None) -> None:
-        task = WeaveKanbanTask(self.next_id, title, description, status, blocked_on)
+        task = WeaveKanbanTask(self, self.next_id, title, description, status, blocked_on)
         self.tasks.append(task)
         self.next_id += 1
 
@@ -292,6 +307,7 @@ class WeaveAgent:
         self.current_block_index = 0
         self.reminders = []
         self.debugging = False
+        self.failure_stage = "event stream"
         self.tasks = WeaveKanban()
         self.current_task = None
         self.observation_views = []
@@ -320,6 +336,19 @@ class WeaveAgent:
     def add_block(self, block):
         block['index'] = self.current_block_index
         block['timestamp'] = time.time()
+        if block['type'] == 'orientation':
+            block['metadata'] = {
+                "tick_number":len(self.ticks) + 1,
+                "block_index":self.current_block_index,
+                "working_directory":os.getcwd()
+            }
+        if block['type'] == 'task_inference':
+            block['metadata'] = {
+                "task_id":self.current_task.id,
+                "task_title":self.current_task.title,
+                "task_status":self.current_task.status,
+                "task_explanation":self.current_task.history[-1]['explanation']
+            }
         self.event_stream.append(block)
         self.current_block_index += 1
         
@@ -394,56 +423,7 @@ class WeaveAgent:
                 context_blocks.append(self.event_stream[index])
         context_blocks += self.event_stream[-history_len:]
         for event_block in context_blocks:
-            header = f'#startblock type: {event_block["type"]}\n'
-            if "timestamp" in event_block:
-                header += f'#timestamp {event_block["timestamp"]}\n'
-            footer = ""
-            if "q" in event_block:
-                yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
-                no_p = 1 - yes_p
-                yes_p, no_p = round(yes_p, 5), round(no_p, 5)
-                answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
-                if answer == "Yes.":
-                    prob = f"({round(yes_p * 100, 5)}%)"
-                else:
-                    prob = f"({round(no_p * 100, 5)}%)"
-                # TODO: Turn this back on. Goodharts too much right now. 
-                # footer += f'\n#q: {event_block["q"]} {answer} {prob}'
-            footer += '\n#endblock\n'
-            if event_block["type"] in ("genesis",
-                                       "action",
-                                       "expectation",
-                                       "observation_inference",
-                                       "evaluation"):
-                self.context += (header + "\n" + event_block["program"] + footer)
-            elif event_block["type"] == "bootstrap":
-                footer += "# END OF DEMO. Starting on the next tick you have\n"
-                footer += "# full control. Wake up.\n"
-                self.context += (header + "\n" + event_block["program"] + footer)
-            elif event_block["type"] == "orientation":
-                header += f"# Starting tick #{len(self.ticks) + 1} "
-                header += f"with block #{self.current_block_index}\n"
-                header += f"# Current Working Directory: {os.getcwd()}\n"
-                self.context += (header + "\n" + event_block["program"] + footer)
-            elif event_block["type"] == "task_inference":
-                task_title = f"({self.current_task.id}) {self.current_task.title}"
-                task_status = f"({self.current_task.status}) "
-                task_status += f"{self.current_task.history[-1]['explanation']}"
-                header += f"# Current Task: {task_title}\n"
-                header += f"# Task Status: {task_status}\n"
-                self.context += (header + "\n" + event_block["program"] + footer)
-            elif event_block["type"] == "task-reminder":
-                self.context += (header + "\n" + event_block["task"] + footer)
-            elif event_block["type"] == "error":
-                header += "# WARNING: ERROR MEANS TICK DID NOT FULLY EXECUTE CALLBACKS\n"
-                header += "# YOU NEED TO AVOID OR ADDRESS ERROR IN NEXT TICK\n"
-                self.context += (header + "\n" + event_block["message"] + footer)
-            elif event_block["type"] == "outcome":
-                self.context += (header + "\n" 
-                                 + self.generate_outcome_table(event_block['table'])
-                                 + footer)
-            else:
-                self.context += (header + repr(event_block) + footer)
+            self.context += render_block(event_block)
         return self.context
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
@@ -473,7 +453,7 @@ class WeaveAgent:
         if block_type in {"orientation"} and self.debugging:
             with open("/app/error_stems.txt") as infile:
                 error_stem = random.choice(infile.readlines())
-                prefix += error_stem.strip() + " "
+                prefix += error_stem.strip().format(stage=self.failure_stage) + " "
         prompt += prefix
         port = 5001
         stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
@@ -491,9 +471,21 @@ class WeaveAgent:
                                port=port)
             scores = await score_fn(texts)
             # Penalize syntax errors more than 50 characters from end of string
-            syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else 2
+            syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else -2
                                              for text in texts])
-            return scores - syntax_penalties
+            if block_type in {"task_inference"} and self.debugging:
+                penalties = []
+                for text in texts:
+                    penalty = False
+                    for string in [".completed", "complete"]:
+                        if string in (prefix + text[1]):
+                            penalty = True
+                    penalties.append(-2 if penalty else 0)
+                completion_penalties = torch.tensor(penalties)
+            else:
+                completion_penalties = torch.zeros(len(scores))
+                 
+            return scores + syntax_penalties + completion_penalties
         tree = TreeNode(prompt)
         wp = weave_params
         # First try a simple rejection sampling
@@ -571,15 +563,6 @@ class WeaveAgent:
             elif reminder['trigger_type'] == 'unit_test':
                 if reminder['trigger_callback'](self) >= reminder['threshold']:
                     reminder['reminder_callback'](self)
-
-    def generate_outcome_table(self, evaluation_results):
-        table = "Evaluation Results:\n"
-        table += "--------------------\n"
-        for program, result in evaluation_results:
-            table += f"Program: {program}\n"
-            table += f"Result: {result}\n"
-            table += "--------------------\n"
-        return table
                     
     def tick(self):
         self.tasks.unblock()
@@ -601,7 +584,8 @@ class WeaveAgent:
             except Exception as e:
                 tb = traceback.format_exc()
                 self.add_error_block(
-                    f"Observation callback '{view['title']}' failed: {tb}"
+                    f"Observation callback '{view['title']}' failed:\n"
+                    + '"""{tb}"""'
                 )
                 
         task_reminder_body = ""
@@ -680,14 +664,7 @@ class WeaveAgent:
             "#hint In the task inference stage I change the status of tasks on the kanban\n"
             + "# board, add new tasks if necessary, etc. It's important to keep my kanban\n"
             + "# up to date so that I'm presented with the correct task state at the\n"
-            + "# start of each tick. In particular I should:\n"
-            + "# 1) Write python to update the kanban board.\n"
-            + "# 2) Set the current task if it needs to be changed or I've completed\n"
-            + "# it.\n"
-            + "# 3) Change the status of any tasks that have been completed, made irrelevant,\n"
-            + "# etc.\n" 
-            + "# 4) If all tasks are completed, shutdown.\n"
-            + "# Keep in mind that the kanban will not actually be updated until the next tick."
+            + "# start of each tick."
             + "# Common Actions:"
             + "# agent.current_task has idle(), going(), completed(), blocked(),\n"
             + "# and aborted() methods to change status.\n"
@@ -707,7 +684,9 @@ class WeaveAgent:
         try:
             exec(task_inference_block['program'])
         except Exception as e:
-            self.add_error_block(f"# Task updates failed: {e}")
+            self.add_error_block(f"# task_inference failed:\n"
+                                 + '"""{e}"""')
+            self.failure_stage = "task_inference"
             return
         
         # Write action block
@@ -737,6 +716,7 @@ class WeaveAgent:
             exec(action_block['program'])
         except Exception as e:
             self.add_error_block(f"# Action execution failed: {e}")
+            self.failure_stage = "action"
             return
         
         # Write expectation block
@@ -780,7 +760,9 @@ class WeaveAgent:
         try:
             exec(observation_inference_block['program'])
         except Exception as e:
-            self.add_error_block(f"# Observation Inference failed: {e}")
+            self.add_error_block(f"# observation_inference failed:\n"
+                                 + '"""{e}"""')
+            self.failure_stage = "observation_inference"
             return
         
         # Write evaluation programs
@@ -812,8 +794,9 @@ class WeaveAgent:
             try:
                 exec(evaluation_block['program'])       
             except Exception as e:
-                self.add_error_block("# Evaluation setup execution failed: \n"
+                self.add_error_block("# Evaluation setup execution failed:\n"
                                      + f'"""{e}"""')
+                self.failure_stage = "evaluation"
                 return
         self.current_tick.evaluation_setup = evaluation_blocks
 
@@ -872,6 +855,7 @@ class WeaveAgent:
             with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
                 json.dump(self.event_stream, outfile)
         self.debugging = False
+        self.failure_stage = "event stream"
 
 parser = ArgumentParser()
 parser.add_argument("model_name", help="The model to use.")

@@ -78,7 +78,7 @@ def open_editor_code(agent):
     # Replace text between two lines with edit(self, start_line, end_line, new_text)
     # and append(self, text)
     editor2 = WeaveEditor(agent, "tools/browser.py")
-    editor2.append("class WeaveBrowser:\n")
+    editor2.append("class WeaveBrowser:\n    pass")
     # When you are done with the editor you can .close() it
     editor2.close()
     return True
@@ -123,8 +123,8 @@ def browser_py_methods(agent):
 def browser_py_interface(agent):
     from tools.browser import WeaveBrowser
     browser = WeaveBrowser(agent, "https://minihf.com/")
-    assert browser.render().startswith("#URL: https://minihf.com/ (10 URLs total)#\n")
-    assert "To make this possible MiniHF provides several powerful features:" in browser.render()
+    assert browser.render(agent).startswith("#URL: https://minihf.com/ (10 URLs total)#\n")
+    assert "To make this possible MiniHF provides several powerful features:" in browser.render(agent)
     browser.close()
     
 def browser_ddg_search(agent):
