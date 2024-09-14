@@ -37,6 +37,7 @@ class WeaveEditor:
         """Save the file content from the list of lines."""
         with open(filepath, 'w') as file:
             file.writelines(self.file_content)
+        self.file_content = self.load_file(filepath)
 
     def render(self, agent):
         """Render the text block based on the current line number position and the window size."""
@@ -48,7 +49,7 @@ class WeaveEditor:
         rendered_text = f"#File: {self.filepath} ({total_lines} lines total)#\n"
         rendered_text += f"'''({start_line} lines above)\n"
         for i in range(start_line, end_line):
-            rendered_text += f"{i+1}: {self.file_content[i]}"
+            rendered_text += f"{i}: {self.file_content[i]}"
         rendered_text += f"({total_lines - end_line} lines below)\n'''"
         return rendered_text
 

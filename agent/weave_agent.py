@@ -661,11 +661,11 @@ class WeaveAgent:
 
         # Task inference block
         task_inference_hint = (
-            "#hint In the task inference stage I change the status of tasks on the kanban\n"
-            + "# board, add new tasks if necessary, etc. It's important to keep my kanban\n"
-            + "# up to date so that I'm presented with the correct task state at the\n"
-            + "# start of each tick."
-            + "# Common Actions:"
+            "#hint In the task inference stage I write code to change the status\n" 
+            + "# of tasks on the kanban board, add new tasks if necessary, etc.\n"
+            + "# It's important to keep my kanban up to date so that I'm presented\n"
+            + "# with the correct task state at the start of each tick.\n"
+            + "# Common Patterns:\n"
             + "# agent.current_task has idle(), going(), completed(), blocked(),\n"
             + "# and aborted() methods to change status.\n"
             + "# agent.current_task = agent.tasks.get_task(next_task_id)\n"
@@ -684,8 +684,9 @@ class WeaveAgent:
         try:
             exec(task_inference_block['program'])
         except Exception as e:
+            tb = traceback.format_exc()
             self.add_error_block(f"# task_inference failed:\n"
-                                 + '"""{e}"""')
+                                 + f'"""{tb}"""')
             self.failure_stage = "task_inference"
             return
         
@@ -715,7 +716,9 @@ class WeaveAgent:
         try:
             exec(action_block['program'])
         except Exception as e:
-            self.add_error_block(f"# Action execution failed: {e}")
+            tb = traceback.format_exc()
+            self.add_error_block("# Action execution failed:\n"
+                                 + f'"""{tb}"""')
             self.failure_stage = "action"
             return
         
@@ -760,8 +763,9 @@ class WeaveAgent:
         try:
             exec(observation_inference_block['program'])
         except Exception as e:
-            self.add_error_block(f"# observation_inference failed:\n"
-                                 + '"""{e}"""')
+            tb = traceback.format_exc()
+            self.add_error_block("# observation_inference failed:\n"
+                                 + f'"""{tb}"""')
             self.failure_stage = "observation_inference"
             return
         
@@ -794,8 +798,9 @@ class WeaveAgent:
             try:
                 exec(evaluation_block['program'])       
             except Exception as e:
+                tb = traceback.format_exc()
                 self.add_error_block("# Evaluation setup execution failed:\n"
-                                     + f'"""{e}"""')
+                                     + f'"""{tb}"""')
                 self.failure_stage = "evaluation"
                 return
         self.current_tick.evaluation_setup = evaluation_blocks
