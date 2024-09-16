@@ -8,7 +8,8 @@ WORKDIR /app
 COPY . /app
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
+RUN pip install django
 
 # Install Firefox and geckodriver
 RUN apt-get update && apt-get install -y wget
@@ -24,4 +25,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD ["python", "weave_agent.py", "--port", "5001", "--bootstrap", "simple_convo_bootstrap.py", "mistralai/Mixtral-8x22B-Instruct-v0.1"]
+CMD ["python", "-m", "pdb", "weave_agent.py", "--port", "5001", "--bootstrap", "skim_retroinstruct_data_guide.py", "mistralai/Mixtral-8x22B-Instruct-v0.1"]
