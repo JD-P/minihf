@@ -100,8 +100,8 @@ class WeaveKanbanTask:
                  description: str = "", status: str = "idle",
                  blocked_on: Optional[List[str]] = None):
         self.kanban = kanban
-        self.id = task_id
-        self.title = title
+        self.id = int(task_id)
+        self.title = str(title)
         self.description = description
         # Set initial status
         self.history: List[Dict[str, str]] = []
@@ -110,13 +110,13 @@ class WeaveKanbanTask:
                 getattr(self, status)('Task created', blocked_on)
             else:
                 getattr(self, status)('Task created')
-                self.blocked_on: List[str] = blocked_on
+                self.blocked_on: List[int] = blocked_on
         except:
             raise ValueError(f'Status "{status}" not valid.')
         self.evaluations = []
 
     def change_status(self, new_status: str, explanation: str,
-                      blocked_on: Optional[List[str]] = None) -> None:
+                      blocked_on: Optional[List[int]] = None) -> None:
         try:
             if new_status == self.status:
                 return
@@ -159,20 +159,18 @@ class WeaveKanbanTask:
         # Run evaluation callbacks
         evaluation_results = []
         for evaluation in self.evaluations:
+            msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
+                   + "# If you're seeing this it's because you tried to do\n"
+                   + "# .completed() on a task and its test suite failed.\n"
+                   + f"# The failing test is '{evaluation['title']}'\n")
             try:
-                result = evaluation["callback"](agent)
-                evaluation_results.append((evaluation['title'], result))
+                result = evaluation["callback"](self.kanban.agent)
+                assert result
             except Exception as e:
                 tb = traceback.format_exc()
-                evaluation_results.append((evaluation['title'], "ERROR"))
-                msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
-                       + "# If you're seeing this it's because you tried to do\n"
-                       + "# .completed() on a task and its test suite failed.\n"
-                       + f"# The failing test is '{evaluation['title']}'\n")
-                agent.add_error_block(msg + f'"""{tb}"""')
-                agent.failure_stage = "'{self.title}' .completed() test suite"
-                return
-        if agent.debugging:
+                self.kanban.agent.failure_stage = "'{self.title}' .completed() test suite"
+                raise ValueError(msg + f'"""{tb}"""')
+        if self.kanban.agent.debugging:
             raise ValueError("Can't complete a task while error in last tick.")
         self.change_status('completed', explanation)
 
@@ -196,19 +194,18 @@ class WeaveKanbanTask:
             'id': self.id,
             'title': self.title,
             'description': self.description,
-            'metadata': self.metadata,
             'status': self.status,
             'history': self.history,
             'blocked_on': self.blocked_on
         }
 
     @classmethod
-    def from_dict(cls, task_dict: Dict[str, Any]) -> 'WeaveKanbanTask':
+    def from_dict(cls, kanban, task_dict: Dict[str, Any]) -> 'WeaveKanbanTask':
         task = cls(
+            kanban,
             task_id=task_dict['id'],
             title=task_dict['title'],
             description=task_dict['description'],
-            metadata=task_dict['metadata']
         )
         task.status = task_dict['status']
         task.history = task_dict['history']
@@ -216,7 +213,8 @@ class WeaveKanbanTask:
         return task
 
 class WeaveKanban:
-    def __init__(self):
+    def __init__(self, agent):
+        self.agent = agent
         self.tasks: List[WeaveKanbanTask] = []
         self.next_id = 1
 
@@ -227,6 +225,7 @@ class WeaveKanban:
         self.next_id += 1
 
     def get_task(self, task_id: int) -> Optional[WeaveKanbanTask]:
+        task_id = int(task_id)
         for task in self.tasks:
             if task.id == task_id:
                 return task
@@ -261,7 +260,7 @@ class WeaveKanban:
 
     def from_json(self, json_str: str) -> None:
         task_dicts = json.loads(json_str)
-        self.tasks = [WeaveKanbanTask.from_dict(task_dict) for task_dict in task_dicts]
+        self.tasks = [WeaveKanbanTask.from_dict(self, task_dict) for task_dict in task_dicts]
         self.next_id = max([task.id for task in self.tasks], default=0) + 1
     
 
@@ -308,7 +307,7 @@ class WeaveAgent:
         self.reminders = []
         self.debugging = False
         self.failure_stage = "event stream"
-        self.tasks = WeaveKanban()
+        self.tasks = WeaveKanban(self)
         self.current_task = None
         self.observation_views = []
         self.tools = []
@@ -862,82 +861,84 @@ class WeaveAgent:
         self.debugging = False
         self.failure_stage = "event stream"
 
-parser = ArgumentParser()
-parser.add_argument("model_name", help="The model to use.")
-parser.add_argument("--port", default=5000, help="The port to use for VLLM.")
-parser.add_argument("--bootstrap",
-                    default="bootstrap.py",
-                    help="The filepath to run as bootstrap.")
-args = parser.parse_args()
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("model_name", help="The model to use.")
+    parser.add_argument("--port", default=5000, help="The port to use for VLLM.")
+    parser.add_argument("--bootstrap",
+                        default="bootstrap.py",
+                        help="The filepath to run as bootstrap.")
+    args = parser.parse_args()
 
-def simple_evaluate_outputs(score_prompt_fns, texts):
-    if type(texts) == str:
-        texts = [texts,]
-    if type(score_prompt_fns) == types.FunctionType:
-        score_prompt_fns = [score_prompt_fns,]
-    scores = evaluate_outputs_vllm(args.model_name,
-                                   score_prompt_fns,
-                                   texts,
-                                   port=args.port)
-    return torch.sigmoid(scores)
+    def simple_evaluate_outputs(score_prompt_fns, texts):
+        if type(texts) == str:
+            texts = [texts,]
+        if type(score_prompt_fns) == types.FunctionType:
+            score_prompt_fns = [score_prompt_fns,]
+        scores = evaluate_outputs_vllm(args.model_name,
+                                       score_prompt_fns,
+                                       texts,
+                                       port=args.port)
+        return torch.sigmoid(scores)
 
-def simple_bayes_evaluate_outputs(parent_q, questions, texts):
-    if type(texts) == str:
-        texts = [texts,]
-    score_prompt_fns = [make_simple_bayes_score_prompt(question)
-                        for question in questions]
-    scores = bayesian_evaluate_outputs_vllm(args.model_name,
-                                            parent_q,
-                                            score_prompt_fns,
-                                            texts,
-                                            port=args.port)
-    return scores
+    def simple_bayes_evaluate_outputs(parent_q, questions, texts):
+        if type(texts) == str:
+            texts = [texts,]
+        score_prompt_fns = [make_simple_bayes_score_prompt(question)
+                            for question in questions]
+        scores = bayesian_evaluate_outputs_vllm(args.model_name,
+                                                parent_q,
+                                                score_prompt_fns,
+                                                texts,
+                                                port=args.port)
+        return scores
 
-agent = WeaveAgent(args.model_name)
-
-with open("weave_agent.py") as infile:
-    # Genesis block
-    genesis_block = {
-        'type': 'genesis',
-        'program': infile.read()
-    }
-    agent.add_block(genesis_block)
-
-with open(args.bootstrap) as infile:
-    # Bootstrap block
-    bootstrap_block = {
-        'type': 'bootstrap',
-        'program': infile.read()
-    }
-    agent.add_block(bootstrap_block)
-    exec(bootstrap_block["program"])
-
-def run_bootstrap_callbacks():
-    """Run bootstrap callbacks in function to avoid contaminating global scope."""
-    # Run action callback
-    action_result = agent.current_tick.action["callback"](agent)
-
-    # Run evaluation callbacks
-    evaluation_results = []
-    for evaluation in agent.current_tick.evaluations:
-        result = evaluation["callback"](agent)
-        evaluation_results.append((evaluation['title'], result))
-
-    outcomes =  []
-    outcomes += [(agent.current_tick.action["title"],action_result),]
-    outcomes += evaluation_results
-
-    # Add outcome block
-    outcome_block = {
-        'type': 'outcome',
-        'table': outcomes
-    }
-    agent.add_block(outcome_block)
-    agent.current_tick.outcome = outcome_block
-
-run_bootstrap_callbacks()
     
-# Run the agent
-while True:
-    agent.tick()
-    time.sleep(1)  # Simulate tick interval
+    agent = WeaveAgent(args.model_name)
+
+    with open("weave_agent.py") as infile:
+        # Genesis block
+        genesis_block = {
+            'type': 'genesis',
+            'program': infile.read()
+        }
+        agent.add_block(genesis_block)
+
+    with open(args.bootstrap) as infile:
+        # Bootstrap block
+        bootstrap_block = {
+            'type': 'bootstrap',
+            'program': infile.read()
+        }
+        agent.add_block(bootstrap_block)
+        exec(bootstrap_block["program"])
+
+    def run_bootstrap_callbacks():
+        """Run bootstrap callbacks in function to avoid contaminating global scope."""
+        # Run action callback
+        action_result = agent.current_tick.action["callback"](agent)
+
+        # Run evaluation callbacks
+        evaluation_results = []
+        for evaluation in agent.current_tick.evaluations:
+            result = evaluation["callback"](agent)
+            evaluation_results.append((evaluation['title'], result))
+
+        outcomes =  []
+        outcomes += [(agent.current_tick.action["title"],action_result),]
+        outcomes += evaluation_results
+
+        # Add outcome block
+        outcome_block = {
+            'type': 'outcome',
+            'table': outcomes
+        }
+        agent.add_block(outcome_block)
+        agent.current_tick.outcome = outcome_block
+
+    run_bootstrap_callbacks()
+
+    # Run the agent
+    while True:
+        agent.tick()
+        time.sleep(1)  # Simulate tick interval

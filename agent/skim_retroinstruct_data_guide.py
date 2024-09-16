@@ -36,6 +36,10 @@ to these questions. For each question I will put its answer in the file answer1.
 answer2.txt, etc. When I think I have an answer I will write it to the corresponding
 file and attempt to mark the task completed. Once I have answered all four questions
 I call the shutdown functon.
+
+I can implement a skimming strategy by searching the guide for words or phrases
+related to what I want to know and then reading the passages around them with an
+observation callback.
 """
 #endblock
 #startblock type: task_inference
