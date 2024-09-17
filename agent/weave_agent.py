@@ -342,12 +342,23 @@ class WeaveAgent:
                 "working_directory":os.getcwd()
             }
         if block['type'] == 'task_inference':
-            block['metadata'] = {
-                "task_id":self.current_task.id,
-                "task_title":self.current_task.title,
-                "task_status":self.current_task.status,
-                "task_explanation":self.current_task.history[-1]['explanation']
-            }
+            try:
+                block['metadata'] = {
+                    "task_id":self.current_task.id,
+                    "task_title":self.current_task.title,
+                    "task_status":self.current_task.status,
+                    "task_explanation":self.current_task.history[-1]['explanation']
+                }
+            except AttributeError:
+                explanation = ("Right now there is no task selected. You can "
+                               + "select a task with agent.current_task = "
+                               + "agent.tasks.get_task(task_id)")
+                block['metadata'] = {
+                    "task_id":-1,
+                    "task_title": "No Task Set As Current Task",
+                    "task_status": "nonexistent",
+                    "task_explanation": explanation
+                }
         self.event_stream.append(block)
         self.current_block_index += 1
         
