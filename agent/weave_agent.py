@@ -595,17 +595,28 @@ class WeaveAgent:
                 tb = traceback.format_exc()
                 self.add_error_block(
                     f"Observation callback '{view['title']}' failed:\n"
-                    + '"""{tb}"""'
+                    + f'"""{tb}"""'
                 )
                 
         task_reminder_body = ""
-        
-        if self.current_task:
-            task_reminder_body += "# Current Task:\n"
-            task_reminder_body += ('"""\n' + self.current_task.view_task() + '\n"""\n')
-        task_reminder_body += "# Kanban Board:\n"
-        task_reminder_body += ('"""\n' + self.tasks.view_board() + '\n"""')
 
+        try:
+            if self.current_task:
+                task_reminder_body += "# Current Task:\n"
+                task_reminder_body += ('"""\n' + self.current_task.view_task() + '\n"""\n')
+            task_reminder_body += "# Kanban Board:\n"
+            task_reminder_body += ('"""\n' + self.tasks.view_board() + '\n"""')
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.failure_stage = "task reminder"
+            self.add_error_block(
+                f"TASK REMINDERS OFFLINE DUE TO CORRUPTED DATA. DID YOU DIRECTLY\n"
+                + "MODIFY TASK ATTRIBUTES? YOU MUST RESOLVE THIS IMMEDIATELY OR\n"
+                + "YOU WILL LOSE TRACK OF WHAT YOU'RE DOING. INVESTIGATE agent.tasks\n"
+                + "AND ATTRIBUTES ON TASKS INSIDE."
+                + f'"""{tb}"""'
+            )
+            
         # Format tasks into blocks
         task_blocks = [{'type': 'task-reminder', 'task': task_reminder_body},]
 
