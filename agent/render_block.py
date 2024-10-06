@@ -47,7 +47,7 @@ def render_block(event_block):
         lines = content.split('\n')
         content = ""
         for line in lines:
-            content += f"#{line}\n"
+            content += f"# {line}\n"
         return (header + "\n" + content + footer)
     elif event_block["type"] == "orientation":
         metadata = event_block["metadata"]
@@ -65,8 +65,7 @@ def render_block(event_block):
     elif event_block["type"] == "task-reminder":
         return (header + "\n" + event_block["task"] + footer)
     elif event_block["type"] == "error":
-        header += "# WARNING: ERROR MEANS TICK DID NOT FULLY EXECUTE CALLBACKS\n"
-        header += "# YOU NEED TO AVOID OR ADDRESS ERROR IN NEXT TICK\n"
+        header += "# WARNING: Error means tick did not fully execute callbacks\n"
         return (header + "\n" + event_block["message"] + footer)
     elif event_block["type"] == "outcome":
         return (header + "\n" 

@@ -47,6 +47,7 @@ import random
 import time
 import ast
 import types
+import asyncio
 import traceback
 import requests
 import torch
@@ -310,7 +311,7 @@ class WeaveAgent:
         self.tasks = WeaveKanban(self)
         self.current_task = None
         self.observation_views = []
-        self.tools = []
+        self.tools = {}
         self.cache = {}
         self.context = ""
 
@@ -594,7 +595,7 @@ class WeaveAgent:
             except Exception as e:
                 tb = traceback.format_exc()
                 self.add_error_block(
-                    f"Observation callback '{view['title']}' failed:\n"
+                    f"# Observation callback '{view['title']}' failed:\n"
                     + f'"""{tb}"""'
                 )
                 
@@ -610,10 +611,10 @@ class WeaveAgent:
             tb = traceback.format_exc()
             self.failure_stage = "task reminder"
             self.add_error_block(
-                f"TASK REMINDERS OFFLINE DUE TO CORRUPTED DATA. DID YOU DIRECTLY\n"
-                + "MODIFY TASK ATTRIBUTES? YOU MUST RESOLVE THIS IMMEDIATELY OR\n"
-                + "YOU WILL LOSE TRACK OF WHAT YOU'RE DOING. INVESTIGATE agent.tasks\n"
-                + "AND ATTRIBUTES ON TASKS INSIDE."
+                f"# TASK REMINDERS OFFLINE DUE TO CORRUPTED DATA. DID YOU DIRECTLY\n"
+                + "# MODIFY TASK ATTRIBUTES? YOU MUST RESOLVE THIS IMMEDIATELY OR\n"
+                + "# YOU WILL LOSE TRACK OF WHAT YOU'RE DOING. INVESTIGATE agent.tasks\n"
+                + "# AND ATTRIBUTES ON TASKS INSIDE."
                 + f'"""{tb}"""'
             )
             
@@ -897,10 +898,10 @@ if __name__ == "__main__":
             texts = [texts,]
         if type(score_prompt_fns) == types.FunctionType:
             score_prompt_fns = [score_prompt_fns,]
-        scores = evaluate_outputs_vllm(args.model_name,
-                                       score_prompt_fns,
-                                       texts,
-                                       port=args.port)
+        scores = asyncio.run(evaluate_outputs_vllm(args.model_name,
+                                                   score_prompt_fns,
+                                                   texts,
+                                                   port=args.port))
         return torch.sigmoid(scores)
 
     def simple_bayes_evaluate_outputs(parent_q, questions, texts):
@@ -908,11 +909,11 @@ if __name__ == "__main__":
             texts = [texts,]
         score_prompt_fns = [make_simple_bayes_score_prompt(question)
                             for question in questions]
-        scores = bayesian_evaluate_outputs_vllm(args.model_name,
-                                                parent_q,
-                                                score_prompt_fns,
-                                                texts,
-                                                port=args.port)
+        scores = asyncio.run(bayesian_evaluate_outputs_vllm(args.model_name,
+                                                            parent_q,
+                                                            score_prompt_fns,
+                                                            texts,
+                                                            port=args.port))
         return scores
 
     
