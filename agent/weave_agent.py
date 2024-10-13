@@ -78,7 +78,7 @@ def make_simple_bayes_score_prompt(question: str):
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
-    template = ("{response}\n\n"
+    template = ("<s> [INST] {response}\n\n"
                 + "#q: If I flip a fair coin will it come up heads? No. (50%)\n"
                 + "#q: X happens one in a hundred times. Did X happen? Yes. (1%)\n"
                 + "#q: If I pick a US state at random will that state be Idaho? No. (98%)\n"
@@ -89,7 +89,7 @@ def make_simple_score_prompt(question: str):
                 + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
                 + "# You're really being asked something like *will this trajectory*\n"
                 + "# eventually have quality X or satisfy predicate Y?\n"
-                + f"#q: {question}")
+                + f"#q: {question} [/INST]")
     return partial(make_score_prompt_vllm, template, "", "")
 
 
@@ -452,7 +452,7 @@ class WeaveAgent:
                 else:
                     return True
 
-        prompt = f'<s> [INST]{context}[/INST]#startblock type: {block_type}\n{hint}\n\n'
+        prompt = f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n{hint}\n\n'
         # Narrow incidence of structurally wrong blocks by premising correct prefix
         if block_type in {"orientation", "expectation",
                           "task_inference", "observation_inference"}:
