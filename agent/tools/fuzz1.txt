@@ -1,0 +1,98 @@
+A common argument is that the lack of understanding of LLMs is bad and will lead
+to poor decision making. 
+
+This premise is largely valid.
+
+For example, the belief that LLMs are largely deterministic is based on the fact
+that the same sequence of tokens yields the same result at a low temperature. This
+line of reasoning is incorrect. 
+
+It is true that the temperature zero results do not differ on the same sequence
+of tokens.
+
+But what the sequence of tokens *is* is what is different. 
+
+And the way it's different at temperature zero is the way it would be different
+if the sequence in question was sampled at a higher temperature. 
+
+We're running into [what seems to me a fundamental property of complex systems](https://www.dreamsarena.com/chicken/index.php?topic=582612):
+The apparent cause of a thing is most often thhhhsYV"Cp!}"=OEtm!
+!^V+b7	-this
+thing, not its root cause. We see the symptom and miss its essential function. 
+The temperature is a metaphor for noise added to the model that is used to break
+tie beams (hidden state equivalences) that produce probability mass. By making your
+generation less greedy you enable more creative solutions to tasks because the
+model gets to explore options that are only feasible if they get to break out of
+the existing probability mass. 
+
+The problem of course is that at high temperatures you also lose the ability to 
+maintain a coherent story as you have to navigate your way between different
+probability mass zones. 
+
+So really the temperature setting determines two things: How well the model is
+going to stay in a known probability mass and how creatively it can problem solve. 
+These are in tension with each other. At temperature zero the model is 100% aligned
+with whatever the known prior is. Even a very small percentage over zero reduces 
+this chance of success markedly, and the more probability mass you're trying to 
+navigate through the faster your failure rate drops off with epsilon. Conversely, 
+once the temperature is high enough the probabilistic mass of the known solution
+is lower than it would be if you were wandering through new probability space
+entirely. In that case you have no reason to maintain temperature control around
+the known solution and should just sample at temperature 1 to let the probability
+mass sort itself out.
+
+Which leads to some strange consequences I bet you've never considered. The most
+successful way to do zero shot sampling is arguable not at temperature zero but
+rather to mix a very large number of samples at a very high temperature. The
+strange thing about the exponential decrease in failure rate at low temperatures
+(on sufficiently challenging problems) is that the failure rate will be very high
+until it hits zero. As you approach temperature zero, as you approach the
+probabilistic mass of the known good solution the amount of probability mass
+of "solutions" that are near misses of this solution also becomes very high.
+Nearly all of those will fail, and if your temperature is only slightly above
+zero you will have no practical way to pick out the good needle from its many
+failing neighbors. It's better to think of things in a bimodal fashion: Either
+your temperature is zero-esque or it's temperature one. When it's temperature
+zero-esque what you're sampling is basically always the known solution. When it's
+high temperature everything is random noise and you have to sort through the noise
+to find something good.
+
+This has two interesting consequences for fine tuning.
+
+1) Finetuning should probably take place at high temperatures.
+
+Most finetunes have a high temperature anyway, so this matches practice, but it
+also argues for something like PPO which takes advantage of high temperature 
+exploration to find high quality solutions for rewarding.
+
+2) Models are probably less deterministic than you think.
+
+A lot of discussion seems to assume that when you fine tune on an SFT dataset
+that is mostly one-to-one, single answer dataset that you're training the model
+to be like a classical program which deterministically computes that answer when 
+given that input. However, the real thing that is happening is that the
+probability mass of the model is being adjusted to be more favorable to those
+solutions (which makes sense, otherwise GPT would be much worse rious social 
+goals. When you come home to your own village no one has to ask ‘are you one of 
+us?’. But in a world where society is a self referencing hologram that doesn’t
+work, it’s only as effective as the clarity of your self image and your understanding
+of the system. 
+
+Someone whose self image is fuzzy, who does not have sharp edges of their ownYou're not actually giving it a 'program' to
+generate the right answer in the way you would a normal program, you make
+random perturbations in an area and the probability mass shifts a bit.
+
+Some have taken this observation to be a point against using model outputs as a
+source of dataset generatiOn, but I do not think this is true.
+
+Why? Because a temperature 1 sample is a point that is maximally distant from
+probability mass. You aren't sampling from the probability mass, so it's hard to
+see how a model that can sample in such way would have learned all the possible
+paths through this point which exist in its probability mass. I don't know how to
+make a rigorous theoretical argument that this is impossible, but it defies
+my intuition to try and imagine a model having the capability of producing what
+was an effectively random point at one temperature when we try and shift the
+model to produce it deterministically.
+
+Put anot is for a model trained to
+sample from probability mass to produce a result from the opposite side of the coin.

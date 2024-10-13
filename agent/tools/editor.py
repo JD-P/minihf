@@ -20,10 +20,12 @@ class WeaveEditor:
 
     def open(self, filepath):
         self.file_content = self.load_file(filepath)
+        del self.agent.tools[f"editor-{self.filepath}"]        
         self.filepath = filepath
-        
+        self.agent.tools[f"editor-{self.filepath}"] = self
+
     def close(self):
-        self.agent.tools.remove(self)
+        del self.agent.tools[f"editor-{self.filepath}"]
         self.agent.remove_observation_view(self.editor_observation_view)
 
     def load_file(self, filepath):
@@ -44,7 +46,9 @@ class WeaveEditor:
         with open(filepath, 'w') as file:
             file.writelines(self.file_content)
         self.file_content = self.load_file(filepath)
+        del self.agent.tools[f"editor-{self.filepath}"]
         self.filepath = filepath
+        self.agent.tools[f"editor-{self.filepath}"] = self
 
     def render(self, agent):
         """Render the text block based on the current line number position and the window size."""

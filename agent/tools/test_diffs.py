@@ -10,7 +10,7 @@ def generate_diff(original_lines, modified_lines):
 
 class TestWeaveEditor(unittest.TestCase):
     def setUp(self):
-        self.agent = type('Agent', (object,), {'tools': [], 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
+        self.agent = type('Agent', (object,), {'tools': {}, 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
         self.editor = WeaveEditor(self.agent, 'editor_test.txt')
 
     def tearDown(self):
@@ -34,7 +34,7 @@ class TestWeaveEditor(unittest.TestCase):
 
 class TestWeaveEditorHunkProcessing(unittest.TestCase):
     def setUp(self):
-        self.agent = type('Agent', (object,), {'tools': [], 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
+        self.agent = type('Agent', (object,), {'tools': {}, 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
         
     def test_carriage_returns_in_hunk(self):
         hunk_lines = [
@@ -164,7 +164,7 @@ class TestWeaveEditorHunkProcessing(unittest.TestCase):
         
 class TestWeaveEditorDiff(unittest.TestCase):
     def setUp(self):
-        self.agent = type('Agent', (object,), {'tools': [], 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
+        self.agent = type('Agent', (object,), {'tools': {}, 'add_observation_view': lambda self, x, y: None, 'remove_observation_view': lambda self, x: None})()
         with open("test_file.txt", "w") as outfile:
             outfile.write("Line 1\nLine 2\nLine 3\n")
         self.editor = WeaveEditor(self.agent, 'test_file.txt')
