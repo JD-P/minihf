@@ -80,7 +80,7 @@ def main():
         collate_fn=CollateFn(args.seq_len),
     )
 
-    patch_model()
+    patch_model(local_group)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.bfloat16,
