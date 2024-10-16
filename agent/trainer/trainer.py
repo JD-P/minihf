@@ -115,13 +115,10 @@ def main():
         target_ids_local = target_ids[
             :, local_rank * seq_len_device : (local_rank + 1) * seq_len_device
         ]
-        n_targets = torch.sum(target_ids != -100)
+        n_targets = torch.sum(target_ids_local != -100)
+        dist.all_reduce(n_targets)
         logits = model(input_ids_local, use_cache=False).logits
-        loss = (
-            F.cross_entropy(logits.mT, target_ids_local, reduction="sum")
-            / n_targets
-            / group_world_size
-        )
+        loss = F.cross_entropy(logits.mT, target_ids_local, reduction="sum") / n_targets
         loss.backward()
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         handles = [dist.all_reduce(g, async_op=True) for g in grads]
