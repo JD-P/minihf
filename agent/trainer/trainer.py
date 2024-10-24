@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import peft
@@ -52,7 +53,7 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="Model name or path")
     parser.add_argument("--dataset", type=Path, required=True, help="Dataset path")
     parser.add_argument("--output", type=Path, required=True, help="Output directory")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size per group")
     parser.add_argument("--seq-len", type=int, required=True, help="Sequence length")
     args = parser.parse_args()
 
@@ -60,12 +61,18 @@ def main():
     device = du.get_device()
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-
-    seq_len_device = args.seq_len // world_size
+    local_group = du.get_local_group()
+    local_rank = dist.get_rank(local_group)
+    local_world_size = dist.get_world_size(local_group)
+    group_rank = int(os.environ["GROUP_RANK"])
+    group_world_size = world_size // local_world_size
+    seq_len_device = args.seq_len // local_world_size
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     dataset = Dataset(args.dataset, tokenizer)
-    sampler = data.DistributedSampler(dataset, 1, 0, shuffle=True, seed=1234)
+    sampler = data.DistributedSampler(
+        dataset, group_world_size, group_rank, shuffle=True, seed=1234, drop_last=True
+    )
     dataloader = data.DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -73,13 +80,13 @@ def main():
         collate_fn=CollateFn(args.seq_len),
     )
 
-    patch_model()
+    patch_model(local_group)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     )
-    model = quantize_and_shard(model, device)
+    model = quantize_and_shard(model, device, local_group)
     torch.cuda.empty_cache()
     peft_config = peft.LoraConfig(
         peft.TaskType.CAUSAL_LM,
@@ -102,9 +109,14 @@ def main():
 
     for i, (input_ids, target_ids) in enumerate(tqdm(dataloader, disable=rank != 0)):
         input_ids, target_ids = input_ids.to(device), target_ids.to(device)
-        input_ids_local = input_ids[:, rank * seq_len_device : (rank + 1) * seq_len_device]
-        target_ids_local = target_ids[:, rank * seq_len_device : (rank + 1) * seq_len_device]
-        n_targets = torch.sum(target_ids != -100)
+        input_ids_local = input_ids[
+            :, local_rank * seq_len_device : (local_rank + 1) * seq_len_device
+        ]
+        target_ids_local = target_ids[
+            :, local_rank * seq_len_device : (local_rank + 1) * seq_len_device
+        ]
+        n_targets = torch.sum(target_ids_local != -100)
+        dist.all_reduce(n_targets)
         logits = model(input_ids_local, use_cache=False).logits
         loss = F.cross_entropy(logits.mT, target_ids_local, reduction="sum") / n_targets
         loss.backward()
