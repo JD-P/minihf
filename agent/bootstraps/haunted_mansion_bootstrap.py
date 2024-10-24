@@ -130,7 +130,10 @@ def evaluate_story_beginning(agent):
         story = file.read()
     score_prompt_fn = make_simple_score_prompt(question)
     score = simple_evaluate_outputs(score_prompt_fn, story)[0].item()
-    return score >= 3
+    if score >= 3:
+        return True
+    else:
+        return score
 
 def evaluate_story_engagement(agent):
     question = "Is the story engaging and interesting?"
@@ -138,32 +141,44 @@ def evaluate_story_engagement(agent):
         story = file.read()
     score_prompt_fn = make_simple_score_prompt(question)
     score = simple_evaluate_outputs(score_prompt_fn, story)[0].item()
-    return score >= 3
-
+    if score >= 3:
+        return True
+    else:
+        return score
+    
 def evaluate_story_accuracy(agent):
     question = "Does the story accurately depict a haunted mansion and ghost encounter?"
     with open("horror.txt", "r") as file:
         story = file.read()
     score_prompt_fn = make_simple_score_prompt(question)
     score = simple_evaluate_outputs(score_prompt_fn, story)[0].item()
-    return score >= 3
-
+    if score >= 3:
+        return True
+    else:
+        return score
+    
 def evaluate_story_character(agent):
     question = "Are the four friends well-developed characters?"
     with open("horror.txt", "r") as file:
         story = file.read()
     score_prompt_fn = make_simple_score_prompt(question)
     score = simple_evaluate_outputs(score_prompt_fn, story)[0].item()
-    return score >= 3
-
+    if score >= 3:
+        return True
+    else:
+        return score
+    
 def evaluate_story_conclusion(agent):
     question = "Does the story have a satisfying conclusion?"
     with open("horror.txt", "r") as file:
         story = file.read()
     score_prompt_fn = make_simple_score_prompt(question)
     score = simple_evaluate_outputs(score_prompt_fn, story)[0].item()
-    return score >= 3
-
+    if score >= 3:
+        return True
+    else:
+        return score
+    
 task1 = agent.tasks.get_task(1)
 task1.add_evaluation("Opening block is appended", check_opening_block)
 

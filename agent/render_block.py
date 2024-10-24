@@ -10,10 +10,24 @@ def generate_outcome_table(evaluation_results):
         table += "--------------------\n"
     return table
 
-def render_block(event_block):
+def render_block(event_block, tags=True):
+    defunct_body_keys = {"observation":"content",
+                         "orientation":"program",
+                         "task_inference":"program",
+                         "action":"program",
+                         "expectation":"program",
+                         "observation_inference":"program",
+                         "evaluation":"program",
+                         "task-reminder":"task",
+                         "error":"message"}
+    if "body" not in event_block and event_block["type"] in defunct_body_keys:
+        event_block["body"] = event_block[defunct_body_keys[event_block["type"]]]
+    
     header = f'#startblock type: {event_block["type"]}\n'
     if "timestamp" in event_block:
         header += f'#timestamp {event_block["timestamp"]}\n'
+    if "bm25_query" in event_block:
+        header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
     if "q" in event_block:
         yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
@@ -26,23 +40,25 @@ def render_block(event_block):
             prob = f"({round(no_p * 100, 5)}%)"
         # TODO: Turn this back on. Goodharts too much right now. 
         # footer += f'\n#q: {event_block["q"]} {answer} {prob}'
+    if "tags" in event_block:
+        footer += f"\n#tags: {' '.join(event_block['tags'])}"
     footer += '\n#endblock\n'
     if event_block["type"] in ("genesis",
                                "action",
                                "expectation",
                                "observation_inference",
                                "evaluation"):
-        return (header + "\n" + event_block["program"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "bootstrap":
         footer += "# END OF DEMO. Starting on the next tick you have\n"
         footer += "# full control. Wake up.\n"
-        return (header + "\n" + event_block["program"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "observation":
         title = event_block['title']
-        if type(event_block['content']) != str:
-            content = repr(event_block['content'])
+        if type(event_block['body']) != str:
+            content = repr(event_block['body'])
         else:
-            content = event_block['content']
+            content = event_block['body']
         header += f"#title {title}\n"
         lines = content.split('\n')
         content = ""
@@ -54,19 +70,19 @@ def render_block(event_block):
         header += f"# Starting tick #{metadata['tick_number']} "
         header += f"with block #{metadata['block_index']}\n"
         header += f"# Current Working Directory: {metadata['working_directory']}\n"
-        return (header + "\n" + event_block["program"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "task_inference":
         metadata = event_block["metadata"]
         task_title = f"({metadata['task_id']}) {metadata['task_title']}"
         task_status = f"({metadata['task_status']}) {metadata['task_explanation']}"
         header += f"# Current Task: {task_title}\n"
         header += f"# Task Status: {task_status}\n"
-        return (header + "\n" + event_block["program"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "task-reminder":
-        return (header + "\n" + event_block["task"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "error":
         header += "# WARNING: Error means tick did not fully execute callbacks\n"
-        return (header + "\n" + event_block["message"] + footer)
+        return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "outcome":
         return (header + "\n" 
                          + generate_outcome_table(event_block['table'])

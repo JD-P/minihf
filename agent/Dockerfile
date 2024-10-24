@@ -29,4 +29,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD ["python", "-m", "pdb", "weave_agent.py", "--port", "5001", "--bootstrap", "bootstraps/haunted_mansion_bootstrap.py", "weave-agent"]
+CMD ["python", "-m", "pdb", "weave_agent.py", "--port", "5001", "--bootstrap", "bootstraps/haunted_mansion_bootstrap.py", "mistralai/Mixtral-8x22B-Instruct-v0.1"]

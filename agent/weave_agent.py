@@ -56,41 +56,15 @@ from typing import List, Dict, Optional, Any
 from functools import partial
 from tqdm import tqdm
 from rich import print as rprint
+import tantivy
+from tantivy import Index, SchemaBuilder
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 from weave import weave_tree_search, TreeNode
 from render_block import render_block
-
-def make_simple_bayes_score_prompt(question: str):
-    """Simplify the process of making a bayesian weave evaluator question prompt
-    maker so that it's just a matter of passing a question for the weave-agent."""
-    template = ("{response}\n\n"
-                + "# Answer yes or no and only yes or no to the following.\n"
-                + "# question about the incomplete code block above.\n"
-                + "# Keep in mind the following question is being asked as part\n"
-                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
-                + "# You're really being asked something like *will this trajectory*\n"
-                + "# eventually have quality X or satisfy predicate Y?\n"
-                + f"#q: {{parent_q}}\n# {question}")
-    return partial(make_bayes_score_prompt_vllm, template, "", "")
-    
-def make_simple_score_prompt(question: str):
-    """Simplify the process of making a weave evaluator question prompt maker so
-    that it's just a matter of passing a question for the weave-agent."""
-    template = ("<s> [INST] {response}\n\n"
-                + "#q: If I flip a fair coin will it come up heads? No. (50%)\n"
-                + "#q: X happens one in a hundred times. Did X happen? Yes. (1%)\n"
-                + "#q: If I pick a US state at random will that state be Idaho? No. (98%)\n"
-                + "#q: If I pick a book up from the thrift store will it be good according to Sturgeon's law? Yes. (10%)\n"
-                + "# Answer yes or no and only yes or no to the following.\n"
-                + "# question about the incomplete code block above.\n"
-                + "# Keep in mind the following question is being asked as part\n"
-                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
-                + "# You're really being asked something like *will this trajectory*\n"
-                + "# eventually have quality X or satisfy predicate Y?\n"
-                + f"#q: {question} [/INST]")
-    return partial(make_score_prompt_vllm, template, "", "")
+from block_generators import generate_block_inner
+from block_generators import make_simple_bayes_score_prompt, make_simple_score_prompt
 
 
 class WeaveKanbanTask:
@@ -156,18 +130,27 @@ class WeaveKanbanTask:
     def going(self, explanation: str) -> None:
         self.change_status('going', explanation)
 
-    def completed(self, explanation: str) -> None:
-        # Run evaluation callbacks
-        evaluation_results = []
+    def run_evaluations(self):
+        results = {}
         for evaluation in self.evaluations:
-            msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
-                   + "# If you're seeing this it's because you tried to do\n"
-                   + "# .completed() on a task and its test suite failed.\n"
-                   + f"# The failing test is '{evaluation['title']}'\n")
             try:
                 result = evaluation["callback"](self.kanban.agent)
-                assert result
             except Exception as e:
+                result = traceback.format_exc()
+            results[evaluation["callback"].__name__] = result
+        return results
+        
+    def completed(self, explanation: str) -> None:
+        # Run evaluation callbacks
+        evaluation_results = self.run_evaluations()
+        for evaluation in self.evaluations:
+            try:
+                assert evaluation_results[evaluation["callback"].__name__] == True
+            except Exception as e:
+                msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
+                       + "# If you're seeing this it's because you tried to do\n"
+                       + "# .completed() on a task and its test suite failed.\n"
+                       + f"# The failing test is '{evaluation['title']}'\n")
                 tb = traceback.format_exc()
                 self.kanban.agent.failure_stage = "'{self.title}' .completed() test suite"
                 raise ValueError(msg + f'"""{tb}"""')
@@ -243,8 +226,15 @@ class WeaveKanban:
 
         header_row = format_row(headers)
         separator_row = ' | '.join('-' * width for width in col_widths)
-        table_rows = '\n'.join(format_row(row) for row in table)
-
+        table_rows = ""
+        for row in table:
+            table_rows += format_row(row) + "\n"
+            if self.get_task(row[0]) == self.agent.current_task:
+                evaluation_results = self.get_task(row[0]).run_evaluations()
+                for evaluation in self.get_task(row[0]).evaluations:
+                    evaluation_fn = evaluation["callback"]
+                    result = evaluation_results[evaluation_fn.__name__]
+                    table_rows += (" " * 7) + " - " + evaluation_fn.__name__ + ": " + str(result) + "\n"
         return f"{header_row}\n{separator_row}\n{table_rows}"
 
     def unblock(self) -> None:
@@ -276,7 +266,7 @@ class Tick:
             raise ValueError("No orientation on tick.")
         elif not hasattr(self, 'action'):
             raise ValueError("No action on tick.")
-        elif "program" not in self.action_setup:
+        elif "body" not in self.action_setup:
             raise TypeError("Tick action has no program.")
         elif not hasattr(self, 'expectation'):
             raise ValueError("No expectation on tick.")
@@ -314,6 +304,23 @@ class WeaveAgent:
         self.tools = {}
         self.cache = {}
         self.context = ""
+
+        schema_builder = SchemaBuilder()
+        schema_builder.add_text_field("type", stored=True)
+        schema_builder.add_text_field("render", stored=True)
+        schema_builder.add_text_field("q", stored=True)
+        schema_builder.add_float_field("score", stored=True)
+        schema_builder.add_integer_field("index", stored=True)
+        schema_builder.add_float_field("timestamp", stored=True)
+        schema_builder.add_text_field("tags", stored=True)
+
+        self.bm25_schema = schema_builder.build()
+        
+        if not os.path.exists("memories"):
+            os.mkdir("memories")
+        if not os.path.exists("memories/bm25"):
+            os.mkdir("memories/bm25")
+        self.bm25_index = Index(self.bm25_schema, path="./memories/bm25")
 
     def shutdown(self):
         """The agent shutdown routine. This should be called when the agent's 
@@ -360,7 +367,28 @@ class WeaveAgent:
                     "task_status": "nonexistent",
                     "task_explanation": explanation
                 }
+        if "q" not in block:
+            block["q"] = ""
+        if "score" not in block:
+            #TODO: Make actual score function for observations, task reminders etc
+            block["score"] = 2
+        if "tags" not in block:
+            #TODO: Make actual tagging function
+            block["tags"] = ["placeholder",]
         self.event_stream.append(block)
+
+        writer = self.bm25_index.writer()
+        writer.add_document(tantivy.Document(
+            type=block["type"],
+            render=render_block(block),
+            q=block["q"],
+            score=block["score"],
+            index=block["index"],
+            timestamp=block["timestamp"],
+            tags=" ".join(block["tags"]),
+        ))
+        writer.commit()
+        
         self.current_block_index += 1
         
     def add_reminder(self, reminder):
@@ -439,123 +467,7 @@ class WeaveAgent:
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
-
-        def is_valid_syntax(code):
-            try:
-                ast.parse(code)
-                return True
-            except SyntaxError as e:
-                error_position = e.offset
-                code_length = len(code)
-                if code_length - error_position > 50:
-                    return False
-                else:
-                    return True
-
-        prompt = f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n{hint}\n\n'
-        # Narrow incidence of structurally wrong blocks by premising correct prefix
-        if block_type in {"orientation", "expectation",
-                          "task_inference", "observation_inference"}:
-            prefix = '"""'
-        elif block_type in {"action", "evaluation"}:
-            prefix = "def "
-        else:
-            prefix = ""
-        if block_type in {"orientation"} and self.debugging:
-            with open("/app/error_stems.txt") as infile:
-                error_stem = random.choice(infile.readlines())
-                prefix += error_stem.strip().format(stage=self.failure_stage) + " "
-        prompt += prefix
-        port = 5001
-        stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
-        generate_fn = partial(generate_outputs_vllm,
-                              self.model_name,
-                              port=port,
-                              stop=stopstrings)
-        score_prompt_fns = []
-        # TODO: Use the full set of questions somehow?
-        score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
-        async def evaluate_fn(texts):
-            score_fn = partial(evaluate_outputs_vllm,
-                               self.model_name,
-                               score_prompt_fns,
-                               port=port)
-            scores = await score_fn(texts)
-            # Penalize syntax errors more than 50 characters from end of string
-            syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else -2
-                                             for text in texts])
-            if block_type in {"task_inference"} and self.debugging:
-                penalties = []
-                for text in texts:
-                    penalty = False
-                    for string in [".completed", "complete"]:
-                        if string in (prefix + text[1]):
-                            penalty = True
-                    penalties.append(-2 if penalty else 0)
-                completion_penalties = torch.tensor(penalties)
-            else:
-                completion_penalties = torch.zeros(len(scores))
-                 
-            return scores + syntax_penalties + completion_penalties
-        tree = TreeNode(prompt)
-        wp = weave_params
-        # First try a simple rejection sampling
-        branches = weave_tree_search(tree=tree,
-                                     generate_fn=partial(generate_fn,
-                                                         n_tokens=768),
-                                     evaluate_fn=evaluate_fn,
-                                     budget=32,
-                                     round_budget=32,
-                                     n_expand=32,
-                                     beam_width=1,
-                                     max_lookahead=1,
-                                     temperature=0.01)
-        do_long = False
-        if (branches[-1].score < 3.0):
-            do_long = True
-        try:
-            program = branches[-1].branch_text()
-            program = prefix + program.strip()
-            compile(program, f"block_{self.current_block_index}", "exec")
-        except Exception as e:
-            do_long = True
-        # If rejection sampling fails do full search
-        if do_long:
-            tree = TreeNode(prompt)
-            branches = weave_tree_search(tree=tree,
-                                         generate_fn=partial(generate_fn,
-                                                             n_tokens=wp["weave_n_tokens"]),
-                                         evaluate_fn=evaluate_fn,
-                                         budget=wp["weave_budget"],
-                                         round_budget=wp["weave_round_budget"],
-                                         n_expand=wp["weave_n_expand"],
-                                         beam_width=wp["weave_beam_width"],
-                                         max_lookahead=wp["weave_max_lookahead"],
-                                         temperature=wp["weave_temperature"]) 
-            program = branches[-1].branch_text()
-            # Check we finished writing the code block and extract first block
-            stop_indices = []
-            for stopstring in stopstrings:
-                candidate = program.find(stopstring)
-                if candidate > -1:
-                    stop_indices.append(candidate)
-            if stop_indices:
-                stop_index = min(stop_indices)
-                program = prefix + program[:stop_index].strip()
-            else:
-                program = prefix + program.strip()
-        block = {"type":block_type,
-                 "program":program,
-                 "q":eval_questions[0],
-                 "score":branches[-1].score.item()}
-        self.add_block(block)
-        try:
-            compile(program, f"block_{self.current_block_index}", "exec")
-        except Exception as e:
-            raise ValueError from e
-        rprint(f"Finished writing block #[cyan]{self.current_block_index}[/cyan] of type [cyan]{block_type}[/cyan]")
-        print(block["program"])
-        return block
+        generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
 
     def add_error_block(self, error_message):
         self.debugging = True
@@ -619,12 +531,12 @@ class WeaveAgent:
             )
             
         # Format tasks into blocks
-        task_blocks = [{'type': 'task-reminder', 'task': task_reminder_body},]
+        task_blocks = [{'type': 'task-reminder', 'body': task_reminder_body},]
 
         # Pull the content of the observation windows into blocks
         observation_blocks = [{'type': 'observation',
                                'title': observation[0],
-                               'content': observation[1]} for observation in observations]
+                               'body': observation[1]} for observation in observations]
 
         # Inject these into the event stream
         self.event_stream += (task_blocks + observation_blocks)
@@ -704,7 +616,7 @@ class WeaveAgent:
 
         # Execute task updates
         try:
-            exec(task_inference_block['program'])
+            exec(task_inference_block['body'])
         except Exception as e:
             tb = traceback.format_exc()
             self.add_error_block(f"# task_inference failed:\n"
@@ -736,7 +648,7 @@ class WeaveAgent:
 
         # Set up action callback
         try:
-            exec(action_block['program'])
+            exec(action_block['body'])
         except Exception as e:
             tb = traceback.format_exc()
             self.add_error_block("# Action execution failed:\n"
@@ -783,7 +695,7 @@ class WeaveAgent:
 
         # Execute observation updates
         try:
-            exec(observation_inference_block['program'])
+            exec(observation_inference_block['body'])
         except Exception as e:
             tb = traceback.format_exc()
             self.add_error_block("# observation_inference failed:\n"
@@ -818,7 +730,7 @@ class WeaveAgent:
         # Set up evaluation callbacks
         for evaluation_block in evaluation_blocks:
             try:
-                exec(evaluation_block['program'])       
+                exec(evaluation_block['body'])       
             except Exception as e:
                 tb = traceback.format_exc()
                 self.add_error_block("# Evaluation setup execution failed:\n"
@@ -923,7 +835,7 @@ if __name__ == "__main__":
         # Genesis block
         genesis_block = {
             'type': 'genesis',
-            'program': infile.read()
+            'body': infile.read()
         }
         agent.add_block(genesis_block)
 
@@ -931,10 +843,10 @@ if __name__ == "__main__":
         # Bootstrap block
         bootstrap_block = {
             'type': 'bootstrap',
-            'program': infile.read()
+            'body': infile.read()
         }
         agent.add_block(bootstrap_block)
-        exec(bootstrap_block["program"])
+        exec(bootstrap_block["body"])
 
     def run_bootstrap_callbacks():
         """Run bootstrap callbacks in function to avoid contaminating global scope."""
