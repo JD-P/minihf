@@ -13,10 +13,10 @@ def generate_outcome_table(evaluation_results):
 def render_block(event_block, tags=True):
     defunct_body_keys = {"observation":"content",
                          "orientation":"program",
-                         "task_inference":"program",
+                         "task-inference":"program",
                          "action":"program",
                          "expectation":"program",
-                         "observation_inference":"program",
+                         "observation-inference":"program",
                          "evaluation":"program",
                          "task-reminder":"task",
                          "error":"message"}
@@ -24,6 +24,8 @@ def render_block(event_block, tags=True):
         event_block["body"] = event_block[defunct_body_keys[event_block["type"]]]
     
     header = f'#startblock type: {event_block["type"]}\n'
+    if "index" in event_block:
+        header += f'#index {event_block["index"]}\n'
     if "timestamp" in event_block:
         header += f'#timestamp {event_block["timestamp"]}\n'
     if "bm25_query" in event_block:
@@ -46,7 +48,7 @@ def render_block(event_block, tags=True):
     if event_block["type"] in ("genesis",
                                "action",
                                "expectation",
-                               "observation_inference",
+                               "observation-inference",
                                "evaluation"):
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "bootstrap":
@@ -71,7 +73,7 @@ def render_block(event_block, tags=True):
         header += f"with block #{metadata['block_index']}\n"
         header += f"# Current Working Directory: {metadata['working_directory']}\n"
         return (header + "\n" + event_block["body"] + footer)
-    elif event_block["type"] == "task_inference":
+    elif event_block["type"] == "task-inference":
         metadata = event_block["metadata"]
         task_title = f"({metadata['task_id']}) {metadata['task_title']}"
         task_status = f"({metadata['task_status']}) {metadata['task_explanation']}"

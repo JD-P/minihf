@@ -349,7 +349,7 @@ class WeaveAgent:
                 "block_index":self.current_block_index,
                 "working_directory":os.getcwd()
             }
-        if block['type'] == 'task_inference':
+        if block['type'] == 'task-inference':
             try:
                 block['metadata'] = {
                     "task_id":self.current_task.id,
@@ -377,17 +377,18 @@ class WeaveAgent:
             block["tags"] = ["placeholder",]
         self.event_stream.append(block)
 
-        writer = self.bm25_index.writer()
-        writer.add_document(tantivy.Document(
-            type=block["type"],
-            render=render_block(block),
-            q=block["q"],
-            score=block["score"],
-            index=block["index"],
-            timestamp=block["timestamp"],
-            tags=" ".join(block["tags"]),
-        ))
-        writer.commit()
+        if block["type"] not in {"genesis", "bootstrap"}:
+            writer = self.bm25_index.writer()
+            writer.add_document(tantivy.Document(
+                type=block["type"],
+                render=render_block(block),
+                q=block["q"],
+                score=block["score"],
+                index=block["index"],
+                timestamp=block["timestamp"],
+                tags=" ".join(block["tags"]),
+            ))
+            writer.commit()
         
         self.current_block_index += 1
         
@@ -606,7 +607,7 @@ class WeaveAgent:
             + "# agent.add_task(title, description, status, blocked_on=[task_id(s)])"
         )
         task_inference_block = do_tick_block(agent,
-                                             "task_inference",
+                                             "task-inference",
                                              task_inference_hint,
                                              {})
         if task_inference_block:
@@ -619,9 +620,9 @@ class WeaveAgent:
             exec(task_inference_block['body'])
         except Exception as e:
             tb = traceback.format_exc()
-            self.add_error_block(f"# task_inference failed:\n"
+            self.add_error_block(f"# task-inference failed:\n"
                                  + f'"""{tb}"""')
-            self.failure_stage = "task_inference"
+            self.failure_stage = "task-inference"
             return
         
         # Write action block
@@ -685,7 +686,7 @@ class WeaveAgent:
             + "# on whether the action succeeded on the next tick."
         )
         observation_inference_block = do_tick_block(agent,
-                                                    "observation_inference",
+                                                    "observation-inference",
                                                     observation_inference_hint,
                                                     {})
         if observation_inference_block:
@@ -698,9 +699,9 @@ class WeaveAgent:
             exec(observation_inference_block['body'])
         except Exception as e:
             tb = traceback.format_exc()
-            self.add_error_block("# observation_inference failed:\n"
+            self.add_error_block("# observation-inference failed:\n"
                                  + f'"""{tb}"""')
-            self.failure_stage = "observation_inference"
+            self.failure_stage = "observation-inference"
             return
         
         # Write evaluation programs

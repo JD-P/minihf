@@ -55,7 +55,6 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             else:
                 return True
 
-    prompt = f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n{hint}\n\n'
     bm25_prompt =  f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n'
     bm25_prompt += "#timestamp {time.time()}\n"
     bm25_prompt += "# I need to write a Tantivy BM 25 query to retrieve relevant blocks below.\n"
@@ -65,12 +64,15 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_prompt += "# Retrieve high scoring blocks of same type\n" 
     bm25_prompt += "#bm25_query type:'{block_type}'\n"
     bm25_prompt += "# Retrieve examples where the current_task is updated\n"
-    bm25_prompt += "#bm25_query type:'task_inference' render:agent.current_task render:Update\n"
+    bm25_prompt += "#bm25_query type:'task-inference' render:agent.current_task render:Update\n"
     bm25_prompt += "# Retrieve observations relating to something Amanda said\n"
     bm25_prompt += "#bm25_query type:'observation' render:Amanda render:amanda render:she render:said render:remember render:forget\n"
     bm25_prompt += "# Now I'll write the query that will help me write the next block.\n"
-    bm25_prompt += "#bm25_query "
-
+    if self.current_block_index < 10:
+        bm25_prompt += "#bm25_query render:"
+    else:
+        bm25_prompt += "#bm25_query "
+        
     port = 5001
     # TODO: Rejection sample this?
     bm25_query = " " + generate_outputs_vllm(self.model_name,
@@ -101,12 +103,27 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     #    results = searcher.search(query, limit=25, filter=type_filter).hits
     #else:
     results = searcher.search(query, limit=25).hits
+    retrieved_blocks = [searcher.doc(result[1]) for result in results]
+    retrieved_blocks = sorted(retrieved_blocks,
+                              key=lambda block: block["score"],
+                              reverse=True)[:3]
 
-    retrieved = sorted(results, key=lambda result: searcher.doc(result[1])["score"], reverse=True)[:3]
-    
+    prompt = f'<s> [INST] {context}'
+    if self.current_block_index > 10:
+        prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"    
+        for block in retrieved_blocks:
+            block_text = block["render"][0].replace(
+                block["type"][0],
+                "recalled-" + block["type"][0]
+            )
+            prompt += "\n" + block_text
+        prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"
+    prompt += f"\nWrite the next {block_type} block."
+    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n\n'"
+
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type in {"orientation", "expectation",
-                      "task_inference", "observation_inference"}:
+                      "task-inference", "observation_inference"}:
         prefix = '"""'
     elif block_type in {"action", "evaluation"}:
         prefix = "def "
@@ -134,7 +151,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         # Penalize syntax errors more than 50 characters from end of string
         syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else -2
                                          for text in texts])
-        if block_type in {"task_inference"} and self.debugging:
+        if block_type in {"task-inference"} and self.debugging:
             penalties = []
             for text in texts:
                 penalty = False
