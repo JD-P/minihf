@@ -68,8 +68,8 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_prompt += "# Retrieve observations relating to something Amanda said\n"
     bm25_prompt += "#bm25_query type:'observation' render:Amanda render:amanda render:she render:said render:remember render:forget\n"
     bm25_prompt += "# Now I'll write the query that will help me write the next block.\n"
-    if self.current_block_index < 10:
-        bm25_prompt += "#bm25_query render:"
+    if self.current_block_index < 50:
+        bm25_prompt += f"#bm25_query type:'{block_type}'"
     else:
         bm25_prompt += "#bm25_query "
         
@@ -103,13 +103,14 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     #    results = searcher.search(query, limit=25, filter=type_filter).hits
     #else:
     results = searcher.search(query, limit=25).hits
-    retrieved_blocks = [searcher.doc(result[1]) for result in results]
+    retrieved_blocks = [searcher.doc(result[1]) for result in results
+                        if searcher.doc(result[1])["score"] >= 3]
     retrieved_blocks = sorted(retrieved_blocks,
                               key=lambda block: block["score"],
                               reverse=True)[:3]
 
     prompt = f'<s> [INST] {context}'
-    if self.current_block_index > 10:
+    if self.current_block_index > 10 and retrieved_blocks:
         prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"    
         for block in retrieved_blocks:
             block_text = block["render"][0].replace(
