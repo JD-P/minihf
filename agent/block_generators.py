@@ -104,9 +104,9 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     #else:
     results = searcher.search(query, limit=25).hits
     retrieved_blocks = [searcher.doc(result[1]) for result in results
-                        if searcher.doc(result[1])["score"] >= 3]
+                        if searcher.doc(result[1])["score"][0] >= 3]
     retrieved_blocks = sorted(retrieved_blocks,
-                              key=lambda block: block["score"],
+                              key=lambda block: block["score"][0],
                               reverse=True)[:3]
 
     prompt = f'<s> [INST] {context}'
@@ -120,7 +120,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             prompt += "\n" + block_text
         prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"
     prompt += f"\nWrite the next {block_type} block."
-    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n\n'"
+    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type in {"orientation", "expectation",
