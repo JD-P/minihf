@@ -468,7 +468,7 @@ class WeaveAgent:
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
-        generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
+        return generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
 
     def add_error_block(self, error_message):
         self.debugging = True
@@ -477,16 +477,6 @@ class WeaveAgent:
             'message': error_message
         }
         self.add_block(error_block)
-
-    def roll_reminders(self):
-        for reminder in self.reminders:
-            if reminder['trigger_type'] == 'yes_no_logit':
-                score = reminder['trigger_callback'](self)[0].item()
-                if score >= reminder['threshold']:
-                    reminder['reminder_callback'](self)
-            elif reminder['trigger_type'] == 'unit_test':
-                if reminder['trigger_callback'](self) >= reminder['threshold']:
-                    reminder['reminder_callback'](self)
                     
     def tick(self):
         self.tasks.unblock()
@@ -497,8 +487,6 @@ class WeaveAgent:
         except AttributeError:
             self.debugging = True
         self.current_tick = Tick(self, len(self.ticks))
-        # Roll reminders
-        self.roll_reminders()
 
         observations = []
         # Refresh observation views
@@ -554,6 +542,7 @@ class WeaveAgent:
             weave_params.update(wp_update)
             with open(f"/app/eval_rubrics/{block_type}.txt") as infile:
                 inference_questions = infile.read().strip().splitlines()
+            rprint(f"Writing block #[cyan]{self.current_block_index}[/cyan] of type [cyan]{block_type}[/cyan]")
             try:
                 block = self.generate_block(block_type,
                                             self.context,
@@ -566,6 +555,7 @@ class WeaveAgent:
                         + "def callback_name(agent):\n   "
                         + f"# code...\n   pass\nagent.add_orientation({{...}})")
                 self.add_error_block(f'{hint}\n"""{tb}"""')
+                self.failure_stage = block_type
                 return
             self.render_context()
             return block

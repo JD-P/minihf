@@ -69,45 +69,39 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_prompt += "#bm25_query type:'observation' render:Amanda render:amanda render:she render:said render:remember render:forget\n"
     bm25_prompt += "# Now I'll write the query that will help me write the next block.\n"
     if self.current_block_index < 50:
-        bm25_prompt += f"#bm25_query type:'{block_type}'"
+        bm25_prompt += f"#bm25_query type:'{block_type}' "
     else:
         bm25_prompt += "#bm25_query "
         
     port = 5001
     # TODO: Rejection sample this?
-    bm25_query = " " + generate_outputs_vllm(self.model_name,
+    query_candidates = generate_outputs_vllm(self.model_name,
                                              bm25_prompt,
                                              256,
                                              port=port,
-                                             stop=["\n",])[0].strip()
-    #type_filter_re = r"type:(\w+)"
-    #_match = re.search(type_filter_re, bm25_query)
-    #if _match:
-    #    type_value = _match.group(1)
-    #else:
-    #    type_value = None
+                                             n=8,
+                                             stop=["\n",])
+    bm25_query = None
+    for candidate in query_candidates:
+        try:
+            self.bm25_index.parse_query(candidate, ["render", "tags"])
+            bm25_query = candidate
+            break
+        except ValueError:
+            continue
+    if self.current_block_index < 50 and bm25_query:
+        bm25_query = f"type:'{block_type}' " + bm25_query
 
-    #bm25_query = re.sub(type_filter_re, "", bm25_query).strip()
-
-    searcher = self.bm25_index.searcher()
-    try:
+        searcher = self.bm25_index.searcher()
         query = self.bm25_index.parse_query(bm25_query, ["render", "tags"])
-    except ValueError as e:
-        msg = ""
-        msg += "BM25 query parse failed during block generation."
-        msg += f"\"{bm25_query}\" is not a valid tantivy query."
-        msg += "You can resolve this by writing a valid BM25 query on your next go."
-        raise ValueError(msg)
-    #if type_value:
-    #    type_filter = self.bm25_schema.TermFilter("type", type_value)
-    #    results = searcher.search(query, limit=25, filter=type_filter).hits
-    #else:
-    results = searcher.search(query, limit=25).hits
-    retrieved_blocks = [searcher.doc(result[1]) for result in results
-                        if searcher.doc(result[1])["score"][0] >= 3]
-    retrieved_blocks = sorted(retrieved_blocks,
-                              key=lambda block: block["score"][0],
-                              reverse=True)[:3]
+        results = searcher.search(query, limit=25).hits
+        retrieved_blocks = [searcher.doc(result[1]) for result in results
+                            if searcher.doc(result[1])["score"][0] >= 3]
+        retrieved_blocks = sorted(retrieved_blocks,
+                                  key=lambda block: block["score"][0],
+                                  reverse=True)[:3]
+    else:
+        retrieved_blocks = None
 
     prompt = f'<s> [INST] {context}'
     if self.current_block_index > 10 and retrieved_blocks:
@@ -119,7 +113,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             )
             prompt += "\n" + block_text
         prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"
-    prompt += f"\nWrite the next {block_type} block."
+    prompt += f"\n# Write the next {block_type} block."
     prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
@@ -216,18 +210,41 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         else:
             program = prefix + program.strip()
     block = {"type":block_type,
-             "bm25_query":bm25_query,
              "body":program,
              "q":eval_questions[0],
              "score":branches[-1].score.item()}
-    self.add_block(block)
+    if bm25_query:
+        block["bm25_query"] = bm25_query
     try:
         compile(program, f"block_{self.current_block_index}", "exec")
     except Exception as e:
+        block["score"] -= 2
+        self.add_block(block)
         raise ValueError from e
-    rprint(f"Finished writing block #[cyan]{self.current_block_index}[/cyan] of type [cyan]{block_type}[/cyan]")
+    if block_type in {"orientation", "expectation"}:
+        block["body"] = extract_first_string_literal(program)
+    self.add_block(block)
+    rprint(f"Finished writing block #[cyan]{self.current_block_index-1}[/cyan] of type [cyan]{block_type}[/cyan]")
     print(block["body"])
     return block
+
+def extract_first_string_literal(code):
+    class StringLiteralVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.first_string_literal = None
+
+        def visit_Str(self, node):
+            if self.first_string_literal is None:
+                self.first_string_literal = node.s
+
+    # Parse the code into an AST
+    tree = ast.parse(code)
+
+    # Visit the nodes in the AST
+    visitor = StringLiteralVisitor()
+    visitor.visit(tree)
+
+    return '"""' + visitor.first_string_literal.strip() + '"""'
 
 """
 def tag_block(agent, context, block):
