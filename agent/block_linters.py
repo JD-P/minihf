@@ -79,7 +79,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
         pattern_penalty = 1.0
 
     if len(elements) > 2:
-        element_count_penalty = min(0.02 * (element_count - 2), 1)
+        element_count_penalty = min(0.02 * (len(elements) - 2), 1)
     else:
         element_count_penalty = 0
         

@@ -223,6 +223,12 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         raise ValueError from e
     if block_type in {"orientation", "expectation"}:
         block["body"] = extract_first_string_literal(program)
+    if block_type in {"action", "evaluation"}:
+        callback, registration = extract_function_and_add_action_or_evaluation(
+            program,
+            f"add_{block_type}"
+        )
+        block["body"] = callback + "\n\n" + registration
     self.add_block(block)
     rprint(f"Finished writing block #[cyan]{self.current_block_index-1}[/cyan] of type [cyan]{block_type}[/cyan]")
     print(block["body"])
@@ -245,6 +251,33 @@ def extract_first_string_literal(code):
     visitor.visit(tree)
 
     return '"""' + visitor.first_string_literal.strip() + '"""'
+
+def extract_function_and_add_action_or_evaluation(code, slot_name):
+    class FunctionAndAddActionVisitor(ast.NodeVisitor):
+        def __init__(self):
+            self.function_def = None
+            self.add_action_call = None
+
+        def visit_FunctionDef(self, node):
+            if self.function_def is None:
+                self.function_def = node
+
+        def visit_Expr(self, node):
+            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == slot_name:
+                self.add_action_call = node.value
+
+    # Parse the code into an AST
+    tree = ast.parse(code)
+
+    # Visit the nodes in the AST
+    visitor = FunctionAndAddActionVisitor()
+    visitor.visit(tree)
+
+    # Extract the function definition and the add_action call
+    function_code = ast.unparse(visitor.function_def) if visitor.function_def else ""
+    add_action_code = ast.unparse(visitor.add_action_call) if visitor.add_action_call else ""
+
+    return function_code, add_action_code
 
 """
 def tag_block(agent, context, block):
