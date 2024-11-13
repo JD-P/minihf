@@ -114,7 +114,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             prompt += "\n" + block_text
         prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"
     prompt += f"\n# Write the next {block_type} block."
-    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n\n"
+    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type in {"orientation", "expectation",
@@ -124,10 +124,10 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         prefix = "def "
     else:
         prefix = ""
-    if block_type in {"orientation"} and self.debugging:
-        with open("/app/error_stems.txt") as infile:
-            error_stem = random.choice(infile.readlines())
-            prefix += error_stem.strip().format(stage=self.failure_stage) + " "
+    #if block_type in {"orientation"} and self.debugging:
+    #    with open("/app/error_stems.txt") as infile:
+    #        error_stem = random.choice(infile.readlines())
+    #        prefix += error_stem.strip().format(stage=self.failure_stage) + " "
     prompt += prefix
     stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
     generate_fn = partial(generate_outputs_vllm,
@@ -220,7 +220,10 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     except Exception as e:
         block["score"] -= 2
         self.add_block(block)
-        raise ValueError from e
+        if len(self.tokenizer(program)["input_ids"]) >= 768:
+            raise ValueError("Length limit exceeded! Programs must be fewer than 768 tokens.")
+        else:
+            raise ValueError from e
     if block_type in {"orientation", "expectation"}:
         block["body"] = extract_first_string_literal(program)
     if block_type in {"action", "evaluation"}:

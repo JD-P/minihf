@@ -56,6 +56,7 @@ from typing import List, Dict, Optional, Any
 from functools import partial
 from tqdm import tqdm
 from rich import print as rprint
+from transformers import AutoTokenizer
 import tantivy
 from tantivy import Index, SchemaBuilder
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
@@ -586,15 +587,15 @@ class WeaveAgent:
 
         # Task inference block
         task_inference_hint = (
-            "#hint In the task inference stage I write code to change the status\n" 
-            + "# of tasks on the kanban board, add new tasks if necessary, etc.\n"
-            + "# It's important to keep my kanban up to date so that I'm presented\n"
-            + "# with the correct task state at the start of each tick.\n"
-            + "# Common Patterns:\n"
-            + "# agent.current_task has idle(), going(), completed(), blocked(),\n"
-            + "# and aborted() methods to change status.\n"
-            + "# agent.current_task = agent.tasks.get_task(next_task_id)\n"
-            + "# agent.add_task(title, description, status, blocked_on=[task_id(s)])"
+            "#hint Keep this simple. In the task inference stage I change the status\n"
+            + "# of tasks on the kanban board. If the current task doesn't need\n"
+            + "# changed I set it to .going() with a short summary of where the\n" 
+            + "# task is at like .going('Fixing HTTP errors...') If the current task\n"
+            + "# is complete I do .completed() to prompt the kanban to check that it\n"
+            + "# really is complete and set a new task in the statement after it by\n"
+            + "# looking back at the kanban board and doing\n"
+            + "# agent.tasks.get_task(next_task_id) where next_task_id is a integer\n"
+            + "# literal pointing at the right next task."
         )
         task_inference_block = do_tick_block(agent,
                                              "task-inference",
@@ -628,13 +629,19 @@ class WeaveAgent:
             + "# to do it inside the callback because the tick gets executed in a\n"
             + "# local context."
         )
-        action_block = do_tick_block(agent,
-                                     "action",
-                                     action_hint,
-                                     {})
-        if action_block:
-            self.current_tick.action_setup = action_block
-        else:
+        for i in range(5):
+            action_block = do_tick_block(agent,
+                                         "action",
+                                         action_hint,
+                                         {})
+            if action_block:
+                self.current_tick.action_setup = action_block
+                break
+            else:
+                # TODO: Dynamic hints by having the model or external entities
+                # such as user analyze the situation and suggest a course of action
+                action_hint = "#hint Rewrite the block keeping the above error in mind."
+        if not hasattr(self.current_tick, "action_setup"):
             return
 
         # Set up action callback
@@ -790,12 +797,14 @@ class WeaveAgent:
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("model_name", help="The model to use.")
+    parser.add_argument("--tokenizer", default=None,
+                        help="Tokenizer to use (if different from model_name)")
     parser.add_argument("--port", default=5000, help="The port to use for VLLM.")
     parser.add_argument("--bootstrap",
                         default="bootstrap.py",
                         help="The filepath to run as bootstrap.")
     args = parser.parse_args()
-
+        
     def simple_evaluate_outputs(score_prompt_fns, texts):
         if type(texts) == str:
             texts = [texts,]
@@ -822,6 +831,15 @@ if __name__ == "__main__":
     
     agent = WeaveAgent(args.model_name)
 
+    if not args.tokenizer:
+        args.tokenizer = args.model_name
+
+    with open("hf_token.txt") as infile:
+        os.environ["HF_TOKEN"] = infile.read().strip()
+    # Delete token so it doesn't leak into traces
+    os.remove("hf_token.txt")
+    agent.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    
     with open("weave_agent.py") as infile:
         # Genesis block
         genesis_block = {
