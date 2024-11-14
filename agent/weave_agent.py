@@ -629,29 +629,36 @@ class WeaveAgent:
             + "# to do it inside the callback because the tick gets executed in a\n"
             + "# local context."
         )
-        for i in range(5):
+        for i in range(3):
             action_block = do_tick_block(agent,
                                          "action",
                                          action_hint,
                                          {})
             if action_block:
                 self.current_tick.action_setup = action_block
-                break
             else:
                 # TODO: Dynamic hints by having the model or external entities
                 # such as user analyze the situation and suggest a course of action
-                action_hint = "#hint Rewrite the block keeping the above error in mind."
-        if not hasattr(self.current_tick, "action_setup"):
-            return
+                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                               + f"# {3 - (i+1)} attempts remaining.")
+                continue
 
-        # Set up action callback
-        try:
-            exec(action_block['body'])
-        except Exception as e:
-            tb = traceback.format_exc()
-            self.add_error_block("# Action execution failed:\n"
-                                 + f'"""{tb}"""')
-            self.failure_stage = "action"
+            # Set up action callback
+            try:
+                exec(action_block['body'])
+                failed = False
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.add_error_block("# Action execution failed:\n"
+                                     + f'"""{tb}"""')
+                self.failure_stage = "action"
+                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                               + f"# {3 - (i+1)} attempts remaining.")
+                failed = True
+                continue
+            break
+                
+        if not hasattr(self.current_tick, "action_setup") or failed:
             return
         
         # Write expectation block
@@ -715,28 +722,43 @@ class WeaveAgent:
             + "# a value between 0 and 1. I should be sure to add my callback to\n"
             + "# the queue with agent.add_evaluation(title, callback)."
         )
+        # TODO: Make this multiple blocks again
         for _ in range(1):
-            eval_block = do_tick_block(agent,
-                                       "evaluation",
-                                       evaluation_hint,
-                                       {})
-            if eval_block:
-                evaluation_blocks.append(eval_block)
-            else:
-                return
+            for i in range(3):
+                eval_block = do_tick_block(agent,
+                                           "evaluation",
+                                           evaluation_hint,
+                                           {})
+                if eval_block:
+                    evaluation_blocks.append(eval_block)
+                else:
+                    # TODO: Dynamic hints by having the model or external entities
+                    # such as user analyze the situation and suggest a course of action
+                    evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                                       + f"# {3 - (i+1)} attempts remaining.")
+                    continue
 
-        # Set up evaluation callbacks
-        for evaluation_block in evaluation_blocks:
-            try:
-                exec(evaluation_block['body'])       
-            except Exception as e:
-                tb = traceback.format_exc()
-                self.add_error_block("# Evaluation setup execution failed:\n"
-                                     + f'"""{tb}"""')
-                self.failure_stage = "evaluation"
-                return
-        self.current_tick.evaluation_setup = evaluation_blocks
+                # Set up evaluation callbacks
+                for evaluation_block in evaluation_blocks:
+                    try:
+                        exec(evaluation_block['body'])
+                        failed = False
+                    except Exception as e:
+                        tb = traceback.format_exc()
+                        self.add_error_block("# Evaluation setup execution failed:\n"
+                                             + f'"""{tb}"""')
+                        self.failure_stage = "evaluation"
+                        evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                                           + f"# {3 - (i+1)} attempts remaining.")
+                        failed = True
+                        continue
+                break
+        if not evaluation_blocks or failed:
+            return
+        else:
+            self.current_tick.evaluation_setup = evaluation_blocks
 
+        # TODO: Figure out how I want to allow retries on this phase
         # Run action callback
         try:
             action_result = self.current_tick.action["callback"](self)
@@ -752,7 +774,8 @@ class WeaveAgent:
             except Exception as e:
                 tb = traceback.format_exc()
                 task_evaluation_results.append((evaluation['title'], "ERROR"))
-            
+
+        # TODO: Figure out how I want to allow retries on this phase
         # Run action evaluation callbacks
         action_evaluation_results = []
         for evaluation in self.current_tick.evaluations:

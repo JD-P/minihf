@@ -83,7 +83,7 @@ def render_block(event_block, tags=True):
     elif event_block["type"] == "task-reminder":
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "error":
-        header += "# WARNING: Error means tick did not fully execute callbacks\n"
+        header += "# WARNING: Error means last callback was not fully executed\n"
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "outcome":
         return (header + "\n" 
