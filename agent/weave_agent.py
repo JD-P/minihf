@@ -656,6 +656,20 @@ class WeaveAgent:
                                + f"# {3 - (i+1)} attempts remaining.")
                 failed = True
                 continue
+
+            # Run action callback
+            try:
+                action_result = self.current_tick.action["callback"](self)
+            except Exception as e:
+                action_result = traceback.format_exc()
+                tb = action_result
+                self.add_error_block("# Action execution failed:\n"
+                                     + f'"""{tb}"""')
+                self.failure_stage = "action"
+                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                               + f"# {3 - (i+1)} attempts remaining.")
+                failed = True
+                continue
             break
                 
         if not hasattr(self.current_tick, "action_setup") or failed:
@@ -685,9 +699,12 @@ class WeaveAgent:
             + "# callbacks that fetch information on each tick. Since I just\n"
             + "# formulated my expectations now is my opportunity to review\n"
             + "# and change the observation blocks that will be presented on the\n"
-            + "# next tick. Remove callbacks that are no longer necessary,\n"
-            + "# prepare callbacks that will be useful to help me render judgment\n"
-            + "# on whether the action succeeded on the next tick."
+            + "# next tick. I should avoid redundant observation callbacks. I\n"
+            + "# can remove ones that are no longer necessary or mostly distracting\n"
+            + "# with remove_observation_view(view_title). If new callbacks seem useful\n"
+            + "# to help me orient and judge whether the action had the intended\n"
+            + "# side effects on the computable environment I can add them\n"
+            + "# with add_observation_view(title, callback)"
         )
         observation_inference_block = do_tick_block(agent,
                                                     "observation-inference",
@@ -757,13 +774,6 @@ class WeaveAgent:
             return
         else:
             self.current_tick.evaluation_setup = evaluation_blocks
-
-        # TODO: Figure out how I want to allow retries on this phase
-        # Run action callback
-        try:
-            action_result = self.current_tick.action["callback"](self)
-        except Exception as e:
-            action_result = traceback.format_exc()
 
         # Run task evaluation callbacks
         task_evaluation_results = []
