@@ -51,8 +51,11 @@ import asyncio
 import traceback
 import requests
 import torch
+from copy import deepcopy
+from pprint import pp
 from argparse import ArgumentParser
 from typing import List, Dict, Optional, Any
+from jsonschema import validate
 from functools import partial
 from tqdm import tqdm
 from rich import print as rprint
@@ -67,56 +70,12 @@ from render_block import render_block
 from block_generators import generate_block_inner
 from block_generators import make_simple_bayes_score_prompt, make_simple_score_prompt
 
-
-class WeaveKanbanTask:
-    STATUSES = ['idle', 'going', 'completed', 'blocked', 'aborted']
-    ABBREVIATIONS = {'idle': 'I', 'going': 'G', 'completed': 'C', 'blocked': 'B', 'aborted': 'A'}
-
-    def __init__(self, kanban, task_id: int, title: str,
-                 description: str = "", status: str = "idle",
-                 blocked_on: Optional[List[str]] = None):
-        self.kanban = kanban
-        self.id = int(task_id)
+class WeaveAgentTask:
+    def __init__(self, subagent, title: str, description: str = ""):
+        self.subagent = subagent
         self.title = str(title)
         self.description = description
-        # Set initial status
-        self.history: List[Dict[str, str]] = []
-        try:
-            if status == 'blocked':
-                getattr(self, status)('Task created', blocked_on)
-            else:
-                getattr(self, status)('Task created')
-                self.blocked_on: List[int] = blocked_on
-        except:
-            raise ValueError(f'Status "{status}" not valid.')
         self.evaluations = []
-
-    def change_status(self, new_status: str, explanation: str,
-                      blocked_on: Optional[List[int]] = None) -> None:
-        try:
-            if new_status == self.status:
-                return
-        except AttributeError:
-            pass
-
-        if new_status not in self.STATUSES:
-            raise ValueError(f"Invalid status: {new_status}")
-
-        if new_status == 'blocked' and not blocked_on:
-            raise ValueError("Blocked status requires a list of tasks it's blocked on")
-        if new_status == 'blocked':
-            for task_id in blocked_on:
-                try:
-                    assert self.kanban.get_task(task_id)
-                except:
-                    raise ValueError(f"Tried to block on nonexistent task {task_id}!")
-        self.status = new_status
-        self.history.append({'status': new_status, 'explanation': explanation})
-
-        if new_status == 'blocked':
-            self.blocked_on = blocked_on
-        else:
-            self.blocked_on = []
 
     def add_evaluation(self, title, callback):
         assert type(title) == str
@@ -124,137 +83,124 @@ class WeaveKanbanTask:
         self.evaluations.append({"type":"evaluation",
                                  "title":title,
                                  "callback":callback})
-        
-    def idle(self, explanation: str) -> None:
-        self.change_status('idle', explanation)
-
-    def going(self, explanation: str) -> None:
-        self.change_status('going', explanation)
 
     def run_evaluations(self):
         results = {}
         for evaluation in self.evaluations:
             try:
-                result = evaluation["callback"](self.kanban.agent)
+                result = evaluation["callback"](self.subagent)
             except Exception as e:
                 result = traceback.format_exc()
             results[evaluation["callback"].__name__] = result
         return results
+
+class WeaveAgentTree:
+    def __init__(self, model_name: str, time_budget: int):
+        self.model_name = model_name
+        self.__agents = {}
+        self.__time_budget = time_budget
+        # Pin genesis and bootstrap so agent knows how to use framework
+        self.__pinned_events = [0, 1]
+        self.__current_block_index = 0
+        self.__event_stream = []
+
+    def run(self, name):
+        import time
+        start_time = time.time()
+        deadline = float(self.__agents[name].end_time)
+        return_schema = deepcopy(self.__agents[name].schema)
+        result = self.__agents[name].run()
+        validate(instance=result, schema=return_schema)
+        end_time = time.time()
+        if end_time > deadline + 300:
+            # TODO: More nuanced way to handle this
+            raise ValueError("Time exceeded!")
+        else:
+            return result
         
-    def completed(self, explanation: str) -> None:
-        # Run evaluation callbacks
-        evaluation_results = self.run_evaluations()
-        for evaluation in self.evaluations:
-            try:
-                assert evaluation_results[evaluation["callback"].__name__] == True
-            except Exception as e:
-                msg = (f"# Unable To .completed() Task '{self.title}' Due To Failed Test: \n"
-                       + "# If you're seeing this it's because you tried to do\n"
-                       + "# .completed() on a task and its test suite failed.\n"
-                       + f"# The failing test is '{evaluation['title']}'\n")
-                tb = traceback.format_exc()
-                self.kanban.agent.failure_stage = "'{self.title}' .completed() test suite"
-                raise ValueError(msg + f'"""{tb}"""')
-        if self.kanban.agent.debugging:
-            raise ValueError("Can't complete a task while error in last tick.")
-        self.change_status('completed', explanation)
+    def subagent(self, name, parent, description, schema, time_budget):
+        if name in self.__agents:
+            raise ValueError
+        reserved_words = {"name", "description", "children", "schema"}
+        assert not set(schema).intersection(reserved_words)
+        subagent = WeaveAgentNode(self, parent, name, description, schema, time_budget)
+        self.__agents[name] = subagent
+        return subagent
 
-    def blocked(self, explanation: str, blocked_on: List[str]) -> None:
-        self.change_status('blocked', explanation, blocked_on)
-
-    def aborted(self, explanation: str) -> None:
-        self.change_status('aborted', explanation)
-
-    def view_task(self) -> str:
-        history = "\n".join([f"- {h['status']}: {h['explanation']}" for h in self.history])
-        return f"ID: {self.id}\nTitle: {self.title}\nDescription: {self.description}\nMetadata: {self.blocked_on}\nHistory:\n{history}"
-
-    def abbreviated_history(self) -> str:
-        letter_history = ' '.join([self.ABBREVIATIONS[h['status']] for h in self.history])
-        # Display full name of final status to help LLM read it past tokenizer
-        return letter_history[:-1] + self.history[-1]['status'].title()
+    def add_block(self, block):
+        block['index'] = self.__current_block_index
+        block['timestamp'] = time.time()
+        if block['type'] == 'orientation':
+            block['metadata'] = {
+                "block_index":self.__current_block_index,
+                "working_directory":os.getcwd()
+            }
+        if "q" not in block:
+            block["q"] = ""
+        if "score" not in block:
+            #TODO: Make actual score function for observations, task reminders etc
+            block["score"] = 2
+        if "tags" not in block:
+            #TODO: Make actual tagging function
+            block["tags"] = ["placeholder",]
         
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            'id': self.id,
-            'title': self.title,
-            'description': self.description,
-            'status': self.status,
-            'history': self.history,
-            'blocked_on': self.blocked_on
-        }
+        if block["type"] not in {"genesis", "bootstrap"}:
+            writer = bm25_index.writer()
+            writer.add_document(tantivy.Document(
+                type=block["type"],
+                render=render_block(block),
+                q=block["q"],
+                score=block["score"],
+                index=block["index"],
+                timestamp=block["timestamp"],
+                tags=" ".join(block["tags"]),
+            ))
+            writer.commit()
+        
+        self.__current_block_index += 1
 
-    @classmethod
-    def from_dict(cls, kanban, task_dict: Dict[str, Any]) -> 'WeaveKanbanTask':
-        task = cls(
-            kanban,
-            task_id=task_dict['id'],
-            title=task_dict['title'],
-            description=task_dict['description'],
-        )
-        task.status = task_dict['status']
-        task.history = task_dict['history']
-        task.blocked_on = task_dict['blocked_on']
-        return task
+    def current_block_index(self):
+        return self.__current_block_index
+            
+    def render_context(self):
+        context = ""
+        context_blocks = []
+        history_len = 60
+        for index in self.__pinned_events:
+            if (len(self.__event_stream) - index) > history_len:
+                context_blocks.append(self.__event_stream[index])
+        context_blocks += self.__event_stream[-history_len:]
+        for event_block in context_blocks:
+            context += render_block(event_block)
+        return context
+        
+    def view_board(self, root="main") -> str:
+        problem_map = {}
+        substack = [root,]
+        while substack:
+            subagent = self.__agents[substack.pop()]
+            parent = subagent.name
+            path = []
+            while parent:
+                path.append(parent)
+                # Convert to object so we can get grandparent
+                parent = self.__agents[parent]
+                parent = parent.parent
+            path.reverse()
+            current_level = problem_map
+            for key in path:
+                if key not in current_level:
+                    current_level[key] = {}
+                current_level = current_level[key]
+            current_level["name"] = subagent.name
+            current_level["description"] = subagent.task.description
+            current_level["evaluations"] = subagent.task.run_evaluations()
+            current_level["time_remaining"] = subagent.end_time - time.time()
+            current_level["completed"] = subagent.completed
+            current_level["schema"] = subagent.schema
+            substack.extend(subagent.children)
+        return pp(problem_map)
 
-class WeaveKanban:
-    def __init__(self, agent):
-        self.agent = agent
-        self.tasks: List[WeaveKanbanTask] = []
-        self.next_id = 1
-
-    def add_task(self, title: str, description: str = "", status: str = "idle",
-                 blocked_on: Optional[List[str]] = None) -> None:
-        task = WeaveKanbanTask(self, self.next_id, title, description, status, blocked_on)
-        self.tasks.append(task)
-        self.next_id += 1
-
-    def get_task(self, task_id: int) -> Optional[WeaveKanbanTask]:
-        task_id = int(task_id)
-        for task in self.tasks:
-            if task.id == task_id:
-                return task
-        return None
-
-    def view_board(self) -> str:
-        table = [[task.id, task.title, task.abbreviated_history()]
-                 for task in self.tasks if task.status not in ["completed", "aborted"]]
-        headers = ['ID', 'Title', 'History']
-        col_widths = [max(len(str(item)) for item in col) for col in zip(*table, headers)]
-
-        def format_row(row: List[Any]) -> str:
-            return ' | '.join(f"{item:<{col_widths[i]}}" for i, item in enumerate(row))
-
-        header_row = format_row(headers)
-        separator_row = ' | '.join('-' * width for width in col_widths)
-        table_rows = ""
-        for row in table:
-            table_rows += format_row(row) + "\n"
-            if self.get_task(row[0]) == self.agent.current_task:
-                evaluation_results = self.get_task(row[0]).run_evaluations()
-                for evaluation in self.get_task(row[0]).evaluations:
-                    evaluation_fn = evaluation["callback"]
-                    result = evaluation_results[evaluation_fn.__name__]
-                    table_rows += (" " * 7) + " - " + evaluation_fn.__name__ + ": " + str(result) + "\n"
-        return f"{header_row}\n{separator_row}\n{table_rows}"
-
-    def unblock(self) -> None:
-        """Automatically unblock tasks when their blockers are completed."""
-        for task in self.tasks:
-            if task.status == "blocked":
-                if False not in [self.get_task(task_id).status == "completed"
-                                 for task_id in task.blocked_on]:
-                    task.idle("Automatically unblocked by completing blockers")
-                    
-
-    def to_json(self) -> str:
-        return json.dumps([task.to_dict() for task in self.tasks], indent=2)
-
-    def from_json(self, json_str: str) -> None:
-        task_dicts = json.loads(json_str)
-        self.tasks = [WeaveKanbanTask.from_dict(self, task_dict) for task_dict in task_dicts]
-        self.next_id = max([task.id for task in self.tasks], default=0) + 1
-    
 
 class Tick:
     def __init__(self, agent, index):
@@ -287,134 +233,57 @@ class Tick:
         }                
         
     
-class WeaveAgent:
-    def __init__(self, model_name):
-        self.model_name = model_name
-        self.event_stream = []
-        # Pin genesis and bootstrap so agent knows how to use framework
-        self.pinned_events = [0, 1]
+class WeaveAgentNode:
+    def __init__(self, tree, parent, subagent_name, description, schema, time_budget):
+        self.tree = tree
+        self.parent = parent
+        self.model_name = self.tree.model_name
+        self.name = subagent_name
+        self.schema = schema
+        self.creation_time = time.time()
+        self.time_budget = time_budget
+        self.end_time = self.creation_time + (time_budget * 60)
         self.current_tick = Tick(self, 0)
         self.ticks = []
-        self.current_block_index = 0
-        self.reminders = []
         self.debugging = False
         self.failure_stage = "event stream"
-        self.tasks = WeaveKanban(self)
-        self.current_task = None
+        self.task = WeaveAgentTask(self, self.name, description)
         self.observation_views = []
+        # TODO: Do I really need to have this pointer?
+        self.bm25_index = bm25_index
         self.tools = {}
         self.cache = {}
         self.context = ""
+        self.completed = False
 
-        schema_builder = SchemaBuilder()
-        schema_builder.add_text_field("type", stored=True)
-        schema_builder.add_text_field("render", stored=True)
-        schema_builder.add_text_field("q", stored=True)
-        schema_builder.add_float_field("score", stored=True)
-        schema_builder.add_integer_field("index", stored=True)
-        schema_builder.add_float_field("timestamp", stored=True)
-        schema_builder.add_text_field("tags", stored=True)
-
-        self.bm25_schema = schema_builder.build()
+    def run(self):
+        """Run the subagent."""
+        self.start_time = time.time()
+        self.end_time = self.start_time + (self.time_budget * 60)
+        while (time.time() < self.end_time) and not self.completed:
+            self.tick()
+            time.sleep(1)
+        return self.completed
         
-        if not os.path.exists("memories"):
-            os.mkdir("memories")
-        if not os.path.exists("memories/bm25"):
-            os.mkdir("memories/bm25")
-        self.bm25_index = Index(self.bm25_schema, path="./memories/bm25")
-
-    def shutdown(self):
-        """The agent shutdown routine. This should be called when the agent's 
-        root task has been resolved, the root task is deemed intractable, or the
-        agent has wandered off so far it can't find its way back to the task."""
-        if not os.path.exists("/app/weave-agent-logs"):
-            os.mkdir("/app/weave-agent-logs")
-        with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
-            out = {"model_name":self.model_name,
-                   "event_stream":self.event_stream,
-                   "current_block_index":self.current_block_index,
-                   "last_context":self.context}
-            json.dump(out, outfile)
-            outfile.flush()
-        # Temp code to stop docker from shutting down
-        while 1:
-            time.sleep(30)
-        raise SystemExit
-        
-    def add_block(self, block):
-        block['index'] = self.current_block_index
-        block['timestamp'] = time.time()
-        if block['type'] == 'orientation':
-            block['metadata'] = {
-                "tick_number":len(self.ticks) + 1,
-                "block_index":self.current_block_index,
-                "working_directory":os.getcwd()
-            }
-        if block['type'] == 'task-inference':
-            try:
-                block['metadata'] = {
-                    "task_id":self.current_task.id,
-                    "task_title":self.current_task.title,
-                    "task_status":self.current_task.status,
-                    "task_explanation":self.current_task.history[-1]['explanation']
-                }
-            except AttributeError:
-                explanation = ("Right now there is no task selected. You can "
-                               + "select a task with agent.current_task = "
-                               + "agent.tasks.get_task(task_id)")
-                block['metadata'] = {
-                    "task_id":-1,
-                    "task_title": "No Task Set As Current Task",
-                    "task_status": "nonexistent",
-                    "task_explanation": explanation
-                }
-        if "q" not in block:
-            block["q"] = ""
-        if "score" not in block:
-            #TODO: Make actual score function for observations, task reminders etc
-            block["score"] = 2
-        if "tags" not in block:
-            #TODO: Make actual tagging function
-            block["tags"] = ["placeholder",]
-        self.event_stream.append(block)
-
-        if block["type"] not in {"genesis", "bootstrap"}:
-            writer = self.bm25_index.writer()
-            writer.add_document(tantivy.Document(
-                type=block["type"],
-                render=render_block(block),
-                q=block["q"],
-                score=block["score"],
-                index=block["index"],
-                timestamp=block["timestamp"],
-                tags=" ".join(block["tags"]),
-            ))
-            writer.commit()
-        
-        self.current_block_index += 1
-        
-    def add_reminder(self, reminder):
-        """Reminders are trigger callbacks that get executed on each tick. They return
-        a value between 0 and 1 which is compared to a threshold to determine
-        if the associated reminder callback should trigger or not."""
-        assert type(reminder) == dict
-        assert "type" in reminder
-        assert "trigger_callback" in reminder
-        assert "reminder_callback" in reminder
-        assert "threshold" in reminder
-        assert (reminder["trigger_type"]
-                in ("yes_no_logit",
-                    "callback"))
-        self.reminders.append(reminder)
-
-    def remove_reminder(self, reminder):
-        self.reminders.remove(reminder)
-
-    def add_task(self, title, description, status, blocked_on=None):
-        self.tasks.add_task(title,
-                            description,
-                            status,
-                            blocked_on)
+    def return_to_caller(self, value: dict):
+        """Return thread of execution from subagent to caller. This should be 
+        called when the agent's task has been resolved, the task is deemed 
+        intractable, or the agent has wandered off so far it can't find 
+        its way back to the task."""
+        value["name"] = self.name
+        value["description"] = self.task.description
+        value["children"] = self.children
+        schema["name"] = "string"
+        schema["description"] = "string"
+        schema["children"] = "list"
+        schema["schema"] = "object"
+        for callback_name, result in self.task.run_evaluations():
+            value[callback_name] = result
+            self.schema[callback_name] = {"type": ["boolean", "integer", "float"]}
+        value["schema"] = self.schema
+        validate(instance=value, schema=self.schema)
+        # Setting this interrupts the inference loop and signals an exit
+        self.completed = value
 
     def add_action(self, title, callback):
         assert type(title) == str
@@ -435,9 +304,6 @@ class WeaveAgent:
         for view in views:
             self.observation_views.remove(view)
 
-    def get_block_by_index(self, index):
-        return self.event_stream[index]
-
     def update_cache(self, key, value):
         self.cache[key] = value
 
@@ -454,23 +320,19 @@ class WeaveAgent:
         self.current_tick.evaluations.append({"type":"evaluation",
                                               "title":title,
                                               "callback":callback})
-            
+
     def render_context(self):
-        self.context = ""
-        context_blocks = []
-        history_len = 30
-        for index in self.pinned_events:
-            if (len(self.event_stream) - index) > history_len:
-                context_blocks.append(self.event_stream[index])
-        context_blocks += self.event_stream[-history_len:]
-        for event_block in context_blocks:
-            self.context += render_block(event_block)
-        return self.context
+        self.context = self.tree.render_context()
 
     def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
         return generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
 
+    def add_block(self, block):
+        block["subagent"] = self.name
+        block["time_remaining"] = self.end_time - time.time()
+        self.tree.add_block(block)
+    
     def add_error_block(self, error_message):
         self.debugging = True
         error_block = {
@@ -480,7 +342,6 @@ class WeaveAgent:
         self.add_block(error_block)
                     
     def tick(self):
-        self.tasks.unblock()
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -504,11 +365,14 @@ class WeaveAgent:
         task_reminder_body = ""
 
         try:
-            if self.current_task:
-                task_reminder_body += "# Current Task:\n"
-                task_reminder_body += ('"""\n' + self.current_task.view_task() + '\n"""\n')
-            task_reminder_body += "# Kanban Board:\n"
-            task_reminder_body += ('"""\n' + self.tasks.view_board() + '\n"""')
+            # if self.current_task:
+                # TODO: Figure out how to bind evaluation definitions to task
+                # so that the agent can be reminded of how the unit tests are
+                # defined exactly and therefore what is expected.
+                #task_reminder_body += "# Current Task:\n"
+                #task_reminder_body += ('"""\n' + self.task.view_task() + '\n"""\n')
+            task_reminder_body += "# Problem Map:\n"
+            task_reminder_body += ('"""\n' + self.tree.view_board() + '\n"""')
         except Exception as e:
             tb = traceback.format_exc()
             self.failure_stage = "task reminder"
@@ -529,7 +393,8 @@ class WeaveAgent:
                                'body': observation[1]} for observation in observations]
 
         # Inject these into the event stream
-        self.event_stream += (task_blocks + observation_blocks)
+        for new_block in (task_blocks + observation_blocks):
+            self.add_block(new_block)
             
         # Render context
         self.render_context()
@@ -543,7 +408,7 @@ class WeaveAgent:
             weave_params.update(wp_update)
             with open(f"/app/eval_rubrics/{block_type}.txt") as infile:
                 inference_questions = infile.read().strip().splitlines()
-            rprint(f"Writing block #[cyan]{self.current_block_index}[/cyan] of type [cyan]{block_type}[/cyan]")
+            rprint(f"Writing block #[cyan]{self.tree.current_block_index()}[/cyan] of type [cyan]{block_type}[/cyan]")
             try:
                 block = self.generate_block(block_type,
                                             self.context,
@@ -552,6 +417,7 @@ class WeaveAgent:
                                             hint=hint)
             except ValueError as e:
                 tb = traceback.format_exc()
+                # TODO: This isn't even correct, replace with dynamic hints -_-
                 hint = ("Hint: callbacks are structured like\n\n"
                         + "def callback_name(agent):\n   "
                         + f"# code...\n   pass\nagent.add_orientation({{...}})")
@@ -576,44 +442,13 @@ class WeaveAgent:
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
                        "weave_round_budget":96, "weave_n_expand":32}
-        orientation_block = do_tick_block(agent,
+        orientation_block = do_tick_block(self,
                                           "orientation",
                                           orientation_hint,
                                           mcts_params)
         if orientation_block:
             self.current_tick.orientation = orientation_block
         else:
-            return
-
-        # Task inference block
-        task_inference_hint = (
-            "#hint Keep this simple. In the task inference stage I change the status\n"
-            + "# of tasks on the kanban board. If the current task doesn't need\n"
-            + "# changed I set it to .going() with a short summary of where the\n" 
-            + "# task is at like .going('Fixing HTTP errors...') If the current task\n"
-            + "# is complete I do .completed() to prompt the kanban to check that it\n"
-            + "# really is complete and set a new task in the statement after it by\n"
-            + "# looking back at the kanban board and doing\n"
-            + "# agent.tasks.get_task(next_task_id) where next_task_id is a integer\n"
-            + "# literal pointing at the right next task."
-        )
-        task_inference_block = do_tick_block(agent,
-                                             "task-inference",
-                                             task_inference_hint,
-                                             {})
-        if task_inference_block:
-            self.current_tick.task_inference = task_inference_block
-        else:
-            return
-
-        # Execute task updates
-        try:
-            exec(task_inference_block['body'])
-        except Exception as e:
-            tb = traceback.format_exc()
-            self.add_error_block(f"# task-inference failed:\n"
-                                 + f'"""{tb}"""')
-            self.failure_stage = "task-inference"
             return
         
         # Write action block
@@ -630,7 +465,7 @@ class WeaveAgent:
             + "# local context."
         )
         for i in range(3):
-            action_block = do_tick_block(agent,
+            action_block = do_tick_block(self,
                                          "action",
                                          action_hint,
                                          {})
@@ -684,7 +519,7 @@ class WeaveAgent:
             + "# working or not. Like the orientation this should go in triple\n"
             + "# quotes."
         )
-        expectation_block = do_tick_block(agent,
+        expectation_block = do_tick_block(self,
                                           "expectation",
                                           expectation_hint,
                                           {})
@@ -706,7 +541,7 @@ class WeaveAgent:
             + "# side effects on the computable environment I can add them\n"
             + "# with add_observation_view(title, callback)"
         )
-        observation_inference_block = do_tick_block(agent,
+        observation_inference_block = do_tick_block(self,
                                                     "observation-inference",
                                                     observation_inference_hint,
                                                     {})
@@ -742,7 +577,8 @@ class WeaveAgent:
         # TODO: Make this multiple blocks again
         for _ in range(1):
             for i in range(3):
-                eval_block = do_tick_block(agent,
+                eval_block = do_tick_block(self,
+                                           agent,
                                            "evaluation",
                                            evaluation_hint,
                                            {})
@@ -836,6 +672,8 @@ if __name__ == "__main__":
     parser.add_argument("--bootstrap",
                         default="bootstrap.py",
                         help="The filepath to run as bootstrap.")
+    parser.add_argument("--budget", type=int, default=360,
+                        help="Time budget for the run in minutes.")
     args = parser.parse_args()
         
     def simple_evaluate_outputs(score_prompt_fns, texts):
@@ -862,7 +700,7 @@ if __name__ == "__main__":
         return scores
 
     
-    agent = WeaveAgent(args.model_name)
+    agent = WeaveAgentTree(args.model_name, args.budget)
 
     if not args.tokenizer:
         args.tokenizer = args.model_name
@@ -872,14 +710,40 @@ if __name__ == "__main__":
     # Delete token so it doesn't leak into traces
     os.remove("hf_token.txt")
     agent.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+
+    schema_builder = SchemaBuilder()
+    schema_builder.add_text_field("type", stored=True)
+    schema_builder.add_text_field("render", stored=True)
+    schema_builder.add_text_field("q", stored=True)
+    schema_builder.add_float_field("score", stored=True)
+    schema_builder.add_integer_field("index", stored=True)
+    schema_builder.add_float_field("timestamp", stored=True)
+    schema_builder.add_text_field("tags", stored=True)
+
+    bm25_schema = schema_builder.build()
+
+    if not os.path.exists("memories"):
+        os.mkdir("memories")
+    if not os.path.exists("memories/bm25"):
+        os.mkdir("memories/bm25")
+    bm25_index = Index(bm25_schema, path="./memories/bm25")
     
+    # Mock bootstrap agent so we can run the callbacks in bootstrap file
+    self = agent.subagent(
+        "bootstrap",
+        None,
+        "Bootstrap the weave-agent",
+        {},
+        args.budget,
+                          
+    )
     with open("weave_agent.py") as infile:
         # Genesis block
         genesis_block = {
             'type': 'genesis',
             'body': infile.read()
         }
-        agent.add_block(genesis_block)
+        self.add_block(genesis_block)
 
     with open(args.bootstrap) as infile:
         # Bootstrap block
@@ -887,10 +751,10 @@ if __name__ == "__main__":
             'type': 'bootstrap',
             'body': infile.read()
         }
-        agent.add_block(bootstrap_block)
+        self.add_block(bootstrap_block)
         exec(bootstrap_block["body"])
 
-    def run_bootstrap_callbacks():
+    def run_bootstrap_callbacks(agent):
         """Run bootstrap callbacks in function to avoid contaminating global scope."""
         # Run action callback
         action_result = agent.current_tick.action["callback"](agent)
@@ -913,9 +777,17 @@ if __name__ == "__main__":
         agent.add_block(outcome_block)
         agent.current_tick.outcome = outcome_block
 
-    run_bootstrap_callbacks()
+    run_bootstrap_callbacks(self)
+    # Clean up mock bootstrap agent
+    del(self)
+    
+    result, event_stream = agent.run("main")
+    if not os.path.exists("/app/weave-agent-logs"):
+        os.mkdir("/app/weave-agent-logs")
+    with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
+        out = {"model_name":args.model_name,
+               "event_stream":event_stream,
+               "result":result,}
+        json.dump(out, outfile)
+        outfile.flush()
 
-    # Run the agent
-    while True:
-        agent.tick()
-        time.sleep(1)  # Simulate tick interval

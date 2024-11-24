@@ -68,7 +68,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_prompt += "# Retrieve observations relating to something Amanda said\n"
     bm25_prompt += "#bm25_query type:'observation' render:Amanda render:amanda render:she render:said render:remember render:forget\n"
     bm25_prompt += "# Now I'll write the query that will help me write the next block.\n"
-    if self.current_block_index < 50:
+    if self.tree.current_block_index() < 50:
         bm25_prompt += f"#bm25_query type:'{block_type}' "
     else:
         bm25_prompt += "#bm25_query "
@@ -89,7 +89,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             break
         except ValueError:
             continue
-    if self.current_block_index < 50 and bm25_query:
+    if self.tree.current_block_index() < 50 and bm25_query:
         bm25_query = f"type:'{block_type}' " + bm25_query
 
         searcher = self.bm25_index.searcher()
@@ -104,17 +104,22 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         retrieved_blocks = None
 
     prompt = f'<s> [INST] {context}'
-    if self.current_block_index > 10 and retrieved_blocks:
-        prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"    
+    if self.tree.current_block_index() > 10 and retrieved_blocks:
+        prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"    
         for block in retrieved_blocks:
             block_text = block["render"][0].replace(
                 block["type"][0],
                 "recalled-" + block["type"][0]
             )
             prompt += "\n" + block_text
-        prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.current_block_index}\n"
+        prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"
     prompt += f"\n# Write the next {block_type} block."
-    prompt += f" [/INST]#startblock type: {block_type}\n{hint}\n"
+    # TODO: Fix this so it uses the rendered header from render_block ?
+    time_remaining = self.end_time - time.time()
+    prompt += f" [/INST]#subagent {self.name}\n"
+    prompt += f"#startblock type: {block_type}\n"
+    prompt += f"#time_remaining {time_remaining} seconds\n"
+    prompt += f"{hint}\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type in {"orientation", "expectation",
@@ -181,7 +186,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     try:
         program = branches[-1].branch_text()
         program = prefix + program.strip()
-        compile(program, f"block_{self.current_block_index}", "exec")
+        compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
         do_long = True
     # If rejection sampling fails do full search
@@ -216,7 +221,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     if bm25_query:
         block["bm25_query"] = bm25_query
     try:
-        compile(program, f"block_{self.current_block_index}", "exec")
+        compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
         block["score"] -= 2
         self.add_block(block)
@@ -233,7 +238,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         )
         block["body"] = callback + "\n\n" + registration
     self.add_block(block)
-    rprint(f"Finished writing block #[cyan]{self.current_block_index-1}[/cyan] of type [cyan]{block_type}[/cyan]")
+    rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan]")
     print(block["body"])
     return block
 

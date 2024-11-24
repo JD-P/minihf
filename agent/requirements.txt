@@ -10,3 +10,4 @@ transformers
 protobuf
 sentencepiece
 tantivy
+jsonschema

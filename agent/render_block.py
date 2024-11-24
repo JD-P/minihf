@@ -23,11 +23,16 @@ def render_block(event_block, tags=True):
     if "body" not in event_block and event_block["type"] in defunct_body_keys:
         event_block["body"] = event_block[defunct_body_keys[event_block["type"]]]
     
-    header = f'#startblock type: {event_block["type"]}\n'
+    header = ""
+    if "subagent" in event_block:
+        header += f'#subagent {event_block["subagent"]}\n'
+    header += f'#startblock type: {event_block["type"]}\n'
     if "index" in event_block:
         header += f'#index {event_block["index"]}\n'
     if "timestamp" in event_block:
         header += f'#timestamp {event_block["timestamp"]}\n'
+    if "time_remaining" in event_block:
+        header += f'#time_remaining {event_block["time_remaining"]} seconds\n'
     if "bm25_query" in event_block:
         header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
@@ -69,7 +74,7 @@ def render_block(event_block, tags=True):
         return (header + "\n" + content + footer)
     elif event_block["type"] == "orientation":
         metadata = event_block["metadata"]
-        header += f"# Starting tick #{metadata['tick_number']} "
+        header += f"# Starting new tick "
         header += f"with block #{metadata['block_index']}\n"
         header += f"# Current Working Directory: {metadata['working_directory']}\n"
         return (header + "\n" + event_block["body"] + footer)
