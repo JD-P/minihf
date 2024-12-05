@@ -122,8 +122,9 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     prompt += f"{hint}\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
-    if block_type in {"orientation", "expectation",
-                      "task-inference", "observation_inference"}:
+    if block_type == "orientation":
+        prefix = '"""WEAVER [P: EXPECTATION], '
+    if block_type in {"expectation", "task-inference", "observation_inference"}:
         prefix = '"""'
     elif block_type in {"action", "evaluation"}:
         prefix = "def "

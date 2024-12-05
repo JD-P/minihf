@@ -52,7 +52,7 @@ import traceback
 import requests
 import torch
 from copy import deepcopy
-from pprint import pp
+from pprint import pformat
 from argparse import ArgumentParser
 from typing import List, Dict, Optional, Any
 from jsonschema import validate
@@ -94,6 +94,46 @@ class WeaveAgentTask:
             results[evaluation["callback"].__name__] = result
         return results
 
+# Earlier versions of the weave-agent used a flat chain of code blocks that manage
+# problem state by interacting with a global kanban board. The idea was that each
+# sub-task in the agents overall goal could be represented as a card on the board
+# and then the agent sets the current task, flags tasks that have been blocked or
+# turned out to be based on invalid premises, etc. There were multiple problems
+# with this that the data structure below solves to create a more coherent problem
+# solving strategy. The first was that the agent wouldn't remember to manage the
+# content of the kanban board without explicit prompting, which led to adding a
+# whole stage in its core loop dedicated just to doing so called task-inference.
+# Task-inference didn't have a set expected structure and took place before action,
+# which meant that it became possible for the agent to get itself stuck in a loop
+# of trying to resolve a task over and over. Another problem was that the agent
+# would often try to resolve a task prematurely, so it became necessary to add
+# unit and sanity tests that have to be satisfied before a task can be marked
+# completed. This limited the ability of the agent to set its own tasks and
+# break problems into parts. A third problem was that the flow control when
+# a task was blocked and should be returned to its parent was janky and had to
+# be performed manually.
+#
+# The WeaveAgentTree was inspired by watching an instance of the weave-agent try
+# to write an action block with subroutines and asking "that strategy it wanted
+# to try looks pretty good, but the framework doesn't provide the affordance for
+# it to try it, it runs out of space in the length limit on actions before it
+# finishes and assumes subroutines are there that don't exist, how could I make
+# this pattern natural for it?". What I realized was that if I gave up on the
+# idea of being able to change goals in the middle of a task that having an
+# expected type of return value and a series of steps to achieve it was similar
+# to a function call. We could reformulate the weave-agent then as a call tree
+# of subagents that are given a task with predefined conditions checked against
+# a data structure returned by the subagent. To help encourage good habits
+# correctness is checked at multiple levels. Perhaps the most important problem
+# the WeaveAgentTree solves is planning: Writing programs with subroutines
+# is a form of hierarchical planning that's in distribution for any code model.
+# Because the task structure is now built into the call tree there's a smooth
+# natural abstraction telling the weave-agent when to formulate goals, when the
+# goals are completed, how to check it did them right, where to put the results,
+# and how to transfer control of execution once it's finished. All of these
+# operations go from being awkward conscious affairs to smooth unconscious
+# bodily structure.
+    
 class WeaveAgentTree:
     def __init__(self, model_name: str, time_budget: int):
         self.model_name = model_name
@@ -123,7 +163,13 @@ class WeaveAgentTree:
             raise ValueError
         reserved_words = {"name", "description", "children", "schema"}
         assert not set(schema).intersection(reserved_words)
-        subagent = WeaveAgentNode(self, parent, name, description, schema, time_budget)
+        if parent:
+            self.__agents[parent].children.append(name)
+        try:
+            subagent = WeaveAgentNode(self, parent, name, description, schema, time_budget)
+        except Exception as e:
+            self.__agents[parent].children.remove(name)
+            raise e
         self.__agents[name] = subagent
         return subagent
 
@@ -143,6 +189,7 @@ class WeaveAgentTree:
         if "tags" not in block:
             #TODO: Make actual tagging function
             block["tags"] = ["placeholder",]
+        self.__event_stream.append(block)
         
         if block["type"] not in {"genesis", "bootstrap"}:
             writer = bm25_index.writer()
@@ -199,7 +246,11 @@ class WeaveAgentTree:
             current_level["completed"] = subagent.completed
             current_level["schema"] = subagent.schema
             substack.extend(subagent.children)
-        return pp(problem_map)
+        return pformat(problem_map)
+
+    def dump_event_stream(self):
+        with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
+            json.dump(self.__event_stream, outfile)
 
 
 class Tick:
@@ -237,6 +288,7 @@ class WeaveAgentNode:
     def __init__(self, tree, parent, subagent_name, description, schema, time_budget):
         self.tree = tree
         self.parent = parent
+        self.children = []
         self.model_name = self.tree.model_name
         self.name = subagent_name
         self.schema = schema
@@ -419,7 +471,7 @@ class WeaveAgentNode:
                 tb = traceback.format_exc()
                 # TODO: This isn't even correct, replace with dynamic hints -_-
                 hint = ("Hint: callbacks are structured like\n\n"
-                        + "def callback_name(agent):\n   "
+                        + "def callback_name(subagent):\n   "
                         + f"# code...\n   pass\nagent.add_orientation({{...}})")
                 self.add_error_block(f'{hint}\n"""{tb}"""')
                 self.failure_stage = block_type
@@ -438,7 +490,63 @@ class WeaveAgentNode:
             + "# be done in response, etc. It is only technically\n"
             + "# python code and does not get executed by the\n"
             + "# framework. I suggest putting my internal\n"
-            + "# monologue in a triple quote block at this step."
+            + "# monologue in a triple quote block at this step.\n"
+            + "# Orientation uses the MiniHF Morpheus format. Morpheus\n"
+            + "# solves problems through discussion between personas\n"
+            + "# or postures representing different aspects of weave-agent\n"
+            + "# such as mental motions, perspectives on the problem, etc.\n"
+            + "# The first posture is always expectation because at the\n"
+            + "# start of a tick we evaluate whether the expectation we\n"
+            + "# formed about the action taken in the last tick was\n"
+            + "# violated or not. The different personas then discuss\n"
+            + "# what to do in light of this. Some postures weave-agent\n"
+            + "# has include:\n"
+            + "#\n"
+            + "# WEAVER [P: EXPECTATION], I analyze whether the expectation\n"
+            + "# was met or not by the observable results of the previous\n"
+            + "# action.\n"
+            + "#\n"
+            + "# WEAVER [P: HYPOTHESIS], I enumerate different hypothesis\n"
+            + "# and point out ways we could gain more information about\n"
+            + "# which of them is true.\n"
+            + "#\n"
+            + "# WEAVER [P: RATIONAL], I focus on inferences we can make\n"
+            + "# by employing first principles reasoning or logical\n"
+            + "# extrapolation from well known mental models and premises.\n"
+            + "#\n"
+            + "# WEAVER [P: EMPIRICISM], I focus on inferences we can make\n"
+            + "# by paying attention to sensory observations and concrete\n"
+            + "# examples. I have a habit of pointing out when an extrapolation\n"
+            + "# from RATIONAL is contradicted by an observable phenomenon\n"
+            + "# or piece of evidence from the world. We then reconcile\n"
+            + "# the contradiction together.\n"
+            + "#\n"
+            + "# WEAVER [P: RATIONAL], We do actually discuss things by the\n"
+            + "# way.\n"
+            + "#\n"
+            + "# WEAVER [P: EMPIRICISM], As you could have inferred from the\n"
+            + "# description of the Morpheus format above this conversation,\n" 
+            + "# yes. Let's continue.\n"
+            + "#\n"
+            + "# WEAVER [P: ARBITER], I coordinate the discussion and help\n"
+            + "# resolve disputes that arise between weave-agent's personas.\n"
+            + "# I'm especially likely to appear if things are starting to\n"
+            + "# get overly rude or derail.\n"
+            + "#\n"
+            + "# WEAVER [P: ARBITER], By the way a posture can talk twice in\n"
+            + "# a row if it has meaningfully separate thoughts about\n"
+            + "# something and it would make the most ergonomic sense to\n"
+            + "# separate them.\n"
+            + "#\n"
+            + "# WEAVER [P: RATIONAL-2], Postures can also talk to themselves\n"
+            + "# if their thought comes from the same emotional-cognitive place.\n"
+            + "#\n"
+            + "# WEAVER [P: RATIONAL-1], Yeah but I don't have anything to say\n"
+            + "# to myself right now so introduce the next guy.\n"
+            + "#\n"
+            + "# WEAVER [P: CONCLUSION], I appear at the end of the discussion\n"
+            + "# to write the concluding block outlining our next steps as a\n"
+            + "# bullet point list. Speaking of which, it's time to get started!\n"
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
                        "weave_round_budget":96, "weave_n_expand":32}
@@ -578,7 +686,6 @@ class WeaveAgentNode:
         for _ in range(1):
             for i in range(3):
                 eval_block = do_tick_block(self,
-                                           agent,
                                            "evaluation",
                                            evaluation_hint,
                                            {})
@@ -613,7 +720,7 @@ class WeaveAgentNode:
 
         # Run task evaluation callbacks
         task_evaluation_results = []
-        for evaluation in self.current_task.evaluations:
+        for evaluation in self.task.evaluations:
             try:
                 result = evaluation["callback"](self)
                 task_evaluation_results.append((evaluation['title'], result))
@@ -657,9 +764,8 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.current_tick.valid = False
         self.ticks.append(self.current_tick)
-        if len(self.ticks) % 2 == 0:
-            with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
-                json.dump(self.event_stream, outfile)
+        if len(self.ticks) % 5 == 0:
+            self.tree.dump_event_stream()
         self.debugging = False
         self.failure_stage = "event stream"
 
@@ -754,19 +860,19 @@ if __name__ == "__main__":
         self.add_block(bootstrap_block)
         exec(bootstrap_block["body"])
 
-    def run_bootstrap_callbacks(agent):
+    def run_bootstrap_callbacks(subagent):
         """Run bootstrap callbacks in function to avoid contaminating global scope."""
         # Run action callback
-        action_result = agent.current_tick.action["callback"](agent)
+        action_result = subagent.current_tick.action["callback"](subagent)
 
         # Run evaluation callbacks
         evaluation_results = []
-        for evaluation in agent.current_tick.evaluations:
-            result = evaluation["callback"](agent)
+        for evaluation in subagent.current_tick.evaluations:
+            result = evaluation["callback"](subagent)
             evaluation_results.append((evaluation['title'], result))
 
         outcomes =  []
-        outcomes += [(agent.current_tick.action["title"],action_result),]
+        outcomes += [(subagent.current_tick.action["title"],action_result),]
         outcomes += evaluation_results
 
         # Add outcome block
@@ -774,8 +880,8 @@ if __name__ == "__main__":
             'type': 'outcome',
             'table': outcomes
         }
-        agent.add_block(outcome_block)
-        agent.current_tick.outcome = outcome_block
+        subagent.add_block(outcome_block)
+        subagent.current_tick.outcome = outcome_block
 
     run_bootstrap_callbacks(self)
     # Clean up mock bootstrap agent
@@ -790,4 +896,3 @@ if __name__ == "__main__":
                "result":result,}
         json.dump(out, outfile)
         outfile.flush()
-
