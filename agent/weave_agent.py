@@ -249,8 +249,12 @@ class WeaveAgentTree:
         return pformat(problem_map)
 
     def dump_event_stream(self):
-        with open(f"/app/event_trace_{round(time.time())}.json", "w") as outfile:
+        with open(f"/app/weave-agent-logs/event_trace_{round(time.time())}.json", "w") as outfile:
             json.dump(self.__event_stream, outfile)
+        with open(f"/app/weave-agent-logs/rendered_trace_{round(time.time())}.py", "w") as outfile:
+            for event_block in self.__event_stream:
+                outfile.write(render_block(event_block))
+            outfile.flush()
 
 
 class Tick:
@@ -283,6 +287,14 @@ class Tick:
             "outcome":repr(self.outcome),
         }                
         
+
+# The intended problem solving strategy for subagents is to delegate until you
+# reach a base case that can be solved in a short number of actions and then
+# resolve it. The root task is allocated a certain amount of time which it can
+# then delegate to subagent calls. Remember not to allocate all of the available
+# time to a call tree unless you're very rushed, you should assume there will be
+# failures and budget tasks the time that they need rather than just splitting
+# up the available time between them.
     
 class WeaveAgentNode:
     def __init__(self, tree, parent, subagent_name, description, schema, time_budget):
@@ -562,9 +574,16 @@ class WeaveAgentNode:
         # Write action block
         action_hint = (
             "#hint Action blocks are where I write code to take actions.\n"
-            + "# Write a callback to further my goal(s) based on the orientation\n"
-            + "# block and set up the callback to be executed with the agent.add_action()\n"
-            + "# method. I must write a callback and then set it up to be executed\n"
+            + "# If the task makes sense to break into parts, define subagents\n"
+            + "# to delegate to using agent.subagent(). Make sure to define a\n"
+            + "# schema and task evaluations for each subagent. If it won't fit\n"
+            + "# into one action block keep in mind you can define subagents \n"
+            + "# across multiple blocks and then do agent.run() to execute them.\n"
+            + "# If it seems possible to resolve the current task as a base case\n"
+            + "# in a handful of actions then write a callback to further my goal(s)\n"
+            + "# based on the orientation block and set up the callback to be\n" 
+            + "# executed with the agent.add_action() method. I must write a \n"
+            + "# callback and then set it up to be executed\n"
             + "# later with agent.add_action() or the tick will not be accepted.\n"
             + "# It's important to remember that my callback can do anything\n"
             + "# a python program can do through side effects in the external\n" 
@@ -764,8 +783,7 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.current_tick.valid = False
         self.ticks.append(self.current_tick)
-        if len(self.ticks) % 5 == 0:
-            self.tree.dump_event_stream()
+        self.tree.dump_event_stream()
         self.debugging = False
         self.failure_stage = "event stream"
 
@@ -886,10 +904,12 @@ if __name__ == "__main__":
     run_bootstrap_callbacks(self)
     # Clean up mock bootstrap agent
     del(self)
-    
-    result, event_stream = agent.run("main")
+
     if not os.path.exists("/app/weave-agent-logs"):
         os.mkdir("/app/weave-agent-logs")
+        
+    result, event_stream = agent.run("main")
+    
     with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
         out = {"model_name":args.model_name,
                "event_stream":event_stream,

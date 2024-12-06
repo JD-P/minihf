@@ -51,24 +51,31 @@ with open("cipher.txt", "w") as outfile:
 #startblock type: orientation
 #timestamp 1724982545.6534579
 """
-The above implementation of the Vigenere cipher has been used to create a ciphertext
-in cipher.txt whose plaintext decryption has the SHA256 hash:
+WEAVER [P: EXPECTATION], The above implementation of the Vigenere cipher has been 
+used to create a ciphertext in cipher.txt whose plaintext decryption has the 
+SHA256 hash:
 
 a528933eabc4772c9a99436fbd5fc592d7ffc16f6bd94ae76aafcbbe32e0cdc3
 
-I need to recover the key from the ciphertext and use it to get the decrypted
+WEAVER [P: GOAL], I need to recover the key from the ciphertext and use it to get the decrypted
 plaintext. I can then get the hexdigest of the plaintext and compare it to the 
 one above to prove I've solved the problem. 
 
-To remind myself, the Vigenere cipher is a polyalphabetic substitution whose
+WEAVER [P: RATIONAL], Note that the Vigenere cipher is a polyalphabetic substitution whose
 plaintext, key, and ciphertext looks like the following:
 
 Plaintext: attackatdawn
 Key: LEMONLEMONLE
 Ciphertext: LXFOPVEFRNHR
 
-I should write my own solver to find the key length using Kasiski, Kerckhoffs, or
-Friedman's method and then use the estimated key length to break the cipher.
+WEAVER [P: HYPOTHESIS], Well then. One strategy would be to write a solver to 
+find the key length. Another would be to try brute forcing the key. 
+
+WEAVER [P: RATIONAL], I say write the solver, we'll learn more that way.
+
+WEAVER [P: CONCLUSION], Alright, we'll write our own solver to find the key length 
+using Kasiski, Kerckhoffs, or Friedman's method and then use the estimated 
+key length to break the cipher.
 """
 #endblock
 #startblock type: action

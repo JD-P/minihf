@@ -3,6 +3,7 @@ FROM python:3.9-slim
 
 # Set the working directory in the container
 WORKDIR /app
+RUN mkdir /app/weave-agent-logs/
 
 # Copy only the requirements.txt file
 COPY requirements.txt /app/
@@ -29,4 +30,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD ["python", "-m", "pdb", "weave_agent.py", "--port", "5001", "--bootstrap", "bootstraps/vigenere_bootstrap.py", "Qwen/Qwen2.5-Coder-32B-Instruct"]
+CMD python -m pdb weave_agent.py --port 5001 --bootstrap "bootstraps/vigenere_bootstrap.py" "Qwen/Qwen2.5-Coder-32B-Instruct" & python -m http.server 8991 --directory "/app/weave-agent-logs/"
