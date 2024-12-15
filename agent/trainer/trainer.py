@@ -15,7 +15,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from linear_4bit_sharded import quantize_and_shard
-from mixtral_ring_attn import patch_model
+import mixtral_ring_attn, qwen2_ring_attn
 
 print = tqdm.external_write_mode()(print)
 print0 = tqdm.external_write_mode()(du.print0)
@@ -80,7 +80,8 @@ def main():
         collate_fn=CollateFn(args.seq_len),
     )
 
-    patch_model(local_group)
+    mixtral_ring_attn.patch_model(local_group)
+    qwen2_ring_attn.patch_model(local_group)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.bfloat16,
@@ -109,16 +110,17 @@ def main():
 
     for i, (input_ids, target_ids) in enumerate(tqdm(dataloader, disable=rank != 0)):
         input_ids, target_ids = input_ids.to(device), target_ids.to(device)
-        input_ids_local = input_ids[
-            :, local_rank * seq_len_device : (local_rank + 1) * seq_len_device
-        ]
-        target_ids_local = target_ids[
-            :, local_rank * seq_len_device : (local_rank + 1) * seq_len_device
-        ]
+        seq_start = local_rank * seq_len_device
+        seq_end = (local_rank + 1) * seq_len_device
+        input_ids_local = input_ids[:, seq_start:seq_end]
+        target_ids_local = target_ids[:, seq_start:seq_end]
+        position_ids_local = torch.arange(seq_start, seq_end, device=device)
+        position_ids_local = position_ids_local.expand_as(input_ids_local)
         n_targets = torch.sum(target_ids_local != -100)
         dist.all_reduce(n_targets)
-        logits = model(input_ids_local, use_cache=False).logits
-        loss = F.cross_entropy(logits.mT, target_ids_local, reduction="sum") / n_targets
+        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+            logits = model(input_ids_local, position_ids=position_ids_local, use_cache=False).logits
+            loss = F.cross_entropy(logits.mT, target_ids_local, reduction="sum") / n_targets
         loss.backward()
         grads = [p.grad for p in model.parameters() if p.grad is not None]
         handles = [dist.all_reduce(g, async_op=True) for g in grads]

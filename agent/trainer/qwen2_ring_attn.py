@@ -1,11 +1,11 @@
 import torch
 from torch import distributed as dist
-import transformers.models.mixtral.modeling_mixtral as modeling
+import transformers.models.qwen2.modeling_qwen2 as modeling
 
 from ring_attn import ring_attn
 
 
-class MixtralRingAttention(modeling.MixtralAttention):
+class Qwen2RingAttention(modeling.Qwen2Attention):
     def forward(
         self,
         hidden_states,
@@ -15,16 +15,15 @@ class MixtralRingAttention(modeling.MixtralAttention):
         output_attentions,
         use_cache,
         cache_position,
+        position_embeddings=None,
     ):
         bsz, q_len, _ = hidden_states.size()
         q = self.q_proj(hidden_states).view(bsz, q_len, self.num_heads, self.head_dim)
         k = self.k_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
         v = self.v_proj(hidden_states).view(bsz, q_len, self.num_key_value_heads, self.head_dim)
 
-        world_size = dist.get_world_size(self.group)
-        rotary_seq_len = world_size * q_len
-        cos, sin = self.rotary_emb(v, seq_len=rotary_seq_len)
-        q, k = modeling.apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=2)
+        cos, sin = position_embeddings
+        q, k = modeling.apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=2)
         x = ring_attn(q, k, v, causal=True, group=self.group)
         x = x.view(bsz, q_len, self.num_heads * self.head_dim)
         x = self.o_proj(x)
@@ -32,5 +31,5 @@ class MixtralRingAttention(modeling.MixtralAttention):
 
 
 def patch_model(group=None):
-    MixtralRingAttention.group = group
-    modeling.MIXTRAL_ATTENTION_CLASSES["flash_attention_2"] = MixtralRingAttention
+    Qwen2RingAttention.group = group
+    modeling.QWEN2_ATTENTION_CLASSES["flash_attention_2"] = Qwen2RingAttention

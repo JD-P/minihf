@@ -6,7 +6,7 @@ from torch.distributed import nn as dnn
 import torch_dist_utils as du
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from mixtral_ring_attn import patch_model
+from qwen2_ring_attn import patch_model
 
 
 def kl_divergence(logits_p, logits_q):
@@ -21,7 +21,7 @@ def main():
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 
-    model_name = "mistralai/Mixtral-8x7B-v0.1"
+    model_name = "Qwen/Qwen2.5-Coder-32B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     prompt = "The quick brown fox jumps over the lazy dog, " * 8
     tokens = tokenizer(prompt, return_tensors="pt").to(device)["input_ids"][:, :64]
