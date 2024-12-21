@@ -43,6 +43,13 @@ def example_function(agent):
 agent.add_action('Example Action', example_function)
 """
 
+        action2 = """
+def example_function(agent):
+    pass
+
+self.add_action('Example Action', example_function)
+"""
+        
         evaluation = """
 def example_function(agent):
     pass
@@ -51,6 +58,7 @@ agent.add_evaluation('Example Evaluation', example_function)
 """
         
         self.assertEqual(lint_block("action", action), 0.0)
+        self.assertEqual(lint_block("action", action2), 0.0)
         self.assertEqual(lint_block("evaluation", evaluation), 0.0)
 
     def test_well_formatted_orientation_or_expectation_block(self):

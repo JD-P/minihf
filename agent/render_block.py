@@ -36,8 +36,8 @@ def render_block(event_block, tags=True):
     if "bm25_query" in event_block:
         header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
-    if "q" in event_block:
-        yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
+    if "raw_score" in event_block:
+        yes_p = torch.sigmoid(torch.tensor(event_block["raw_score"])).item()
         no_p = 1 - yes_p
         yes_p, no_p = round(yes_p, 5), round(no_p, 5)
         answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
@@ -45,8 +45,7 @@ def render_block(event_block, tags=True):
             prob = f"({round(yes_p * 100, 5)}%)"
         else:
             prob = f"({round(no_p * 100, 5)}%)"
-        # TODO: Turn this back on. Goodharts too much right now. 
-        # footer += f'\n#q: {event_block["q"]} {answer} {prob}'
+        footer += f'\n#q: {event_block["q"]} {answer} {prob}'
     if "tags" in event_block:
         footer += f"\n#tags: {' '.join(event_block['tags'])}"
     footer += '\n#endblock\n'

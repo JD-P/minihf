@@ -76,6 +76,28 @@ WEAVER [P: RATIONAL], I say write the solver, we'll learn more that way.
 WEAVER [P: CONCLUSION], Alright, we'll write our own solver to find the key length 
 using Kasiski, Kerckhoffs, or Friedman's method and then use the estimated 
 key length to break the cipher.
+
+WEAVER [P: EMPIRICISM], Wait. That sounds like it's going to get messy. How about
+we use the weave editor to write a cipher solver with unit tests so it's easier
+to keep track of?
+
+WEAVER [P: EXECUTIVE], How do I use the weave-editor? 
+
+WEAVER [P: RECALL], Get a pointer to the editor in an action by grabbing it from 
+self.tools[f"editor-{absolute_path}"]. The absolute path comes from the filename 
+you see at the top of a weave-editor observation window. You then use the 
+editor.edit() command to replace the text between a line span with 
+the new or corrected text.
+
+WEAVER [P: RATIONAL], Yes. It'll be easier to figure out the solution too if we
+first start with a known key like "LEMON" and plaintext, run it through the 
+encryption pass, then once we're sure our solution works come back and solve the
+original problem.
+
+WEAVER [P: CONCLUSION], Let's do that then. We'll write our own solver in a python
+file, solver.py, with unit tests in test_solver.py using the standard library unittest. 
+The solver will be based on Kasiski, Kerckhoffs, or Friedman's method. If that 
+doesn't work, we'll figure something out.
 """
 #endblock
 #startblock type: action
@@ -87,7 +109,7 @@ This will involve basic statistical analysis such as frequency analysis of the
 characters in the ciphertext.
 """
 
-def add_main_and_analyze_ciphertext(subagent):
+def add_main_analyze_ciphertext(subagent):
     def check_correct_plaintext(subagent):
         """Check if we've found the correct plaintext."""
         with open("solution.txt") as infile:
@@ -96,9 +118,18 @@ def add_main_and_analyze_ciphertext(subagent):
 
     schema = {"check_correct_plaintext":"boolean", "solution":"string"}
     main_agent = agent.subagent("main", None, "See pinned bootstrap block", schema, args.budget)
+    solver_editor = WeaveEditor(main_agent, "solver.py")
+    test_solver_editor = WeaveEditor(main_agent, "test_solver.py")
+    # Demonstrate use of WeaveEditor
+    solver_editor.edit(1,1,"# Solve vigenere ciphers")
+    test_solver_editor.edit(1,1, "# Test The Vigenere Cipher Solver In solver.py")
     main_agent.task.add_evaluation("Check We Have The Correct Plaintext In solution.txt",
                                    check_correct_plaintext)
     
+
+    
+    analyze_ciphertext = """
+def analyze_ciphertext():
     with open("cipher.txt", "r") as infile:
         ciphertext = infile.read()
 
@@ -118,11 +149,19 @@ def add_main_and_analyze_ciphertext(subagent):
     with open("analysis.txt", "w") as outfile:
         outfile.write(out)
         outfile.flush()
+
+analyze_ciphertext()
+""".strip()
+
+    analyze_editor = WeaveEditor(main_agent, "analyze_ciphertext.py")
+    analyze_editor.edit(1,1, analyze_ciphertext)
+    analyze_editor.close()
     
+    os.system("python analyze_ciphertext.py")
     return True
 
 self.add_action("Add Main Subagent and Analyze Ciphertext",
-                add_main_and_analyze_ciphertext)
+                add_main_analyze_ciphertext)
 #endblock
 #startblock type: expectation
 #timestamp 1724982799.3917813
@@ -148,10 +187,16 @@ def view_solution_file(subagent):
 def view_frequency_analysis(subagent):
     with open("analysis.txt") as infile:
         return infile.read().strip()
+
+def view_weave_editor_source(subagent):
+    with open("tools/editor.py") as infile:
+        return infile.read().strip()
     
 # Add the new views
 self.add_observation_view("View solution.txt File", view_solution_file)
 self.add_observation_view("View analysis.txt File", view_frequency_analysis)
+self.add_observation_view("View weave-editor source so we know how it works",
+                          view_weave_editor_source)
 #endblock
 #startblock type: evaluation
 #timestamp 1724983062.124238

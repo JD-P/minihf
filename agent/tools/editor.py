@@ -1,3 +1,4 @@
+import os
 import re
 
 class WeaveEditor:
@@ -6,22 +7,22 @@ class WeaveEditor:
     def __init__(self, agent, filepath):
         """Bind tool to weave-agent and set up editor."""
         self.agent = agent
-        self.filepath = filepath
-        self.agent.tools[f"editor-{filepath}"] = self
+        self.filepath = os.path.abspath(filepath)
+        self.agent.tools[f"editor-{self.filepath}"] = self
         self.editor_observation_view = {"type":"observation",
-                                        "title":f"WeaveEditor ({filepath})",
+                                        "title":f"WeaveEditor ({self.filepath})",
                                         "callback":self.render}
-        self.agent.add_observation_view(f"WeaveEditor ({filepath})", self.render)
+        self.agent.add_observation_view(f"WeaveEditor ({self.filepath})", self.render)
 
         # Initialize the editor state
         self.current_line = 0
         self.window_size = 10
-        self.open(filepath)
+        self.open(self.filepath)
 
     def open(self, filepath):
         self.file_content = self.load_file(filepath)
         del self.agent.tools[f"editor-{self.filepath}"]        
-        self.filepath = filepath
+        self.filepath = os.path.abspath(filepath)
         self.agent.tools[f"editor-{self.filepath}"] = self
 
     def close(self):
@@ -47,7 +48,7 @@ class WeaveEditor:
             file.writelines(self.file_content)
         self.file_content = self.load_file(filepath)
         del self.agent.tools[f"editor-{self.filepath}"]
-        self.filepath = filepath
+        self.filepath = os.path.abspath(filepath)
         self.agent.tools[f"editor-{self.filepath}"] = self
 
     def render(self, agent):

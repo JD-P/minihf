@@ -2,6 +2,7 @@ import time
 import re
 import ast
 import random
+import asyncio
 import torch
 from functools import partial
 from rich import print as rprint
@@ -143,7 +144,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     score_prompt_fns = []
     # TODO: Use the full set of questions somehow?
     score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
-    async def evaluate_fn(texts):
+    async def evaluate_fn(texts, raw=False):
         score_fn = partial(evaluate_outputs_vllm,
                            self.model_name,
                            score_prompt_fns,
@@ -166,8 +167,10 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
 
         lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text[1])
                                        for text in texts])
-
-        return scores + syntax_penalties + completion_penalties + lint_penalties
+        if raw:
+            return scores
+        else:
+            return scores + syntax_penalties + completion_penalties + lint_penalties
     tree = TreeNode(prompt)
     wp = weave_params
     # First try a simple rejection sampling
@@ -226,7 +229,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     except Exception as e:
         block["score"] -= 2
         self.add_block(block)
-        if len(self.tokenizer(program)["input_ids"]) >= 768:
+        if len(self.tree.tokenizer(program)["input_ids"]) >= 768:
             raise ValueError("Length limit exceeded! Programs must be fewer than 768 tokens.")
         else:
             raise ValueError from e
@@ -238,6 +241,11 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             f"add_{block_type}"
         )
         block["body"] = callback + "\n\n" + registration
+    raw_score = asyncio.run(
+        evaluate_fn([prompt[:len(prompt) - len(prefix)] + block["body"],],
+                    raw=True)
+    )
+    block["raw_score"] = raw_score[0].item()
     self.add_block(block)
     rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan]")
     print(block["body"])
