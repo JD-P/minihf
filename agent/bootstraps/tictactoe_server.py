@@ -1,6 +1,7 @@
 import http.server
 import json
 import sqlite3
+import traceback
 from urllib.parse import urlparse, parse_qs
 import random
 
@@ -89,126 +90,139 @@ database_setup()
 
 class TicTacToeHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == '/start':
-            if game_state['game_in_progress']:
-                self.send_response(409)
+        try:
+            if self.path == '/start':
+                if game_state['game_in_progress']:
+                    self.send_response(409)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "Game already in progress."}).encode('utf-8'))
+                    return
+
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                ai_strategy_name = json.loads(post_data)['ai']
+
+                ai_strategies = {
+                    'basic': basic_ai,
+                    'random': random_ai,
+                    'defensive': defensive_ai,
+                    'offensive': offensive_ai,
+                    'side_preferring': side_preferring_ai,
+                }
+
+                if ai_strategy_name not in ai_strategies:
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+
+                game_state['ai_strategy'] = ai_strategies[ai_strategy_name]
+                game_state['current_board'] = initial_board()
+                game_state['current_player'] = PLAYER_X
+                game_state['move_count'] = 0
+                game_state['game_in_progress'] = True
+
+                self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": "Game already in progress."}).encode('utf-8'))
-                return
+                self.wfile.write(json.dumps({'message': 'New game started!'}).encode('utf-8'))
 
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            ai_strategy_name = json.loads(post_data)['ai']
+            elif self.path == '/move':
+                if not game_state['game_in_progress']:
+                    self.send_response(409)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "No game in progress."}).encode('utf-8'))
+                    return
 
-            ai_strategies = {
-                'basic': basic_ai,
-                'random': random_ai,
-                'defensive': defensive_ai,
-                'offensive': offensive_ai,
-                'side_preferring': side_preferring_ai,
-            }
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                move = json.loads(post_data)['move']
 
-            if ai_strategy_name not in ai_strategies:
-                self.send_response(400)
-                self.end_headers()
-                return
+                if game_state['current_board'][move] != EMPTY:
+                    self.send_response(409)
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"board": game_state['current_board'],
+                                                 "error": "That spot is taken"}).encode('utf-8'))
+                    return
 
-            game_state['ai_strategy'] = ai_strategies[ai_strategy_name]
-            game_state['current_board'] = initial_board()
-            game_state['current_player'] = PLAYER_X
-            game_state['move_count'] = 0
-            game_state['game_in_progress'] = True
+                game_state['current_board'][move] = PLAYER_X
+                game_state['move_count'] += 1
 
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'message': 'New game started!'}).encode('utf-8'))
-
-        elif self.path == '/move':
-            if not game_state['game_in_progress']:
-                self.send_response(409)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "No game in progress."}).encode('utf-8'))
-                return
-
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            move = json.loads(post_data)['move']
-
-            if game_state['current_board'][move] != EMPTY:
-                self.send_response(409)
-                self.end_headers()
-                self.wfile.write(json.dumps({"board": game_state['current_board'],
-                                             "error": "That spot is taken"}).encode('utf-8'))
-                return
-
-            game_state['current_board'][move] = PLAYER_X
-            game_state['move_count'] += 1
-
-            winner = get_winner(game_state['current_board'])
-            if winner:
-                self.save_game(winner)
-                response = {'winner': winner}
-                game_state['game_in_progress'] = False
-            else:
-                ai_move = game_state['ai_strategy'](game_state['current_board'])
-                if ai_move is not None:
-                    game_state['current_board'][ai_move] = PLAYER_O
-                    game_state['move_count'] += 1
                 winner = get_winner(game_state['current_board'])
                 if winner:
                     self.save_game(winner)
                     response = {'winner': winner}
-                elif EMPTY not in game_state['current_board']:
-                    self.save_game("TIE")
-                    response = {'winner': "TIE"}
+                    game_state['game_in_progress'] = False
                 else:
-                    response = {'board': game_state['current_board']}
+                    ai_move = game_state['ai_strategy'](game_state['current_board'])
+                    if ai_move is not None:
+                        game_state['current_board'][ai_move] = PLAYER_O
+                        game_state['move_count'] += 1
+                    winner = get_winner(game_state['current_board'])
+                    if winner:
+                        self.save_game(winner)
+                        response = {'winner': winner}
+                    elif EMPTY not in game_state['current_board']:
+                        self.save_game("TIE")
+                        response = {'winner': "TIE"}
+                    else:
+                        response = {'board': game_state['current_board']}
 
-            self.send_response(200)
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps(response).encode('utf-8'))
+            tb = traceback.format_exc()
+            self.wfile.write(json.dumps({"error":tb}).encode('utf-8'))
 
     def do_GET(self):
-        if self.path.startswith('/history'):
-            query_components = parse_qs(urlparse(self.path).query)
-            n = int(query_components['n'][0]) if 'n' in query_components else 10
+        try:
+            if self.path.startswith('/history'):
+                query_components = parse_qs(urlparse(self.path).query)
+                n = int(query_components['n'][0]) if 'n' in query_components else 10
 
-            conn = sqlite3.connect('tictactoe.db')
-            c = conn.cursor()
-            try:
-                c.execute("SELECT * FROM games ORDER BY id DESC LIMIT ?", (n,))
-                games = c.fetchall()
-            except Exception as e:
-                self.send_response(500)
+                conn = sqlite3.connect('tictactoe.db')
+                c = conn.cursor()
+                try:
+                    c.execute("SELECT * FROM games ORDER BY id DESC LIMIT ?", (n,))
+                    games = c.fetchall()
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
+                    return
+                finally:
+                    conn.close()
+
+                self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
-                return
-            finally:
-                conn.close()
+                self.wfile.write(json.dumps(games).encode('utf-8'))
 
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(games).encode('utf-8'))
+            elif self.path == '/board':
+                if not game_state['game_in_progress']:
+                    self.send_response(409)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"error": "No game in progress."}).encode('utf-8'))
+                    return
 
-        elif self.path == '/board':
-            if not game_state['game_in_progress']:
-                self.send_response(409)
+                self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({"error": "No game in progress."}).encode('utf-8'))
-                return
-
-            self.send_response(200)
+                self.wfile.write(json.dumps({"board": game_state['current_board']}).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"board": game_state['current_board']}).encode('utf-8'))
-
+            tb = traceback.format_exc()
+            self.wfile.write(json.dumps({"error":tb}).encode('utf-8'))
             
     def save_game(self, winner):
         conn = sqlite3.connect('tictactoe.db')

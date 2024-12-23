@@ -127,7 +127,9 @@ def add_main_analyze_ciphertext(subagent):
                                    check_correct_plaintext)
     
 
-    
+    # When you write python code meant to be output to a file with WeaveEditor
+    # be sure to either wrap it in triple quotes or concatenate it in 80 character
+    # chunks for formatting reasons. We want the agent trace to look good.
     analyze_ciphertext = """
 def analyze_ciphertext():
     with open("cipher.txt", "r") as infile:

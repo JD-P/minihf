@@ -328,7 +328,8 @@ class WeaveAgentNode:
             self.tick()
             time.sleep(1)
         return self.completed
-        
+
+    # TODO: Assert that subagent unit test callbacks have names before adding them
     def return_to_caller(self, value: dict):
         """Return thread of execution from subagent to caller. This should be 
         called when the agent's task has been resolved, the task is deemed 
@@ -406,6 +407,7 @@ class WeaveAgentNode:
         self.add_block(error_block)
                     
     def tick(self):
+        self.tree.dump_event_stream()
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -783,7 +785,6 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.current_tick.valid = False
         self.ticks.append(self.current_tick)
-        self.tree.dump_event_stream()
         self.debugging = False
         self.failure_stage = "event stream"
 
