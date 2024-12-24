@@ -1,0 +1,31 @@
+User
+
+Summarize the features of the following action taken by a Weave-Agent ReAct LLM agent in English. Your summary will be used for retrieval, so write out all names of relevant objects, variables, functions etc referenced. Write using precise phrasing, proper names, and jargon so that related blocks can be queried by shared traits and features.
+
+```
+{rendered_block}
+```
+
+- Do not use markdown formatting and avoid quote marking names and variables.
+
+- Put your summary in a SGML/XML type <summary> start tag and </summary> end tag.
+
+- Write about a paragraph or two of English prose describing the block using precise phrasing and proper names as instructed above.
+
+Assistant
+
+<summary>
+{object_description}
+</summary>
+
+User
+
+Alright here is the context that block appears in. Write another summary focusing on the block in this context. This is a continuation of the previous summary so avoid redundant statements you already made in the first one. The purpose of this continuation is so that it is possible to retrieve the block in a similar situation so again use proper names, precise phrasing, jargon, etc in relation to the context that would cause this block to be retrieved if a similar situation arose.
+
+```
+{rendered_context}
+```
+
+Assistant
+
+<summary>

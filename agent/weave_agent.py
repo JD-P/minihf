@@ -186,9 +186,33 @@ class WeaveAgentTree:
         if "score" not in block:
             #TODO: Make actual score function for observations, task reminders etc
             block["score"] = 2
-        if "tags" not in block:
+        # TODO: Make these parallel requests
+        # TODO: Add view to tuner for training the descriptions
+        render = render_block(block)
+        if "description" not in block:
+            with open("/app/templates/describe1.txt") as infile:
+                template = infile.read()
+                prompt = template.format(rendered_block=render)
+                object_description = generate_outputs_vllm(self.model_name,
+                                                           prompt,
+                                                           512,
+                                                           port=args.port,
+                                                           n=1,
+                                                           stop=["</summary>",])[0]
+            with open("/app/templates/describe2.txt") as infile:
+                template = infile.read()
+                context = self.render_context()
+                prompt = template.format(rendered_block=render,
+                                         object_description=object_description,
+                                         rendered_context=context)
+                context_description = generate_outputs_vllm(self.model_name,
+                                                            prompt,
+                                                            512,
+                                                            port=args.port,
+                                                            n=1,
+                                                            stop=["</summary>",])[0]
             #TODO: Make actual tagging function
-            block["tags"] = ["placeholder",]
+            block["description"] = object_description + "\n\n" + context_description
         self.__event_stream.append(block)
         
         if block["type"] not in {"genesis", "bootstrap"}:
@@ -200,7 +224,7 @@ class WeaveAgentTree:
                 score=block["score"],
                 index=block["index"],
                 timestamp=block["timestamp"],
-                tags=" ".join(block["tags"]),
+                description=block["description"],
             ))
             writer.commit()
         
@@ -843,7 +867,7 @@ if __name__ == "__main__":
     schema_builder.add_float_field("score", stored=True)
     schema_builder.add_integer_field("index", stored=True)
     schema_builder.add_float_field("timestamp", stored=True)
-    schema_builder.add_text_field("tags", stored=True)
+    schema_builder.add_text_field("description", stored=True)
 
     bm25_schema = schema_builder.build()
 

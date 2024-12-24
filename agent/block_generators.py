@@ -59,21 +59,18 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_prompt =  f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n'
     bm25_prompt += "#timestamp {time.time()}\n"
     bm25_prompt += "# I need to write a Tantivy BM 25 query to retrieve relevant blocks below.\n"
-    bm25_prompt += "# Examples\n"
-    bm25_prompt += "# Retrieve blocks with 'key' in rendered body and 'solution' in tags\n"
-    bm25_prompt += "#bm25_query render:key tags:solution\n"
-    bm25_prompt += "# Retrieve high scoring blocks of same type\n" 
-    bm25_prompt += "#bm25_query type:'{block_type}'\n"
-    bm25_prompt += "# Retrieve examples where the current_task is updated\n"
-    bm25_prompt += "#bm25_query type:'task-inference' render:agent.current_task render:Update\n"
-    bm25_prompt += "# Retrieve observations relating to something Amanda said\n"
-    bm25_prompt += "#bm25_query type:'observation' render:Amanda render:amanda render:she render:said render:remember render:forget\n"
-    bm25_prompt += "# Now I'll write the query that will help me write the next block.\n"
+    bm25_prompt += "# After the tag bm25_query I will write a series of words "
+    bm25_prompt += "# summarizing the situation. I will also search for words and "
+    bm25_prompt += "# phrases related to the problem I need to solve in the next block."
+    bm25_prompt += "# I put a + in front of a word +like +so to denote that I want "
+    bm25_prompt += "# to search for it and I put a - in front of a word to denote "
+    bm25_prompt += "# that I want to avoid it -like -so. Write a long series of "
+    bm25_prompt += "# relevant search words below, try to get at least a dozen:\n"
     if self.tree.current_block_index() < 50:
         bm25_prompt += f"#bm25_query type:'{block_type}' "
     else:
         bm25_prompt += "#bm25_query "
-        
+
     port = 5001
     # TODO: Rejection sample this?
     query_candidates = generate_outputs_vllm(self.model_name,
@@ -85,19 +82,19 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     bm25_query = None
     for candidate in query_candidates:
         try:
-            self.bm25_index.parse_query(candidate, ["render", "tags"])
+            self.bm25_index.parse_query(candidate, ["render", "description"])
             bm25_query = candidate
             break
         except ValueError:
             continue
-    if self.tree.current_block_index() < 50 and bm25_query:
+    if self.tree.current_block_index() > 10 and bm25_query:
         bm25_query = f"type:'{block_type}' " + bm25_query
 
         searcher = self.bm25_index.searcher()
-        query = self.bm25_index.parse_query(bm25_query, ["render", "tags"])
+        query = self.bm25_index.parse_query(bm25_query, ["render", "description"])
         results = searcher.search(query, limit=25).hits
         retrieved_blocks = [searcher.doc(result[1]) for result in results
-                            if searcher.doc(result[1])["score"][0] >= 3]
+                            if searcher.doc(result[1])["score"][0] >= 2]
         retrieved_blocks = sorted(retrieved_blocks,
                                   key=lambda block: block["score"][0],
                                   reverse=True)[:3]
@@ -112,6 +109,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
                 block["type"][0],
                 "recalled-" + block["type"][0]
             )
+            block_text = "# " + block_text.replace("\n", "\n# ")
             prompt += "\n" + block_text
         prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"
     prompt += f"\n# Write the next {block_type} block."
@@ -185,7 +183,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
                                  max_lookahead=1,
                                  temperature=0.01)
     do_long = False
-    if (branches[-1].score < 3.0):
+    if (branches[-1].score < 2.5):
         do_long = True
     try:
         program = branches[-1].branch_text()
