@@ -1,3 +1,27 @@
+# This one is probably non-obvious how you're supposed to set it up so lemme give
+# some pointers.
+#
+# While logged into Discord go to this URL: https://discord.com/developers/applications
+#
+# Make a new application with the name of your bot, etc.
+#
+# Go to "Installation", there should be a URL labeled "install link" that looks like
+# https://discord.com/oauth2/authorize?client_id=NUMBERS which has your client ID.
+#
+# Append &permissions=137439317056&scope=bot to the end of that URL and visit it,
+# you should be prompted to add the bot you've made to your server.
+#
+# Then add to the agent folder a file called `discord.json`. It should have the
+# key 'key' with the security token you get on the "Bot" page of the applications
+# interface (NOT "OAuth2").  Under the key 'cid' should be the channel ID of the
+#channel in the server you want the bot to join. So:
+#
+# {"key":AUTH_TOKEN_NUMBERS_AND_LETTERS, "cid":CHANNEL_ID_NUMBERS}
+#
+# You can get the channel ID by turning on developer mode under
+# "Advanced" in Discord settings. You then go to the channel you want the cid
+# for, right click it, and choose "Copy Channel ID".
+
 import json
 import multiprocessing
 import nextcord
