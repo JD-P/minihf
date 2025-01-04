@@ -431,7 +431,6 @@ class WeaveAgentNode:
         self.add_block(error_block)
                     
     def tick(self):
-        self.tree.dump_event_stream()
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -489,7 +488,8 @@ class WeaveAgentNode:
         # Render context
         self.render_context()
 
-
+        self.tree.dump_event_stream()
+        
         def do_tick_block(self, block_type, hint, wp_update):
             weave_params = {"weave_n_tokens":256, "weave_budget":72,
                             "weave_round_budget":24, "weave_n_expand":16,
@@ -608,9 +608,9 @@ class WeaveAgentNode:
             + "# If it seems possible to resolve the current task as a base case\n"
             + "# in a handful of actions then write a callback to further my goal(s)\n"
             + "# based on the orientation block and set up the callback to be\n" 
-            + "# executed with the agent.add_action() method. I must write a \n"
+            + "# executed with the self.add_action() method. I must write a \n"
             + "# callback and then set it up to be executed\n"
-            + "# later with agent.add_action() or the tick will not be accepted.\n"
+            + "# later with self.add_action() or the tick will not be accepted.\n"
             + "# It's important to remember that my callback can do anything\n"
             + "# a python program can do through side effects in the external\n" 
             + "# computable environment. If I need to import a new module make sure\n"

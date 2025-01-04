@@ -11,3 +11,4 @@ protobuf
 sentencepiece
 tantivy
 jsonschema
+nextcord

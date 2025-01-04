@@ -9,6 +9,8 @@ RUN mkdir /app/weave-agent-logs/
 COPY requirements.txt /app/
 
 # Install any needed packages specified in requirements.txt
+RUN pip download pip setuptools wheel --dest=package-cache
+RUN pip install --no-index --find-links=package-cache pip setuptools
 RUN pip download -r requirements.txt --dest=package-cache
 RUN pip install -r requirements.txt --no-index --find-links=package-cache
 RUN pip install django
