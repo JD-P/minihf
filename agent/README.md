@@ -1,3 +1,29 @@
+![The ReAct loop on the left is how most LLM agents are implemented, it fails because the reasoning desynchronizes from the problem state. I attempt to fix this by having the agent write down its expectations for the action and check its work with unit test callbacks.](docs/weave_agent_vs_react.png)
+
+## Features
+
+Weave-Agent improves over typical [ReAct agents](https://arxiv.org/abs/2210.03629)
+in the following ways:
+
+1. Uses observation callbacks to mimic WIMP, giving it
+[Cradle-like](https://baai-agents.github.io/Cradle/) ergonomics without having
+to rely on a visual language model. [Smolagents](https://huggingface.co/blog/smolagents)
+by contrast takes the return value of the action as its observation like a traditional
+ReAct loop.
+2. Writes down its expectations and uses evaluation callbacks/unit tests to check
+that the things it wanted changed in the environment were actually changed by
+its actions.
+3. Uses Python as the trace format, so that it is always in distribution and works
+like a code calling agent instead of the JSON tool calling hell people typically cope with.
+4. Uses logit evaluators for search and rejection sampling so that the model can
+ask itself questions and get answers and use those for e.g. flowcharts during reasoning.
+5. Has a ring attention based iterated tuning loop (that's not done yet) with
+careful trace design meant to ensure every cognitive ability weave-agent relies
+on to function is trained by the traces.
+6. Generates (up to) megabytes of coherent long text for training per session.
+
+## Installation
+
 This is the command I use to start vllm. `tensor-parallel-size` controls how many
 GPUs you use so be sure to set it lower than 8 if you are not using a 8x H100 box.
 
