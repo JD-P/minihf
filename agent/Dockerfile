@@ -1,5 +1,5 @@
 # Use an official Python runtime as a parent image
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 # Set the working directory in the container
 WORKDIR /app
@@ -14,6 +14,10 @@ RUN pip install --no-index --find-links=package-cache pip setuptools
 RUN pip download -r requirements.txt --dest=package-cache
 RUN pip install -r requirements.txt --no-index --find-links=package-cache
 RUN pip install django
+
+# Install tmux and nethack
+RUN apt-get update && apt-get install -y tmux 
+RUN apt-get update && apt-get install -y nethack-console
 
 # Install Firefox and geckodriver
 RUN apt-get update && apt-get install -y wget
@@ -32,4 +36,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/tictactoe_single_bootstrap.py" "Qwen/Qwen2.5-Coder-32B-Instruct" & python -m http.server 8991 --directory "/app/weave-agent-logs/"
+CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/nethack_bootstrap.py" "Qwen/Qwen2.5-Coder-32B-Instruct" & python -m http.server 8991 --directory "/app/weave-agent-logs/"

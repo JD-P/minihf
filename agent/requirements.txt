@@ -1,5 +1,6 @@
 aiohttp
 selenium
+pyautogui
 beautifulsoup4
 requests
 torch
@@ -12,3 +13,4 @@ sentencepiece
 tantivy
 jsonschema
 nextcord
+libtmux
