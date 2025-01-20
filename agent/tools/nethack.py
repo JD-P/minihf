@@ -13,7 +13,7 @@ class WeaveNethack:
             "title": "WeaveNethack",
             "callback": self.render
         }
-        self.agent.add_observation_view("WeaveNethack", self.render)
+        self.agent.add_observation_view("WeaveNethack", self.render, tool="nethack")
 
         # Initialize the tmux session and pane
         self.server = libtmux.Server()

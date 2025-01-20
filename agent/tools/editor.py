@@ -12,7 +12,8 @@ class WeaveEditor:
         self.editor_observation_view = {"type":"observation",
                                         "title":f"WeaveEditor ({self.filepath})",
                                         "callback":self.render}
-        self.agent.add_observation_view(f"WeaveEditor ({self.filepath})", self.render)
+        self.agent.add_observation_view(f"WeaveEditor ({self.filepath})",
+                                        self.render, tool=f"editor-{self.filepath}")
 
         # Initialize the editor state
         self.current_line = 0

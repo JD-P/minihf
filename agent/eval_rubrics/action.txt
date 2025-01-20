@@ -1,3 +1,4 @@
+Is this action codeblock 1) a step towards resolving the problems identified in the orientation block 2) simple 3) with appropriate tool use?
 Is this action codeblock 1) using proper delegation to subagents in the WeaveAgentTree style OR 2) a step towards resolving the problems identified in the orientation block 2.1) with appropriate tool use that 2.2) exports problem state into the environment by creating files and external programs?
 Is this code block a valid python program, does it follow the python syntax and semantics?
 Will this action block gather information in anticipation of or directly advance the problem state?

@@ -49,6 +49,7 @@ import ast
 import types
 import asyncio
 import traceback
+import hashlib
 import requests
 import torch
 from copy import deepcopy
@@ -216,10 +217,15 @@ class WeaveAgentTree:
         self.__event_stream.append(block)
         
         if block["type"] not in {"genesis", "bootstrap"}:
+            block_render = render_block(block)
+            sha256_hash = hashlib.sha256()
+            sha256_hash.update(block_render.encode('utf-8'))
+            hash_hex = sha256_hash.hexdigest()
             writer = bm25_index.writer()
             writer.add_document(tantivy.Document(
+                id=hash_hex,
                 type=block["type"],
-                render=render_block(block),
+                render=block_render,
                 q=block["q"],
                 score=block["score"],
                 index=block["index"],
@@ -381,9 +387,16 @@ class WeaveAgentNode:
                                     "title":title,
                                     "callback":callback}
 
-    def add_observation_view(self, title, callback):
+    def add_observation_view(self, title, callback, tool=None):
+        if len(self.observation_views) > 8:
+            raise ValueError(
+                "You can't have more than eight observation callbacks "
+                + "at once. This is to prevent you from spamming yourself. "
+                + "You'll have to remove one first if you want to add another."
+            )
         view = {"type":"observation",
                 "title":title,
+                "tool":tool,
                 "callback":callback}
         assert type(callback) in [types.FunctionType, types.MethodType]
         self.observation_views.append(view)
@@ -391,7 +404,13 @@ class WeaveAgentNode:
     def remove_observation_view(self, view_title):
         views = [view for view in self.observation_views if view['title'] == view_title]
         for view in views:
-            self.observation_views.remove(view)
+            if view["tool"]:
+                raise ValueError(
+                    f"{view_title} is associated with the {view['tool']} tool."
+                    + "You probably don't want to remove this."
+                )
+            else:
+                self.observation_views.remove(view)
 
     def update_cache(self, key, value):
         self.cache[key] = value
@@ -861,6 +880,7 @@ if __name__ == "__main__":
     agent.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
 
     schema_builder = SchemaBuilder()
+    schema_builder.add_text_field("id", stored=True, tokenizer_name='raw')
     schema_builder.add_text_field("type", stored=True)
     schema_builder.add_text_field("render", stored=True)
     schema_builder.add_text_field("q", stored=True)

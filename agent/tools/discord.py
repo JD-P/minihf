@@ -23,6 +23,7 @@
 # for, right click it, and choose "Copy Channel ID".
 
 import json
+from datetime import datetime
 import multiprocessing
 import nextcord
 intents = nextcord.Intents.default()
@@ -64,7 +65,10 @@ class DiscordBotServer:
         await message.add_reaction(emoji)
 
     async def get_messages(self):
-        return [{"author": msg.author.name, "content": msg.content} for msg in self.messages]
+        return [{"author": msg.author.name,
+                 "content": msg.content,
+                 "timestamp":msg.created_at.timestamp()}
+                for msg in self.messages]
 
     async def handle_request(self, request):
         data = await request.json()
@@ -102,9 +106,11 @@ class WeaveDiscordClient:
         self.server_url = server_url
         self.agent.tools[f"discord-bot-{self.channel_id}"] = self
         self.observation_view = {"type": "observation",
-                                 "title": "WeaveDiscordClient",
+                                 "title": f"WeaveDiscordClient (discord-bot-{self.channel_id})",
+                                 "tool":f"discord-bot-{self.channel_id}",
                                  "callback": self.render}
-        self.agent.add_observation_view("WeaveDiscordClient", self.render)
+        self.agent.add_observation_view("WeaveDiscordClient", self.render,
+                                        tool=f"discord-bot-{self.channel_id}")
 
         # Start the server in a separate process
         self.server_process = multiprocessing.Process(target=run_server, args=(token, channel_id))
@@ -115,10 +121,16 @@ class WeaveDiscordClient:
         messages = response.json()
         rendered_text = "'''Messages:\n"
         for msg in messages:
-            rendered_text += f"{msg['author']}: {msg['content']}\n"
+            dt = datetime.fromtimestamp(msg["timestamp"])
+            formatted_time = dt.strftime('%Y-%m-%d %H:%M')
+            rendered_text += f"{formatted_time} <{msg['author']}>: {msg['content']}\n"
         rendered_text += "'''"
         return rendered_text
 
+    def get_messages(self):
+        response = requests.post(self.server_url, json={"action": "get_messages"})
+        return response.json()
+    
     def send_message(self, content):
         requests.post(self.server_url, json={"action": "send_message", "content": content})
 
