@@ -1,0 +1,11 @@
+{
+  "type": "evaluation",
+  "q": "Is this evaluation a good implementation of a callback to gather and evaluate the expected sensory evidence laid out in the expectation block?",
+  "score": 3.0,
+  "index": 42,
+  "timestamp": 1737490568.8009431,
+  "time_remaining": 20415.256756067276,
+  "bm25_query": "type:'evaluation'  +weave-agent  +framework  +execute  +code  +agent  +subagent  +send  +message  +respond  +personal  +thought  +internal  +monologue  +interaction  +query  +observation  +callback  +tools  +discord  +client  +context  +expectation  +outcome +schema  +validation  +refine  +response +user  +message +error +execute +tick +execute-program +interaction-flow +goal-resolution +action-validation +bm25 +verify +parsed +messages +refinement  +personal-thoughts  +internal-experience +firsthand-view  +chatbot  +dialogue-loop +user-insight +query-response  +personal-reflection  +feedback",
+  "description": "An evaluation block that defines a function 'check_reflective_response' to check if the bot's response to federovist's query is reflective and personal. The function retrieves the bot's recent messages using the discord client tool, then checks for the presence of reflective and personal keywords in the bot's response. If the response contains a sufficient number of reflective and personal keywords, the function returns 1, indicating a reflective response. The evaluation is added to the weave-agent with the title 'Check reflective response' and referencing the function name check_reflective_response."
+}
+

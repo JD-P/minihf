@@ -87,7 +87,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             break
         except ValueError:
             continue
-    if self.tree.current_block_index() > 10 and bm25_query:
+    if bm25_query:
         bm25_query = f"type:'{block_type}' " + bm25_query
 
         searcher = self.bm25_index.searcher()
@@ -102,7 +102,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         retrieved_blocks = None
 
     prompt = f'<s> [INST] {context}'
-    if self.tree.current_block_index() > 10 and retrieved_blocks:
+    if retrieved_blocks:
         prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"    
         for block in retrieved_blocks:
             block_text = block["render"][0].replace(

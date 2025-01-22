@@ -109,8 +109,11 @@ class WeaveDiscordClient:
                                  "title": f"WeaveDiscordClient (discord-bot-{self.channel_id})",
                                  "tool":f"discord-bot-{self.channel_id}",
                                  "callback": self.render}
-        self.agent.add_observation_view("WeaveDiscordClient", self.render,
-                                        tool=f"discord-bot-{self.channel_id}")
+        self.agent.add_observation_view(
+            f"WeaveDiscordClient (discord-bot-{self.channel_id})",
+            self.render,
+            tool=f"discord-bot-{self.channel_id}"
+        )
 
         # Start the server in a separate process
         self.server_process = multiprocessing.Process(target=run_server, args=(token, channel_id))

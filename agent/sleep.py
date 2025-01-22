@@ -34,6 +34,7 @@ for filename in example_filenames:
     block_metadata["render"] = block_render
     example_blocks.append(block_metadata)
 
+writer = bm25_index.writer()
 for example in example_blocks:
     sha256_hash = hashlib.sha256()
     sha256_hash.update(example["render"].encode('utf-8'))
@@ -48,7 +49,6 @@ for example in example_blocks:
         print(f"Skipped block {hash_hex}")
         continue
     
-    writer = bm25_index.writer()
     writer.add_document(tantivy.Document(
         id=hash_hex,
         type=example["type"],
