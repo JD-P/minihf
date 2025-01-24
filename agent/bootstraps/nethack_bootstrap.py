@@ -39,7 +39,7 @@ I'll set up the main agent to play the rest of the game and make a few initial m
 def main_agent_and_initial_moves(subagent):
     def check_game_beaten(subagent):
         """Check if the game has been beaten."""
-        pane_content = subagent.tools["nethack"].pane.capture_pane()
+        pane_content = subagent.tools["nethack"].pane.capture_pane(start=0, end="-")
         return "You ascend to the status of Demigod" in pane_content
 
     schema = {"check_game_beaten": "boolean"}
@@ -54,7 +54,7 @@ def main_agent_and_initial_moves(subagent):
     
     # Make a few initial moves
     time.sleep(2)  # Wait for Nethack to start
-    nethack.send_keys('Weaver\n')  # Input my name
+    nethack.send_keys('Weaver')  # Input my name
     nethack.send_keys('y') # Accept random character creation
     # Leave rest blank so I can see what was chosen and whether it's acceptable
     # I should keep in mind I can get past the --more-- screens

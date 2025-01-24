@@ -1,0 +1,9 @@
+{
+  "type": "evaluation",
+  "q": "Is this evaluation a good implementation of a callback to gather and evaluate the expected sensory evidence laid out in the expectation block?",
+  "score": 3.0,
+  "index": 42,
+  "timestamp": 1737568442.5842712,
+  "time_remaining": 20415.256756067276,
+  "description": "An evaluation block that defines a function 'have_enough_hitpoints' to check if the character has enough hitpoints after drinking a potion in Nethack. The function captures the game screen using the 'nethack' tool, extracts the current and maximum hitpoints using a regular expression, and returns 1 if the current hitpoints are 10 or more, otherwise returns 0. The evaluation is added to the weave-agent with the title 'Check enough hitpoints' and referencing the function name have_enough_hitpoints."
+}

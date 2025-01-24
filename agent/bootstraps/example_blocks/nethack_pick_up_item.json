@@ -1,0 +1,10 @@
+{
+  "type": "action",
+  "q": "Is this action codeblock 1) a step towards resolving the problems identified in the orientation block 2) simple 3) with appropriate tool use?",
+  "score": 2.8,
+  "index": 35,
+  "timestamp": 1737531030.1234567,
+  "time_remaining": 20905.98700070381,
+  "bm25_query": "type:'action'  +Nethack  +inventory  +check  +display  progress  +observe  +state +solution  +strategy  +navigate  continue  +action  orientation  outcome +eval_question +send_keys +inventory_screen  -bootstrap  -genesis  -error  -tick  -debugging  -return_to_caller  +intro_progress +press_enter  +spacebar_input  +problem_resolution  +character_equipment  +gameplay_strategy +bypass_introductory_prompts +key_inputs +search  +retrieve  +relevant  +blocks  +Tantivy  +BM25",
+  "description": "An action block that defines a function 'pick_up_items' to pick up items from the ground in Nethack. The function uses the 'nethack' tool to send the key ',' to pick up items and then pauses for 1 second. The action is added to the weave-agent with the title 'Pick up items' and referencing the function name pick_up_items."
+}

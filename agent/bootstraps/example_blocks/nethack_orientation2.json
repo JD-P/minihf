@@ -1,0 +1,8 @@
+{
+  "type": "orientation",
+  "q": "Is this orientation block a 1) discussion 2) demonstrating high quality reasoning 3) that identifies the cruxes and essential features of the current problem 4) which ends by proposing a reasonable solution?",
+  "score": 2.8,
+  "index": 16,
+  "timestamp": 1737570044.317845,
+  "description": "An orientation block that discusses the expectation of moving down, but the character isn't moving due to a wall. Various personas (P: EXPECTATION, P: EMPIRICISM, P: CONCLUSION) discuss the issue and propose moving in another direction, such as left (h), right (l), or up (k). The conclusion is to move up."
+}

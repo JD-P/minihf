@@ -71,7 +71,11 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
         # Check if the second element is an expression with agent.add_action
         if len(elements) >= 2 and isinstance(elements[1], ast.Expr):
             expr = elements[1].value
-            if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) and expr.func.attr == slot_name:
+            if (isinstance(expr, ast.Call)
+                and isinstance(expr.func, ast.Attribute)
+                and hasattr(expr.func.value, "id")
+                and expr.func.value.id == "self"
+                and expr.func.attr == slot_name):
                 # Check if the call has two arguments: a string literal and a variable name
                 if len(expr.args) == 2 and isinstance(expr.args[0], ast.Str) and isinstance(expr.args[1], ast.Name):
                     pattern_penalty = 0.0  # No penalty if the structure is correct

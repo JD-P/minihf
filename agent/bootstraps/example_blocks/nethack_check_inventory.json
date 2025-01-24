@@ -1,0 +1,10 @@
+{
+  "type": "action",
+  "q": "Is this action codeblock 1) a step towards resolving the problems identified in the orientation block 2) simple 3) with appropriate tool use?",
+  "score": 2.8,
+  "index": 33,
+  "timestamp": 1737531000.1234567,
+  "time_remaining": 20925.98700070381,
+  "bm25_query": "type:'action'  +Nethack  +inventory  +check  +display  progress  +observe  +state +solution  +strategy  +navigate  continue  +action  orientation  outcome +eval_question +send_keys +inventory_screen  -bootstrap  -genesis  -error  -tick  -debugging  -return_to_caller  +intro_progress +press_enter  +spacebar_input  +problem_resolution  +character_equipment  +gameplay_strategy +bypass_introductory_prompts +key_inputs +search  +retrieve  +relevant  +blocks  +Tantivy  +BM25",
+  "description": "An action block that defines a function 'check_inventory' to check the current inventory in Nethack. The function uses the 'nethack' tool to send the key 'i' to open the inventory screen and then pauses for 1 second. The action is added to the weave-agent with the title 'Check inventory' and referencing the function name check_inventory."
+}

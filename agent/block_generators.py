@@ -232,7 +232,10 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         else:
             raise ValueError from e
     if block_type in {"orientation", "expectation"}:
-        block["body"] = extract_first_string_literal(program)
+        try:
+            block["body"] = extract_first_string_literal(program)
+        except AttributeError:
+            raise ValueError("No string literal found in generated block.")
     if block_type in {"action", "evaluation"}:
         callback, registration = extract_function_and_add_action_or_evaluation(
             program,
