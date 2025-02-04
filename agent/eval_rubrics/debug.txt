@@ -1,0 +1,1 @@
+Does this debug block 1) reason about and engage with the error message & sensory evidence for why the action failed 2) enumerate a set of plausible hypothesis 3) rule out any hypothesis that have been disproven by available evidence  4) propose a concrete action or test that could be taken to differentially diagnose which of the enumerated hypothesis is true?

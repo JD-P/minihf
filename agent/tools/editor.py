@@ -8,6 +8,11 @@ class WeaveEditor:
         """Bind tool to weave-agent and set up editor."""
         self.agent = agent
         self.filepath = os.path.abspath(filepath)
+        # Limit to one instance per file
+        # This can be changed later if it wants multiple views of the same file(?)
+        if self.filepath in self.agent.tools:
+            editor = self.agent.tools[f"editor-{self.filepath}"]
+            editor.close()
         self.agent.tools[f"editor-{self.filepath}"] = self
         self.editor_observation_view = {"type":"observation",
                                         "title":f"WeaveEditor ({self.filepath})",
@@ -85,6 +90,11 @@ class WeaveEditor:
     def append(self, text):
         """Append the given text to the end of the file."""
         self.file_content.append(text)
+        self.save_file(self.filepath)
+
+    def clear(self):
+        """Reset the file to blank contents."""
+        self.file_content = []
         self.save_file(self.filepath)
         
     def up(self, n):

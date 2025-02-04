@@ -81,6 +81,8 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
                                              stop=["\n",])
     bm25_query = None
     for candidate in query_candidates:
+        # Prevent duplicate entries taking over through autoregressive reinforcement
+        candidate = " ".join([term for term in set(candidate.split(" "))])
         try:
             self.bm25_index.parse_query(candidate, ["render", "description"])
             bm25_query = candidate
@@ -123,6 +125,8 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type == "orientation":
         prefix = '"""WEAVER [P: EXPECTATION], '
+    if block_type == "debug":
+        prefix = '"""WEAVER [P: HYPOTHESIS], '
     if block_type in {"expectation", "task-inference", "observation_inference"}:
         prefix = '"""'
     elif block_type in {"action", "evaluation"}:

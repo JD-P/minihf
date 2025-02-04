@@ -47,6 +47,7 @@ import random
 import time
 import ast
 import types
+import functools
 import asyncio
 import traceback
 import hashlib
@@ -404,7 +405,7 @@ class WeaveAgentNode:
     def remove_observation_view(self, view_title):
         views = [view for view in self.observation_views if view['title'] == view_title]
         for view in views:
-            if view["tool"]:
+            if "tool" in view and view["tool"] in self.tools:
                 raise ValueError(
                     f"{view_title} is associated with the {view['tool']} tool."
                     + "You probably don't want to remove this."
@@ -636,6 +637,14 @@ class WeaveAgentNode:
             + "# to do it inside the callback because the tick gets executed in a\n"
             + "# local context."
         )
+        debug_hint = (
+            "#hint Debug blocks are my opportunity to reason about the failure\n"
+            "# I just experienced. Because I get multiple opportunities to\n"
+            "# take an action before I'm booted to the next orientation stage\n"
+            "# I can formulate hypothesis and use the next action blocks to test them.\n"
+            "# I want to narrow in on the cause of failure and take steps to resolve\n"
+            "# the issue."
+        )
         for i in range(3):
             action_block = do_tick_block(self,
                                          "action",
@@ -656,9 +665,16 @@ class WeaveAgentNode:
                 failed = False
             except Exception as e:
                 tb = traceback.format_exc()
-                self.add_error_block("# Action execution failed:\n"
+                self.add_error_block("# Action setup failed:\n"
                                      + f'"""{tb}"""')
                 self.failure_stage = "action"
+                try:
+                    debug_block = do_tick_block(self,
+                                                "debug",
+                                                debug_hint,
+                                                {})
+                except:
+                    pass
                 action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                                + f"# {3 - (i+1)} attempts remaining.")
                 failed = True
@@ -673,6 +689,13 @@ class WeaveAgentNode:
                 self.add_error_block("# Action execution failed:\n"
                                      + f'"""{tb}"""')
                 self.failure_stage = "action"
+                try:
+                    debug_block = do_tick_block(self,
+                                                "debug",
+                                                debug_hint,
+                                                {})
+                except:
+                    pass
                 action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                                + f"# {3 - (i+1)} attempts remaining.")
                 failed = True
@@ -747,6 +770,7 @@ class WeaveAgentNode:
             + "# the queue with agent.add_evaluation(title, callback)."
         )
         # TODO: Make this multiple blocks again
+        evaluation_blocks = []
         for _ in range(1):
             for i in range(3):
                 eval_block = do_tick_block(self,
@@ -754,30 +778,44 @@ class WeaveAgentNode:
                                            evaluation_hint,
                                            {})
                 if eval_block:
-                    evaluation_blocks.append(eval_block)
+                    pass
                 else:
                     # TODO: Dynamic hints by having the model or external entities
                     # such as user analyze the situation and suggest a course of action
+                    try:
+                        debug_block = do_tick_block(self,
+                                                    "debug",
+                                                    debug_hint,
+                                                    {})
+                    except:
+                        pass
                     evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                                        + f"# {3 - (i+1)} attempts remaining.")
                     continue
 
                 # Set up evaluation callbacks
-                for evaluation_block in evaluation_blocks:
+                try:
+                    exec(eval_block['body'])
+                    failed = False
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    self.add_error_block("# Evaluation setup execution failed:\n"
+                                         + f'"""{tb}"""')
+                    self.failure_stage = "evaluation"
                     try:
-                        exec(evaluation_block['body'])
-                        failed = False
-                    except Exception as e:
-                        tb = traceback.format_exc()
-                        self.add_error_block("# Evaluation setup execution failed:\n"
-                                             + f'"""{tb}"""')
-                        self.failure_stage = "evaluation"
-                        evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                                           + f"# {3 - (i+1)} attempts remaining.")
-                        failed = True
-                        continue
+                        debug_block = do_tick_block(self,
+                                                    "debug",
+                                                    debug_hint,
+                                                    {})
+                    except:
+                        pass
+                    evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                                       + f"# {3 - (i+1)} attempts remaining.")
+                    failed = True
+                    continue
+                evaluation_blocks.append(eval_block)
                 break
-        if not evaluation_blocks or failed:
+        if failed:
             return
         else:
             self.current_tick.evaluation_setup = evaluation_blocks
@@ -798,6 +836,9 @@ class WeaveAgentNode:
         for evaluation in self.current_tick.evaluations:
             try:
                 result = evaluation["callback"](self)
+                # Stringify result for JSON serialization
+                if type(result) not in [str, int, bool, float]:
+                    result = repr(result)
                 action_evaluation_results.append((evaluation['title'], result))
             except Exception as e:
                 tb = traceback.format_exc()
@@ -847,7 +888,7 @@ if __name__ == "__main__":
     def simple_evaluate_outputs(score_prompt_fns, texts):
         if type(texts) == str:
             texts = [texts,]
-        if type(score_prompt_fns) == types.FunctionType:
+        if type(score_prompt_fns) in [types.FunctionType, functools.partial]:
             score_prompt_fns = [score_prompt_fns,]
         scores = asyncio.run(evaluate_outputs_vllm(args.model_name,
                                                    score_prompt_fns,
