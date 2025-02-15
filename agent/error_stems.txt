@@ -1,18 +1,17 @@
-The error(s) in {stage} are caused by
-To respond to the error(s) in {stage} from the previous tick I will
-Thinking step by step about the previous {stage} error(s) I notice:
-I need to attend to the error(s) found in {stage}.
-I notice an error(s) occurred in the tick's {stage}, to fix them I will
-There was an error in my last {stage}, I'll do better this time by
-Unfortunately I see an error(s) in the event stream after executing the {stage}.
-Before I continue I should deal with the error(s) in the previous {stage}.
-While processing the {stage} callbacks there was an error(s), to fix them I
-Analyzing the error(s) in the trace near {stage} I observe
-My tick has encountered an error(s) in {stage}. I will resolve this error(s) by
-The error code code in the last tick suggests that {stage}
-I can avoid the error(s) I introduced in the previous {stage}
-Hm. Let's think step by step about the {stage} error(s)
-I can see there was an error during {stage} execution.
-I can avoid causing that {stage} error again by
-My hypothesis is that the previous {stage} error was caused by
-My remedy for the {stage} error(s) is
+The error at {timestamp} could be caused by one of the following:
+Here is a list of the different hypothesis that could have caused the error around {timestamp}
+Thinking step by step about the previous error I notice:
+Before attending to the error at {timestamp} let's consider its possible causes. It
+The error above seems related to
+I wonder if the error near {timestamp} is caused by
+So guys what do you make of the error message in the above error block?
+Let's analyze the error seen at {timestamp}. My first thought is
+Before going any further I'll break the error above into parts.
+It's important to discuss the error we observe before jumping into solutions. It seems
+Analyzing the error(s) in the trace near {timestamp} I observe
+The error code code in the last tick suggests that the action
+I can avoid the error(s) I introduced in the previous action
+Hm. Let's think step by step about the error(s).
+I can see there was an error at {timestamp}, let's analyze it by
+Maybe I can avoid causing that error again by
+My first hypothesis is that the previous error was caused by

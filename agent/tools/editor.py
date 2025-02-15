@@ -10,7 +10,7 @@ class WeaveEditor:
         self.filepath = os.path.abspath(filepath)
         # Limit to one instance per file
         # This can be changed later if it wants multiple views of the same file(?)
-        if self.filepath in self.agent.tools:
+        if f"editor-{self.filepath}" in self.agent.tools:
             editor = self.agent.tools[f"editor-{self.filepath}"]
             editor.close()
         self.agent.tools[f"editor-{self.filepath}"] = self

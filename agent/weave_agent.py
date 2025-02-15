@@ -239,7 +239,14 @@ class WeaveAgentTree:
 
     def current_block_index(self):
         return self.__current_block_index
-            
+
+    def find_last_block_of_type(self, _type):
+        """Get the last block of a particular type, if none in trace return none."""
+        for block in reversed(self.__event_stream):
+            if block["type"] == _type:
+                return block
+        return None
+    
     def render_context(self):
         context = ""
         context_blocks = []

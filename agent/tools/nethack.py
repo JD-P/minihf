@@ -33,16 +33,20 @@ class WeaveNethack:
         rendered_text = "'''Nethack Game History (Last 5 Keys Sent):\n"
         if not self.moves:
             return "You haven't made any moves yet. Please send some keys to see the game."
-        for move in self.moves[-5:]:
+        for i, move in enumerate(self.moves[-5:]):
             screen, keys, timestamp = move
             screen = "\n".join(screen)
             hh_ss = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
             rendered_text += f"<{hh_ss}>\n{screen}\nKeys: \"{keys}\"\n"
             # Make it clear whether the PC has moved
             rendered_text += f"Player Character Position: {screen.find('@')}"
-            if screen.find('@') != "\n".join(self.moves[-2][0]).find('@'):
-                rendered_text += " ( Changed )\n"
-            else:
+            try:
+                if screen.find('@') != "\n".join(self.moves[-6+i][0]).find('@'):
+                    rendered_text += " ( Changed )\n"
+                else:
+                    rendered_text += "\n"
+            # Don't track changes if there aren't at least 6 moves yet
+            except IndexError:
                 rendered_text += "\n"
         command_cheat_sheet = (
             "Key Command Cheat Sheet:\n"

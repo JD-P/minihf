@@ -92,13 +92,14 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
 def lint_block(block_type, body):
     if block_type == "orientation":
         return heuristic_penalty(body)
+    if block_type == "debug":
+        return heuristic_penalty(body)
     elif block_type == "expectation":
         return heuristic_penalty(body)
     elif block_type == "action":
         return compute_callback_structure_penalty(body, "add_action")
     elif block_type == "evaluation":
         return compute_callback_structure_penalty(body, "add_evaluation")
-    # TODO: Figure out penalty function for task-inference
     # TODO: Figure out penalty function for observation-inference
     else:
         return 0

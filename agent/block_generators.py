@@ -125,9 +125,16 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type == "orientation":
         prefix = '"""WEAVER [P: EXPECTATION], '
-    if block_type == "debug":
+    elif block_type == "debug":
         prefix = '"""WEAVER [P: HYPOTHESIS], '
-    if block_type in {"expectation", "task-inference", "observation_inference"}:
+        with open("/app/error_stems.txt") as infile:
+            stems = infile.readlines()
+            stem = random.choice(stems)
+            if "{timestamp}" in stem:
+                error = self.tree.find_last_block_of_type("error")
+                stem = stem.format(timestamp=error["timestamp"])
+            prefix += stem
+    elif block_type in {"expectation", "task-inference", "observation_inference"}:
         prefix = '"""'
     elif block_type in {"action", "evaluation"}:
         prefix = "def "
@@ -235,7 +242,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             raise ValueError("Length limit exceeded! Programs must be fewer than 768 tokens.")
         else:
             raise ValueError from e
-    if block_type in {"orientation", "expectation"}:
+    if block_type in {"orientation", "expectation", "debug"}:
         try:
             block["body"] = extract_first_string_literal(program)
         except AttributeError:
