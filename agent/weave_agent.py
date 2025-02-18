@@ -57,6 +57,7 @@ from copy import deepcopy
 from pprint import pformat
 from argparse import ArgumentParser
 from typing import List, Dict, Optional, Any
+from enum import Enum, auto
 from jsonschema import validate
 from functools import partial
 from tqdm import tqdm
@@ -96,6 +97,20 @@ class WeaveAgentTask:
             results[evaluation["callback"].__name__] = result
         return results
 
+
+class BlockType(Enum):
+    OBSERVATION = auto()
+    TASK_REMINDER = auto()
+    ORIENTATION = auto()
+    ACTION = auto()
+    ERROR = auto()
+    DEBUG = auto()
+    EXPECTATION = auto()
+    OBSERVATION_INFERENCE = auto()
+    EVALUATION = auto()
+    OUTCOME = auto()
+
+    
 # Earlier versions of the weave-agent used a flat chain of code blocks that manage
 # problem state by interacting with a global kanban board. The idea was that each
 # sub-task in the agents overall goal could be represented as a card on the board
@@ -145,6 +160,22 @@ class WeaveAgentTree:
         self.__pinned_events = [0, 1]
         self.__current_block_index = 0
         self.__event_stream = []
+        self.transitions = {
+            BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION],
+            BlockType.TASK_REMINDER: [BlockType.OBSERVATION, BlockType.ORIENTATION],
+            BlockType.ORIENTATION: [BlockType.ACTION, BlockType.ERROR],
+            BlockType.ACTION: [BlockType.EXPECTATION, BlockType.ERROR],
+            BlockType.ERROR: [BlockType.DEBUG, BlockType.ACTION, BlockType.EVALUATION,
+                              BlockType.OUTCOME, BlockType.TASK_REMINDER, BlockType.ERROR],
+            BlockType.DEBUG: [BlockType.ACTION, BlockType.EVALUATION,
+                              BlockType.TASK_REMINDER, BlockType.ERROR],
+            BlockType.EXPECTATION: [BlockType.OBSERVATION_INFERENCE,
+                                    BlockType.TASK_REMINDER, BlockType.ERROR],
+            BlockType.OBSERVATION_INFERENCE: [BlockType.EVALUATION,
+                                              BlockType.ERROR, BlockType.TASK_REMINDER],
+            BlockType.EVALUATION: [BlockType.OUTCOME, BlockType.ERROR],
+            BlockType.OUTCOME: [BlockType.TASK_REMINDER, BlockType.ERROR]
+        }
 
     def run(self, name):
         import time
@@ -175,7 +206,30 @@ class WeaveAgentTree:
         self.__agents[name] = subagent
         return subagent
 
+    def is_valid_transition(self, next_block_type):
+        if type(next_block_type) == str:
+            try:
+                next_block_type = getattr(
+                    BlockType,
+                    next_block_type.upper().replace("-", "_")
+                )
+            except AttributeError:
+                raise ValueError(f"Unknown block type: {next_block_type}")
+        if self.__event_stream[-1]['type'] in {'genesis', 'bootstrap'}:
+            return True
+        else:
+            current_state = getattr(
+                BlockType,
+                self.__event_stream[-1]['type'].upper().replace("-", "_")
+            )
+        if next_block_type in self.transitions.get(current_state, []):
+            return True
+        else:
+            raise ValueError(f"Invalid transition from {current_state} to {next_block_type}")
+    
     def add_block(self, block):
+        if block['type'] not in {'genesis', 'bootstrap'}:
+            self.is_valid_transition(block['type'])
         block['index'] = self.__current_block_index
         block['timestamp'] = time.time()
         if block['type'] == 'orientation':
@@ -324,8 +378,8 @@ class Tick:
             "evaluations":repr(self.evaluations),
             "outcome":repr(self.outcome),
         }                
-        
 
+    
 # The intended problem solving strategy for subagents is to delegate until you
 # reach a base case that can be solved in a short number of actions and then
 # resolve it. The root task is allocated a certain amount of time which it can
@@ -456,28 +510,8 @@ class WeaveAgentNode:
             'message': error_message
         }
         self.add_block(error_block)
-                    
-    def tick(self):
-        try:
-            if "ERROR" in [outcome[1] for outcome in
-                           self.current_tick.outcome["table"]]:
-                self.debugging = True
-        except AttributeError:
-            self.debugging = True
-        self.current_tick = Tick(self, len(self.ticks))
 
-        observations = []
-        # Refresh observation views
-        for view in self.observation_views:
-            try:
-                observations.append((view['title'], view['callback'](self)))
-            except Exception as e:
-                tb = traceback.format_exc()
-                self.add_error_block(
-                    f"# Observation callback '{view['title']}' failed:\n"
-                    + f'"""{tb}"""'
-                )
-                
+    def _do_task_reminder_block(self):
         task_reminder_body = ""
 
         try:
@@ -502,52 +536,33 @@ class WeaveAgentNode:
             
         # Format tasks into blocks
         task_blocks = [{'type': 'task-reminder', 'body': task_reminder_body},]
+        return task_blocks
+
+    def _do_observation_blocks(self):
+        observations = []
+        # Refresh observation views
+        for view in self.observation_views:
+            try:
+                observations.append((view['title'], view['callback'](self)))
+            except Exception as e:
+                tb = traceback.format_exc()
+                self.add_error_block(
+                    f"# Observation callback '{view['title']}' failed:\n"
+                    + f'"""{tb}"""'
+                )
+                
+
 
         # Pull the content of the observation windows into blocks
         observation_blocks = [{'type': 'observation',
                                'title': observation[0],
                                'body': observation[1]} for observation in observations]
+        return observation_blocks
 
-        # Inject these into the event stream
-        for new_block in (task_blocks + observation_blocks):
-            self.add_block(new_block)
-            
-        # Render context
-        self.render_context()
-
-        self.tree.dump_event_stream()
-        
-        def do_tick_block(self, block_type, hint, wp_update):
-            weave_params = {"weave_n_tokens":256, "weave_budget":72,
-                            "weave_round_budget":24, "weave_n_expand":16,
-                            "weave_beam_width":1, "weave_max_lookahead":3,
-                            "weave_temperature":0.2}
-            weave_params.update(wp_update)
-            with open(f"/app/eval_rubrics/{block_type}.txt") as infile:
-                inference_questions = infile.read().strip().splitlines()
-            rprint(f"Writing block #[cyan]{self.tree.current_block_index()}[/cyan] of type [cyan]{block_type}[/cyan]")
-            try:
-                block = self.generate_block(block_type,
-                                            self.context,
-                                            inference_questions,
-                                            weave_params,
-                                            hint=hint)
-            except ValueError as e:
-                tb = traceback.format_exc()
-                # TODO: This isn't even correct, replace with dynamic hints -_-
-                hint = ("Hint: callbacks are structured like\n\n"
-                        + "def callback_name(subagent):\n   "
-                        + f"# code...\n   pass\nagent.add_orientation({{...}})")
-                self.add_error_block(f'{hint}\n"""{tb}"""')
-                self.failure_stage = block_type
-                return
-            self.render_context()
-            return block
-            
-        # Write orientation reasoning block
-        # This is your opportunity to analyze the situation based on the
-        # observation, reminder, task, etc blocks. Use this moment to decide
-        # what to do next.
+    def _do_orientation_block(self):
+        """Write orientation reasoning block. This is your opportunity to analyze 
+           the situation based on the observation, reminder, task, etc blocks. 
+           Use this moment to decide what to do next."""
         orientation_hint = (
             "#hint The orientation block is my opportunity to\n"
             + "# reflect on the situation, do chain of thought,\n"
@@ -615,15 +630,12 @@ class WeaveAgentNode:
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
                        "weave_round_budget":96, "weave_n_expand":32}
-        orientation_block = do_tick_block(self,
-                                          "orientation",
-                                          orientation_hint,
-                                          mcts_params)
-        if orientation_block:
-            self.current_tick.orientation = orientation_block
-        else:
-            return
-        
+        orientation_block = self._do_tick_block("orientation",
+                                                orientation_hint,
+                                                mcts_params)
+        return orientation_block
+
+    def _do_action_callback_setup(self, i):
         # Write action block
         action_hint = (
             "#hint Action blocks are where I write code to take actions.\n"
@@ -652,66 +664,69 @@ class WeaveAgentNode:
             "# I want to narrow in on the cause of failure and take steps to resolve\n"
             "# the issue."
         )
-        for i in range(3):
-            action_block = do_tick_block(self,
-                                         "action",
-                                         action_hint,
-                                         {})
-            if action_block:
-                self.current_tick.action_setup = action_block
-            else:
-                # TODO: Dynamic hints by having the model or external entities
-                # such as user analyze the situation and suggest a course of action
-                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                               + f"# {3 - (i+1)} attempts remaining.")
-                continue
+        action_block = self._do_tick_block("action",
+                                           action_hint,
+                                           {})
+        if action_block:
+            self.current_tick.action_setup = action_block
+        else:
+            # TODO: Dynamic hints by having the model or external entities
+            # such as user analyze the situation and suggest a course of action
+            action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                           + f"# {3 - (i+1)} attempts remaining.")
+            return False
 
-            # Set up action callback
+        # Set up action callback
+        try:
+            exec(action_block['body'])
+            return True
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.add_error_block("# Action setup failed:\n"
+                                 + f'"""{tb}"""')
+            self.failure_stage = "action"
             try:
-                exec(action_block['body'])
-                failed = False
-            except Exception as e:
-                tb = traceback.format_exc()
-                self.add_error_block("# Action setup failed:\n"
-                                     + f'"""{tb}"""')
-                self.failure_stage = "action"
-                try:
-                    debug_block = do_tick_block(self,
-                                                "debug",
-                                                debug_hint,
-                                                {})
-                except:
-                    pass
-                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                               + f"# {3 - (i+1)} attempts remaining.")
-                failed = True
-                continue
+                debug_block = self._do_tick_block("debug",
+                                                  debug_hint,
+                                                  {})
+            except:
+                pass
+            action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                           + f"# {3 - (i+1)} attempts remaining.")
+            return False
 
-            # Run action callback
+    def _do_action_callback(self, i):
+        # TODO: Dedupe these hints
+        debug_hint = (
+            "#hint Debug blocks are my opportunity to reason about the failure\n"
+            "# I just experienced. Because I get multiple opportunities to\n"
+            "# take an action before I'm booted to the next orientation stage\n"
+            "# I can formulate hypothesis and use the next action blocks to test them.\n"
+            "# I want to narrow in on the cause of failure and take steps to resolve\n"
+            "# the issue."
+        )
+        # Run action callback
+        try:
+            action_result = self.current_tick.action["callback"](self)
+            return True, action_result
+        except Exception as e:
+            action_result = traceback.format_exc()
+            tb = action_result
+            self.add_error_block("# Action execution failed:\n"
+                                 + f'"""{tb}"""')
+            self.failure_stage = "action"
             try:
-                action_result = self.current_tick.action["callback"](self)
-            except Exception as e:
-                action_result = traceback.format_exc()
-                tb = action_result
-                self.add_error_block("# Action execution failed:\n"
-                                     + f'"""{tb}"""')
-                self.failure_stage = "action"
-                try:
-                    debug_block = do_tick_block(self,
-                                                "debug",
-                                                debug_hint,
-                                                {})
-                except:
-                    pass
-                action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                               + f"# {3 - (i+1)} attempts remaining.")
-                failed = True
-                continue
-            break
-                
-        if not hasattr(self.current_tick, "action_setup") or failed:
-            return
-        
+                debug_block = self._do_tick_block("debug",
+                                                  debug_hint,
+                                                  {})
+            except:
+                pass
+            # TODO: Make this hint actually work again
+            action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                           + f"# {3 - (i+1)} attempts remaining.")
+            return False, action_result
+
+    def _do_expectation_block(self):
         # Write expectation block
         expectation_hint = (
             "#hint Expectation blocks are where I think about what it would\n"
@@ -721,15 +736,12 @@ class WeaveAgentNode:
             + "# working or not. Like the orientation this should go in triple\n"
             + "# quotes."
         )
-        expectation_block = do_tick_block(self,
-                                          "expectation",
-                                          expectation_hint,
-                                          {})
-        if expectation_block:
-            self.current_tick.expectation = expectation_block
-        else:
-            return
-            
+        expectation_block = self._do_tick_block("expectation",
+                                                expectation_hint,
+                                                {})
+        return expectation_block
+
+    def _do_observation_inference_block(self):
         # Observation Inference Block
         observation_inference_hint = (
             "# In the observation inference stage I manage the observation\n"
@@ -743,27 +755,24 @@ class WeaveAgentNode:
             + "# side effects on the computable environment I can add them\n"
             + "# with add_observation_view(title, callback)"
         )
-        observation_inference_block = do_tick_block(self,
-                                                    "observation-inference",
-                                                    observation_inference_hint,
-                                                    {})
-        if observation_inference_block:
-            self.current_tick.observation_inference = observation_inference_block
-        else:
-            return
+        observation_inference_block = self._do_tick_block("observation-inference",
+                                                          observation_inference_hint,
+                                                          {})
+        return observation_inference_block
 
+    def _do_observation_updates(self):
         # Execute observation updates
         try:
-            exec(observation_inference_block['body'])
+            exec(self.current_tick.observation_inference['body'])
+            return True
         except Exception as e:
             tb = traceback.format_exc()
             self.add_error_block("# observation-inference failed:\n"
                                  + f'"""{tb}"""')
             self.failure_stage = "observation-inference"
-            return
-        
-        # Write evaluation programs
-        evaluation_blocks = []
+            return False
+
+    def _do_evaluation_block(self, i):
         evaluation_hint = (
             "#hint Evaluation blocks are where I write callbacks to check if\n"
             + "# my action succeeded or not based on the expectation. There are\n"
@@ -776,51 +785,167 @@ class WeaveAgentNode:
             + "# a value between 0 and 1. I should be sure to add my callback to\n"
             + "# the queue with agent.add_evaluation(title, callback)."
         )
+        eval_block = self._do_tick_block("evaluation",
+                                                 evaluation_hint,
+                                                 {})
+        if eval_block:
+            return eval_block
+        else:
+            # TODO: Dynamic hints by having the model or external entities
+            # such as user analyze the situation and suggest a course of action
+            try:
+                debug_block = self._do_tick_block("debug",
+                                                  debug_hint,
+                                                  {})
+            except:
+                pass
+            evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                               + f"# {3 - (i+1)} attempts remaining.")
+            return False
+
+    def _do_evaluation_callback_setup(self, i, eval_block):
+        # Set up evaluation callbacks
+        try:
+            exec(eval_block['body'])
+            return True
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.add_error_block("# Evaluation setup execution failed:\n"
+                                 + f'"""{tb}"""')
+            self.failure_stage = "evaluation"
+            try:
+                debug_block = self._do_tick_block("debug",
+                                                  debug_hint,
+                                                  {})
+            except:
+                pass
+            evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
+                               + f"# {3 - (i+1)} attempts remaining.")
+            return False
+
+    def _do_evaluation_callbacks(self):
+        # TODO: Figure out how I want to allow retries on this phase
+        # Run action evaluation callbacks
+        action_evaluation_results = []
+        print(self.current_tick.evaluations)
+        for evaluation in self.current_tick.evaluations:
+            try:
+                result = evaluation["callback"](self)
+                # Stringify result for JSON serialization
+                if type(result) not in [str, int, bool, float]:
+                    result = repr(result)
+                action_evaluation_results.append((evaluation['title'], result))
+            except Exception as e:
+                tb = traceback.format_exc()
+                action_evaluation_results.append((evaluation['title'], "ERROR"))
+                self.add_error_block("# Evaluation failed: \n"
+                                     + f'"""{tb}"""')
+        return action_evaluation_results
+        
+    def _do_tick_block(self, block_type, hint, wp_update):
+        weave_params = {"weave_n_tokens":256, "weave_budget":72,
+                        "weave_round_budget":24, "weave_n_expand":16,
+                        "weave_beam_width":1, "weave_max_lookahead":3,
+                        "weave_temperature":0.2}
+        weave_params.update(wp_update)
+        with open(f"/app/eval_rubrics/{block_type}.txt") as infile:
+            inference_questions = infile.read().strip().splitlines()
+        rprint(f"Writing block #[cyan]{self.tree.current_block_index()}[/cyan] of type [cyan]{block_type}[/cyan]")
+        try:
+            block = self.generate_block(block_type,
+                                        self.context,
+                                        inference_questions,
+                                        weave_params,
+                                        hint=hint)
+        except ValueError as e:
+            tb = traceback.format_exc()
+            # TODO: This isn't even correct, replace with dynamic hints -_-
+            hint = ("Hint: callbacks are structured like\n\n"
+                    + "def callback_name(subagent):\n   "
+                    + f"# code...\n   pass\nagent.add_orientation({{...}})")
+            self.add_error_block(f'{hint}\n"""{tb}"""')
+            self.failure_stage = block_type
+            return
+        self.render_context()
+        return block
+    
+    def tick(self):
+        try:
+            if "ERROR" in [outcome[1] for outcome in
+                           self.current_tick.outcome["table"]]:
+                self.debugging = True
+        except AttributeError:
+            self.debugging = True
+        self.current_tick = Tick(self, len(self.ticks))
+
+        task_blocks = self._do_task_reminder_block()
+        observation_blocks = self._do_observation_blocks()
+
+        # Inject these into the event stream
+        for new_block in (task_blocks + observation_blocks):
+            self.add_block(new_block)
+            
+        # Render context
+        self.render_context()
+
+        self.tree.dump_event_stream()
+            
+        orientation_block = self._do_orientation_block()
+        
+        if orientation_block:
+            self.current_tick.orientation = orientation_block
+        else:
+            return
+
+        for i in range(3):
+            is_action_setup = self._do_action_callback_setup(i)
+            if not is_action_setup:
+                failed = True
+                continue
+            is_action_executed, action_result = self._do_action_callback(i)
+            if is_action_executed:
+                failed = False
+                break
+            else:
+                failed = True
+                continue
+                
+        if not hasattr(self.current_tick, "action_setup") or failed:
+            return
+        
+        expectation_block = self._do_expectation_block()
+        
+        if expectation_block:
+            self.current_tick.expectation = expectation_block
+        else:
+            return
+            
+        observation_inference_block = self._do_observation_inference_block()
+        
+        if observation_inference_block:
+            self.current_tick.observation_inference = observation_inference_block
+        else:
+            return
+
+        are_observations_updated = self._do_observation_updates()
+        if not are_observations_updated:
+            return
+        
+        # Write evaluation programs
         # TODO: Make this multiple blocks again
         evaluation_blocks = []
         for _ in range(1):
             for i in range(3):
-                eval_block = do_tick_block(self,
-                                           "evaluation",
-                                           evaluation_hint,
-                                           {})
-                if eval_block:
-                    pass
-                else:
-                    # TODO: Dynamic hints by having the model or external entities
-                    # such as user analyze the situation and suggest a course of action
-                    try:
-                        debug_block = do_tick_block(self,
-                                                    "debug",
-                                                    debug_hint,
-                                                    {})
-                    except:
-                        pass
-                    evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                                       + f"# {3 - (i+1)} attempts remaining.")
+                eval_block = self._do_evaluation_block(i)
+                if not eval_block:
+                    failed = True
                     continue
-
-                # Set up evaluation callbacks
-                try:
-                    exec(eval_block['body'])
-                    failed = False
-                except Exception as e:
-                    tb = traceback.format_exc()
-                    self.add_error_block("# Evaluation setup execution failed:\n"
-                                         + f'"""{tb}"""')
-                    self.failure_stage = "evaluation"
-                    try:
-                        debug_block = do_tick_block(self,
-                                                    "debug",
-                                                    debug_hint,
-                                                    {})
-                    except:
-                        pass
-                    evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
-                                       + f"# {3 - (i+1)} attempts remaining.")
+                is_evaluation_setup = self._do_evaluation_callback_setup(i, eval_block)
+                if not is_evaluation_setup:
                     failed = True
                     continue
                 evaluation_blocks.append(eval_block)
+                failed = False
                 break
         if failed:
             return
@@ -837,21 +962,7 @@ class WeaveAgentNode:
                 tb = traceback.format_exc()
                 task_evaluation_results.append((evaluation['title'], "ERROR"))
 
-        # TODO: Figure out how I want to allow retries on this phase
-        # Run action evaluation callbacks
-        action_evaluation_results = []
-        for evaluation in self.current_tick.evaluations:
-            try:
-                result = evaluation["callback"](self)
-                # Stringify result for JSON serialization
-                if type(result) not in [str, int, bool, float]:
-                    result = repr(result)
-                action_evaluation_results.append((evaluation['title'], result))
-            except Exception as e:
-                tb = traceback.format_exc()
-                action_evaluation_results.append((evaluation['title'], "ERROR"))
-                self.add_error_block("# Evaluation failed: \n"
-                                     + f'"""{tb}"""')
+        action_evaluation_results = self._do_evaluation_callbacks()
 
         outcomes =  []
         try:
