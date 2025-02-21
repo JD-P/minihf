@@ -69,6 +69,8 @@ from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 from weave import weave_tree_search, TreeNode
+from planner import roll_for_error_block, setup_placeholder_callbacks
+from planner import simulate_outcomes, simulate_observation
 from render_block import render_block
 from block_generators import generate_block_inner
 from block_generators import make_simple_bayes_score_prompt, make_simple_score_prompt
@@ -401,6 +403,8 @@ class WeaveAgentNode:
         self.end_time = self.creation_time + (time_budget * 60)
         self.current_tick = Tick(self, 0)
         self.ticks = []
+        # TODO: Remove this once done testing
+        self.planning = True
         self.debugging = False
         self.failure_stage = "event stream"
         self.task = WeaveAgentTask(self, self.name, description)
@@ -543,7 +547,10 @@ class WeaveAgentNode:
         # Refresh observation views
         for view in self.observation_views:
             try:
-                observations.append((view['title'], view['callback'](self)))
+                if self.planning:
+                    observations.append(simulate_observation(self, view))
+                else:
+                    observations.append((view['title'], view['callback'](self)))
             except Exception as e:
                 tb = traceback.format_exc()
                 self.add_error_block(
@@ -678,7 +685,10 @@ class WeaveAgentNode:
 
         # Set up action callback
         try:
-            exec(action_block['body'])
+            if self.planning:
+                setup_placeholder_callbacks(self, action_block['body'])
+            else:
+                exec(action_block['body'])
             return True
         except Exception as e:
             tb = traceback.format_exc()
@@ -707,13 +717,22 @@ class WeaveAgentNode:
         )
         # Run action callback
         try:
-            action_result = self.current_tick.action["callback"](self)
+            if self.planning:
+                action_result = None
+                simulated_error = roll_for_error_block(self, "# Action execution failed:\n")
+                if simulated_error:
+                    raise Exception
+            else:
+                action_result = self.current_tick.action["callback"](self)
             return True, action_result
         except Exception as e:
-            action_result = traceback.format_exc()
-            tb = action_result
-            self.add_error_block("# Action execution failed:\n"
-                                 + f'"""{tb}"""')
+            if self.planning:
+                self.add_error_block(simulated_error)
+            else:
+                tb = traceback.format_exc()
+                self.add_error_block("# Action execution failed:\n"
+                                     + f'"""{tb}"""')
+            action_result = "ERROR"
             self.failure_stage = "action"
             try:
                 debug_block = self._do_tick_block("debug",
@@ -763,7 +782,10 @@ class WeaveAgentNode:
     def _do_observation_updates(self):
         # Execute observation updates
         try:
-            exec(self.current_tick.observation_inference['body'])
+            if self.planning:
+                setup_placeholder_callbacks(self, self.current_tick.observation_inference['body'])
+            else:
+                exec(self.current_tick.observation_inference['body'])
             return True
         except Exception as e:
             tb = traceback.format_exc()
@@ -806,7 +828,10 @@ class WeaveAgentNode:
     def _do_evaluation_callback_setup(self, i, eval_block):
         # Set up evaluation callbacks
         try:
-            exec(eval_block['body'])
+            if self.planning:
+                setup_placeholder_callbacks(self, eval_block['body'])
+            else:
+                exec(eval_block['body'])
             return True
         except Exception as e:
             tb = traceback.format_exc()
@@ -827,19 +852,27 @@ class WeaveAgentNode:
         # TODO: Figure out how I want to allow retries on this phase
         # Run action evaluation callbacks
         action_evaluation_results = []
-        print(self.current_tick.evaluations)
         for evaluation in self.current_tick.evaluations:
             try:
-                result = evaluation["callback"](self)
+                if self.planning:
+                    result = None
+                    simulated_error = roll_for_error_block(self, "# Evaluation failed: \n")
+                    if simulated_error:
+                        raise Exception
+                else:
+                    result = evaluation["callback"](self)
                 # Stringify result for JSON serialization
-                if type(result) not in [str, int, bool, float]:
+                if type(result) not in [str, int, bool, float, type(None)]:
                     result = repr(result)
-                action_evaluation_results.append((evaluation['title'], result))
+                action_evaluation_results.append([evaluation['title'], result])
             except Exception as e:
-                tb = traceback.format_exc()
-                action_evaluation_results.append((evaluation['title'], "ERROR"))
-                self.add_error_block("# Evaluation failed: \n"
-                                     + f'"""{tb}"""')
+                if self.planning:
+                    self.add_error_block(simulated_error)
+                else:
+                    tb = traceback.format_exc()
+                    self.add_error_block("# Evaluation failed: \n"
+                                         + f'"""{tb}"""')
+                action_evaluation_results.append([evaluation['title'], "ERROR"])
         return action_evaluation_results
         
     def _do_tick_block(self, block_type, hint, wp_update):
@@ -956,17 +989,23 @@ class WeaveAgentNode:
         task_evaluation_results = []
         for evaluation in self.task.evaluations:
             try:
-                result = evaluation["callback"](self)
-                task_evaluation_results.append((evaluation['title'], result))
+                if self.planning:
+                    result = None
+                else:
+                    result = evaluation["callback"](self)
+                task_evaluation_results.append([evaluation['title'], result])
             except Exception as e:
                 tb = traceback.format_exc()
-                task_evaluation_results.append((evaluation['title'], "ERROR"))
+                task_evaluation_results.append([evaluation['title'], "ERROR"])
 
         action_evaluation_results = self._do_evaluation_callbacks()
 
         outcomes =  []
         try:
-            outcomes += [(self.current_tick.action["title"],action_result),]
+            if self.planning:
+                outcomes += [[self.current_tick.action["title"],None],]
+            else:
+                outcomes += [[self.current_tick.action["title"],action_result],]
         except AttributeError:
             outcomes += [("[No action specified with agent.add_action()]", "ERROR"),]
         outcomes += task_evaluation_results
@@ -975,12 +1014,19 @@ class WeaveAgentNode:
         # Add outcome block
         outcome_block = {
             'type': 'outcome',
+            "subagent":self.name,
+            "index": self.tree.current_block_index() + 1,
+            "timestamp": time.time(),
+            "time_remaining": self.end_time - time.time(),
             'table': outcomes
         }
+        if self.planning:
+            outcome_block = simulate_outcomes(self.model_name, outcome_block)
         self.add_block(outcome_block)
         self.current_tick.outcome = outcome_block
         try:
-            self.current_tick.validate()
+            if not self.planning:
+                self.current_tick.validate()
         except Exception as e:
             tb = traceback.format_exc()
             self.add_error_block("# Tick validation failed: \n"
