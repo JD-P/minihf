@@ -15,7 +15,7 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from linear_4bit_sharded import quantize_and_shard
-import mixtral_ring_attn, qwen2_ring_attn
+from patch_model import patch_model
 
 print = tqdm.external_write_mode()(print)
 print0 = tqdm.external_write_mode()(du.print0)
@@ -80,8 +80,7 @@ def main():
         collate_fn=CollateFn(args.seq_len),
     )
 
-    mixtral_ring_attn.patch_model(local_group)
-    qwen2_ring_attn.patch_model(local_group)
+    patch_model(local_group)
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         torch_dtype=torch.bfloat16,
