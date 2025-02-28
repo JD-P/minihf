@@ -6,7 +6,7 @@ from torch.distributed import nn as dnn
 import torch_dist_utils as du
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from qwen2_ring_attn import patch_model
+from patch_model import patch_model
 
 
 def kl_divergence(logits_p, logits_q):
