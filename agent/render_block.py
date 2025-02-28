@@ -11,15 +11,18 @@ def generate_outcome_table(evaluation_results):
     return table
 
 def render_block(event_block, tags=True):
-    defunct_body_keys = {"observation":"content",
-                         "orientation":"program",
-                         "task-inference":"program",
-                         "action":"program",
-                         "expectation":"program",
-                         "observation-inference":"program",
-                         "evaluation":"program",
-                         "task-reminder":"task",
-                         "error":"message"}
+    defunct_body_keys = {
+        "bootstrap":"program",
+        "observation":"content",
+        "orientation":"program",
+        "task-inference":"program",
+        "action":"program",
+        "expectation":"program",
+        "observation-inference":"program",
+        "evaluation":"program",
+        "task-reminder":"task",
+        "error":"message"
+    }
     if "body" not in event_block and event_block["type"] in defunct_body_keys:
         event_block["body"] = event_block[defunct_body_keys[event_block["type"]]]
     
