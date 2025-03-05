@@ -56,11 +56,10 @@ def main_agent_and_initial_moves(subagent):
     time.sleep(2)  # Wait for Nethack to start
     nethack.send_keys('Weaver')  # Input my name
     nethack.send_keys('y') # Accept random character creation
-    # Leave rest blank so I can see what was chosen and whether it's acceptable
-    # I should keep in mind I can get past the --more-- screens
-    # with spacebar: `send_keys(' ')` or enter: `send_keys('\n')`
-    # Tip: send_keys() is properly implemented, if you press j and can't go down
-    # it's probably because you are trying to walk through a wall.
+    nethack.send_keys('  ') # Space through the game introduction
+
+    # I should now try exploring the dungeon. Lets see if I can get out of this
+    # room...
 
     return True
 

@@ -57,7 +57,8 @@ def render_block(event_block, tags=True):
                                "expectation",
                                "observation-inference",
                                "evaluation",
-                               "debug"):
+                               "debug",
+                               "backtrack"):
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "bootstrap":
         footer += "# END OF DEMO. Starting on the next tick you have\n"

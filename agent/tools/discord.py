@@ -143,6 +143,10 @@ class WeaveDiscordClient:
     def react_to_message(self, message_id, emoji):
         requests.post(self.server_url, json={"action": "react_to_message", "message_id": message_id, "emoji": emoji})
 
+    def add_reaction(self, message_id, emoji):
+        """Alias of react_to_message"""
+        self.react_to_message(message_id, emoji)
+        
     def close(self):
         self.server_process.terminate()
         self.server_process.join()

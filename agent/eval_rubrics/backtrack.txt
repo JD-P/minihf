@@ -1,0 +1,1 @@
+Does this backtrack block step back from the current problem context and chart an alternate path to my goal?

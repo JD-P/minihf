@@ -58,6 +58,9 @@ def create_main_agent_and_connect_discord(subagent):
     #startblock type: action
     # def respond(subagent):
     #     # Take the CID from the observation callback window
+    #     #title WeaveDiscordClient (discord-bot-CID)
+    #     # Extract the CID, which will be a number string from the above title
+    #     # Then use it to retrieve the discord client like below:
     #     client = self.tools[discord-bot-CID]
     #     client.send_message("Hello!")
     # self.add_action("Respond to the user", respond)

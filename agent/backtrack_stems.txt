@@ -1,0 +1,7 @@
+This doesn't seem to be working. What's another approach I could take?
+I notice I'm confused. Let's break down the problem and think step by step about whether there's a simpler way to accomplish my goal. 
+That action block looks pretty bad, let's backtrack: What could I have done instead?
+What is the end goal of what I'm doing right now and how is what I'm doing meant to accomplish that end?
+Am I doom looping right now? I notice
+This action block clearly isn't right, what made me think this was a good idea?
+This clearly isn't the right way. What if

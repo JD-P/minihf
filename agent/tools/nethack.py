@@ -20,7 +20,8 @@ class WeaveNethack:
         self.server = libtmux.Server()
         self.session = self.server.new_session(session_name="nethack_session", kill_session=True)
         self.window = self.session.new_window(window_name="nethack_window", attach=True)
-        self.pane = self.window.split_window(attach=True)
+        self.window.resize(height=24, width=80)
+        self.pane = self.window.split_window(attach=True, size="100%")
 
         # Start Nethack in the tmux pane
         self.pane.send_keys('/usr/games/nethack\n')
@@ -77,9 +78,9 @@ class WeaveNethack:
             "  E ( engrave writing into the floor )\n"
             "  ^ ( show trap type of adjacent traps )\n"
             "  u ( untrap )\n"
-            "  F + Direction keys ( fight a monster )"
-            "  f ( fire ammunition from quiver )"
-            "  Q ( select ammunition )"
+            "  F + Direction keys ( fight a monster )\n"
+            "  f ( fire ammunition from quiver )\n"
+            "  Q ( select ammunition )\n"
             "  C-t ( teleport, if you can )"
         )
         rendered_text += command_cheat_sheet
@@ -89,6 +90,7 @@ class WeaveNethack:
     def send_keys(self, command):
         """Send a keyboard command to the Nethack game."""
         self.pane.send_keys(command)
+        time.sleep(0.1)
         pane_content = self.pane.capture_pane(start=0, end="-")
         self.moves.append((pane_content, command, time.time()))
 

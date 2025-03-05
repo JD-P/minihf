@@ -94,6 +94,8 @@ def lint_block(block_type, body):
         return heuristic_penalty(body)
     if block_type == "debug":
         return heuristic_penalty(body)
+    elif block_type == "backtrack":
+        return heuristic_penalty(body)
     elif block_type == "expectation":
         return heuristic_penalty(body)
     elif block_type == "action":

@@ -2,6 +2,7 @@ import time
 import re
 import ast
 import random
+import os
 import asyncio
 import torch
 from functools import partial
@@ -106,25 +107,26 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     prompt = f'<s> [INST] {context}'
     if retrieved_blocks:
         prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"    
-        for block in retrieved_blocks:
-            block_text = block["render"][0].replace(
+        for i, block in enumerate(retrieved_blocks):
+            block_text = f"# <retrieval{i}>\n" + block["render"][0].replace(
                 block["type"][0],
-                "recalled-" + block["type"][0]
-            )
+                "recalled-" + block["type"][0],
+                1
+            ) + f"# </retrieval{i}>\n"
             block_text = "# " + block_text.replace("\n", "\n# ")
             prompt += "\n" + block_text
         prompt += f"\n# END RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"
-    prompt += f"\n# Write the next {block_type} block."
+    prompt += f"\n# Write the next {block_type} block.\n"
+    prompt += f"{hint}\n"
     # TODO: Fix this so it uses the rendered header from render_block ?
     time_remaining = self.end_time - time.time()
     prompt += f" [/INST]#subagent {self.name}\n"
     prompt += f"#startblock type: {block_type}\n"
     prompt += f"#time_remaining {time_remaining} seconds\n"
-    prompt += f"{hint}\n"
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type == "orientation":
-        prefix = '"""WEAVER [P: EXPECTATION], '
+        prefix = '"""WEAVER [P: PLANNER], '
     elif block_type == "debug":
         prefix = '"""WEAVER [P: HYPOTHESIS], '
         with open("/app/error_stems.txt") as infile:
@@ -133,6 +135,12 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             if "{timestamp}" in stem:
                 error = self.tree.find_last_block_of_type("error")
                 stem = stem.format(timestamp=error["timestamp"])
+            prefix += stem
+    elif block_type == "backtrack":
+        prefix = '"""WEAVER [P: PLANNER], '
+        with open("/app/backtrack_stems.txt") as infile:
+            stems = infile.readlines()
+            stem = random.choice(stems)
             prefix += stem
     elif block_type in {"expectation", "task-inference", "observation_inference"}:
         prefix = '"""'
@@ -145,6 +153,15 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     #        error_stem = random.choice(infile.readlines())
     #        prefix += error_stem.strip().format(stage=self.failure_stage) + " "
     prompt += prefix
+
+    if not os.path.exists("/app/weave-agent-logs/block-prompts/"):
+        os.mkdir("/app/weave-agent-logs/block-prompts/")
+    logpath = ("/app/weave-agent-logs/block-prompts/"
+               + f"{block_type}_{self.tree.current_block_index()}.py")
+    with open(logpath, "w") as outfile:
+        outfile.write(prompt)
+        outfile.flush()
+    
     stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
     generate_fn = partial(generate_outputs_vllm,
                           self.model_name,
@@ -194,7 +211,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
                                  max_lookahead=1,
                                  temperature=0.01)
     do_long = False
-    if (branches[-1].score < 2.5):
+    if (branches[-1].score < 1):
         do_long = True
     try:
         program = branches[-1].branch_text()
@@ -202,7 +219,8 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
         do_long = True
-    # If rejection sampling fails do full search
+        
+    # If rejection sampling fails backtrack or do full search
     if do_long:
         tree = TreeNode(prompt)
         branches = weave_tree_search(tree=tree,
@@ -242,7 +260,7 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             raise ValueError("Length limit exceeded! Programs must be fewer than 768 tokens.")
         else:
             raise ValueError from e
-    if block_type in {"orientation", "expectation", "debug"}:
+    if block_type in {"orientation", "expectation", "debug", "backtrack"}:
         try:
             block["body"] = extract_first_string_literal(program)
         except AttributeError:

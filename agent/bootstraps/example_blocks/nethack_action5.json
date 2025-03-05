@@ -1,0 +1,9 @@
+{
+  "type": "action",
+  "q": "Does this 1) execute multi-phase objective 2) handle corpse/Inventory 3) progress dungeon level?",
+  "score": 3.0,
+  "index": 7,
+  "timestamp": 1740912854.4091325, 
+  "time_remaining": 21552.374827077866,
+  "description": "Defines 'descend_safely' function: 1) Wield silver saber (w) 2) Apply stethoscope to door (a + l) 3) Fight gelatinous cube (F + l) 4) Loot corpse (,) 5) Descend stairs (>). Implements cautious progression to next level."
+}

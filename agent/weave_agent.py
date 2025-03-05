@@ -107,6 +107,7 @@ class BlockType(Enum):
     ACTION = auto()
     ERROR = auto()
     DEBUG = auto()
+    BACKTRACK = auto()
     EXPECTATION = auto()
     OBSERVATION_INFERENCE = auto()
     EVALUATION = auto()
@@ -166,10 +167,12 @@ class WeaveAgentTree:
             BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION],
             BlockType.TASK_REMINDER: [BlockType.OBSERVATION, BlockType.ORIENTATION],
             BlockType.ORIENTATION: [BlockType.ACTION, BlockType.ERROR],
-            BlockType.ACTION: [BlockType.EXPECTATION, BlockType.ERROR],
+            BlockType.ACTION: [BlockType.EXPECTATION, BlockType.ERROR, BlockType.BACKTRACK],
             BlockType.ERROR: [BlockType.DEBUG, BlockType.ACTION, BlockType.EVALUATION,
                               BlockType.OUTCOME, BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.DEBUG: [BlockType.ACTION, BlockType.EVALUATION,
+                              BlockType.TASK_REMINDER, BlockType.ERROR],
+            BlockType.BACKTRACK: [BlockType.ACTION, BlockType.EVALUATION,
                               BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.EXPECTATION: [BlockType.OBSERVATION_INFERENCE,
                                     BlockType.TASK_REMINDER, BlockType.ERROR],
@@ -403,8 +406,7 @@ class WeaveAgentNode:
         self.end_time = self.creation_time + (time_budget * 60)
         self.current_tick = Tick(self, 0)
         self.ticks = []
-        # TODO: Remove this once done testing
-        self.planning = True
+        self.planning = False
         self.debugging = False
         self.failure_stage = "event stream"
         self.task = WeaveAgentTask(self, self.name, description)
@@ -582,8 +584,7 @@ class WeaveAgentNode:
             + "# solves problems through discussion between personas\n"
             + "# or postures representing different aspects of weave-agent\n"
             + "# such as mental motions, perspectives on the problem, etc.\n"
-            + "# The first posture is always expectation because at the\n"
-            + "# start of a tick we evaluate whether the expectation we\n"
+            + "# At the start of a tick we evaluate whether the expectation we\n"
             + "# formed about the action taken in the last tick was\n"
             + "# violated or not. The different personas then discuss\n"
             + "# what to do in light of this. Some postures weave-agent\n"
@@ -674,7 +675,13 @@ class WeaveAgentNode:
         action_block = self._do_tick_block("action",
                                            action_hint,
                                            {})
-        if action_block:
+        if action_block and action_block["score"] < 1:
+            backtrack_hint = ("Backtrack blocks are triggered by low scoring actions. "
+                              + "These mean I'm clearly not being appropriately guided "
+                              + "by the larger context/planning and I need to zoom out.")
+            self._do_tick_block("backtrack", backtrack_hint, {})
+            return False
+        elif action_block:
             self.current_tick.action_setup = action_block
         else:
             # TODO: Dynamic hints by having the model or external entities
