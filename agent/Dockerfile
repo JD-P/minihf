@@ -16,6 +16,9 @@ RUN pip install -r requirements.txt --no-index --find-links=package-cache
 RUN pip install django
 
 # Install tmux and nethack
+RUN apt-get clean
+RUN apt-get autoclean
+RUN apt-get autoremove
 RUN apt-get update && apt-get upgrade -y
 RUN apt-get update && apt-get install -y tmux 
 RUN apt-get update && apt-get install -y nethack-console
@@ -27,6 +30,11 @@ RUN wget https://github.com/mozilla/geckodriver/releases/download/v0.29.1/geckod
 RUN tar -xvzf geckodriver-v0.29.1-linux64.tar.gz -C /usr/local/bin/
 RUN chmod +x /usr/local/bin/geckodriver
 
+# Cache HuggingFace
+COPY cache_hf.py /app/
+ENV TOKENIZER "Qwen/Qwen2.5-Coder-32B-Instruct"
+RUN python3 cache_hf.py $TOKENIZER
+
 # Copy the current directory contents into the container at /app
 COPY . /app
 
@@ -37,4 +45,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/nethack_bootstrap.py" "weave-agent" --tokenizer "Qwen/Qwen2.5-Coder-32B-Instruct" & python -m http.server 8991 --directory "/app/weave-agent-logs/"
+CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/nethack_bootstrap_rooms.py" "weave-agent" --tokenizer $TOKENIZER & python -m http.server 8991 --directory "/app/weave-agent-logs/"

@@ -63,12 +63,11 @@ from functools import partial
 from tqdm import tqdm
 from rich import print as rprint
 from transformers import AutoTokenizer
-import tantivy
-from tantivy import Index, SchemaBuilder
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 from weave import weave_tree_search, TreeNode
+from retrieval import ModernBertRag
 from planner import roll_for_error_block, setup_placeholder_callbacks
 from planner import simulate_outcomes, simulate_observation
 from render_block import render_block
@@ -232,7 +231,7 @@ class WeaveAgentTree:
         else:
             raise ValueError(f"Invalid transition from {current_state} to {next_block_type}")
     
-    def add_block(self, block):
+    def add_block(self, block, context=""):
         if block['type'] not in {'genesis', 'bootstrap'}:
             self.is_valid_transition(block['type'])
         block['index'] = self.__current_block_index
@@ -250,30 +249,6 @@ class WeaveAgentTree:
         # TODO: Make these parallel requests
         # TODO: Add view to tuner for training the descriptions
         render = render_block(block)
-        if "description" not in block:
-            with open("/app/templates/describe1.txt") as infile:
-                template = infile.read()
-                prompt = template.format(rendered_block=render)
-                object_description = generate_outputs_vllm(self.model_name,
-                                                           prompt,
-                                                           512,
-                                                           port=args.port,
-                                                           n=1,
-                                                           stop=["</summary>",])[0]
-            with open("/app/templates/describe2.txt") as infile:
-                template = infile.read()
-                context = self.render_context()
-                prompt = template.format(rendered_block=render,
-                                         object_description=object_description,
-                                         rendered_context=context)
-                context_description = generate_outputs_vllm(self.model_name,
-                                                            prompt,
-                                                            512,
-                                                            port=args.port,
-                                                            n=1,
-                                                            stop=["</summary>",])[0]
-            #TODO: Make actual tagging function
-            block["description"] = object_description + "\n\n" + context_description
         self.__event_stream.append(block)
         
         if block["type"] not in {"genesis", "bootstrap"}:
@@ -281,21 +256,19 @@ class WeaveAgentTree:
             sha256_hash = hashlib.sha256()
             sha256_hash.update(block_render.encode('utf-8'))
             hash_hex = sha256_hash.hexdigest()
-            writer = bm25_index.writer()
-            writer.add_document(tantivy.Document(
-                id=hash_hex,
-                type=block["type"],
-                render=block_render,
-                q=block["q"],
-                score=block["score"],
-                index=block["index"],
-                timestamp=block["timestamp"],
-                description=block["description"],
-            ))
-            writer.commit()
-        
+
+            rag_block = block.copy()
+            rag_block["id"] = hash_hex
+            rag_block["render"] = block_render
+            rag_block["context"] = context
+            memory.add(rag_block)
+            
         self.__current_block_index += 1
 
+    # TODO: Make this actually work
+    def add_summary(self, summary_tuple):
+        pass
+        
     def current_block_index(self):
         return self.__current_block_index
 
@@ -406,24 +379,23 @@ class WeaveAgentNode:
         self.end_time = self.creation_time + (time_budget * 60)
         self.current_tick = Tick(self, 0)
         self.ticks = []
+        self.memory = memory
         self.planning = False
         self.debugging = False
         self.failure_stage = "event stream"
         self.task = WeaveAgentTask(self, self.name, description)
         self.observation_views = []
-        # TODO: Do I really need to have this pointer?
-        self.bm25_index = bm25_index
         self.tools = {}
         self.cache = {}
         self.context = ""
         self.completed = False
 
-    def run(self):
+    async def run(self):
         """Run the subagent."""
         self.start_time = time.time()
         self.end_time = self.start_time + (self.time_budget * 60)
         while (time.time() < self.end_time) and not self.completed:
-            self.tick()
+            await self.tick()
             time.sleep(1)
         return self.completed
 
@@ -500,14 +472,14 @@ class WeaveAgentNode:
     def render_context(self):
         self.context = self.tree.render_context()
 
-    def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
+    async def generate_block(self, block_type, context, eval_questions, weave_params, hint=""):
         """Generate a block and add it to the event stream."""
-        return generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
+        return await generate_block_inner(self, block_type, context, eval_questions, weave_params, hint)
 
     def add_block(self, block):
         block["subagent"] = self.name
         block["time_remaining"] = self.end_time - time.time()
-        self.tree.add_block(block)
+        self.tree.add_block(block, context=self.context)
     
     def add_error_block(self, error_message):
         self.debugging = True
@@ -544,7 +516,7 @@ class WeaveAgentNode:
         task_blocks = [{'type': 'task-reminder', 'body': task_reminder_body},]
         return task_blocks
 
-    def _do_observation_blocks(self):
+    async def _do_observation_blocks(self):
         observations = []
         # Refresh observation views
         for view in self.observation_views:
@@ -568,7 +540,7 @@ class WeaveAgentNode:
                                'body': observation[1]} for observation in observations]
         return observation_blocks
 
-    def _do_orientation_block(self):
+    async def _do_orientation_block(self):
         """Write orientation reasoning block. This is your opportunity to analyze 
            the situation based on the observation, reminder, task, etc blocks. 
            Use this moment to decide what to do next."""
@@ -638,12 +610,12 @@ class WeaveAgentNode:
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
                        "weave_round_budget":96, "weave_n_expand":32}
-        orientation_block = self._do_tick_block("orientation",
-                                                orientation_hint,
-                                                mcts_params)
+        orientation_block = await self._do_tick_block("orientation",
+                                                      orientation_hint,
+                                                      mcts_params)
         return orientation_block
 
-    def _do_action_callback_setup(self, i):
+    async def _do_action_callback_setup(self, i):
         # Write action block
         action_hint = (
             "#hint Action blocks are where I write code to take actions.\n"
@@ -672,14 +644,14 @@ class WeaveAgentNode:
             "# I want to narrow in on the cause of failure and take steps to resolve\n"
             "# the issue."
         )
-        action_block = self._do_tick_block("action",
-                                           action_hint,
-                                           {})
-        if action_block and action_block["score"] < 1:
+        action_block = await self._do_tick_block("action",
+                                                 action_hint,
+                                                 {})
+        if action_block and action_block["score"] < 0.1:
             backtrack_hint = ("Backtrack blocks are triggered by low scoring actions. "
                               + "These mean I'm clearly not being appropriately guided "
                               + "by the larger context/planning and I need to zoom out.")
-            self._do_tick_block("backtrack", backtrack_hint, {})
+            await self._do_tick_block("backtrack", backtrack_hint, {})
             return False
         elif action_block:
             self.current_tick.action_setup = action_block
@@ -703,7 +675,7 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.failure_stage = "action"
             try:
-                debug_block = self._do_tick_block("debug",
+                debug_block = await self._do_tick_block("debug",
                                                   debug_hint,
                                                   {})
             except:
@@ -712,7 +684,7 @@ class WeaveAgentNode:
                            + f"# {3 - (i+1)} attempts remaining.")
             return False
 
-    def _do_action_callback(self, i):
+    async def _do_action_callback(self, i):
         # TODO: Dedupe these hints
         debug_hint = (
             "#hint Debug blocks are my opportunity to reason about the failure\n"
@@ -742,7 +714,7 @@ class WeaveAgentNode:
             action_result = "ERROR"
             self.failure_stage = "action"
             try:
-                debug_block = self._do_tick_block("debug",
+                debug_block = await self._do_tick_block("debug",
                                                   debug_hint,
                                                   {})
             except:
@@ -752,7 +724,7 @@ class WeaveAgentNode:
                            + f"# {3 - (i+1)} attempts remaining.")
             return False, action_result
 
-    def _do_expectation_block(self):
+    async def _do_expectation_block(self):
         # Write expectation block
         expectation_hint = (
             "#hint Expectation blocks are where I think about what it would\n"
@@ -762,12 +734,12 @@ class WeaveAgentNode:
             + "# working or not. Like the orientation this should go in triple\n"
             + "# quotes."
         )
-        expectation_block = self._do_tick_block("expectation",
+        expectation_block = await self._do_tick_block("expectation",
                                                 expectation_hint,
                                                 {})
         return expectation_block
 
-    def _do_observation_inference_block(self):
+    async def _do_observation_inference_block(self):
         # Observation Inference Block
         observation_inference_hint = (
             "# In the observation inference stage I manage the observation\n"
@@ -781,12 +753,12 @@ class WeaveAgentNode:
             + "# side effects on the computable environment I can add them\n"
             + "# with add_observation_view(title, callback)"
         )
-        observation_inference_block = self._do_tick_block("observation-inference",
+        observation_inference_block = await self._do_tick_block("observation-inference",
                                                           observation_inference_hint,
                                                           {})
         return observation_inference_block
 
-    def _do_observation_updates(self):
+    async def _do_observation_updates(self):
         # Execute observation updates
         try:
             if self.planning:
@@ -801,7 +773,7 @@ class WeaveAgentNode:
             self.failure_stage = "observation-inference"
             return False
 
-    def _do_evaluation_block(self, i):
+    async def _do_evaluation_block(self, i):
         evaluation_hint = (
             "#hint Evaluation blocks are where I write callbacks to check if\n"
             + "# my action succeeded or not based on the expectation. There are\n"
@@ -814,7 +786,7 @@ class WeaveAgentNode:
             + "# a value between 0 and 1. I should be sure to add my callback to\n"
             + "# the queue with agent.add_evaluation(title, callback)."
         )
-        eval_block = self._do_tick_block("evaluation",
+        eval_block = await self._do_tick_block("evaluation",
                                                  evaluation_hint,
                                                  {})
         if eval_block:
@@ -823,7 +795,7 @@ class WeaveAgentNode:
             # TODO: Dynamic hints by having the model or external entities
             # such as user analyze the situation and suggest a course of action
             try:
-                debug_block = self._do_tick_block("debug",
+                debug_block = await self._do_tick_block("debug",
                                                   debug_hint,
                                                   {})
             except:
@@ -832,7 +804,7 @@ class WeaveAgentNode:
                                + f"# {3 - (i+1)} attempts remaining.")
             return False
 
-    def _do_evaluation_callback_setup(self, i, eval_block):
+    async def _do_evaluation_callback_setup(self, i, eval_block):
         # Set up evaluation callbacks
         try:
             if self.planning:
@@ -846,7 +818,7 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.failure_stage = "evaluation"
             try:
-                debug_block = self._do_tick_block("debug",
+                debug_block = await self._do_tick_block("debug",
                                                   debug_hint,
                                                   {})
             except:
@@ -855,7 +827,7 @@ class WeaveAgentNode:
                                + f"# {3 - (i+1)} attempts remaining.")
             return False
 
-    def _do_evaluation_callbacks(self):
+    async def _do_evaluation_callbacks(self):
         # TODO: Figure out how I want to allow retries on this phase
         # Run action evaluation callbacks
         action_evaluation_results = []
@@ -882,7 +854,7 @@ class WeaveAgentNode:
                 action_evaluation_results.append([evaluation['title'], "ERROR"])
         return action_evaluation_results
         
-    def _do_tick_block(self, block_type, hint, wp_update):
+    async def _do_tick_block(self, block_type, hint, wp_update):
         weave_params = {"weave_n_tokens":256, "weave_budget":72,
                         "weave_round_budget":24, "weave_n_expand":16,
                         "weave_beam_width":1, "weave_max_lookahead":3,
@@ -892,11 +864,11 @@ class WeaveAgentNode:
             inference_questions = infile.read().strip().splitlines()
         rprint(f"Writing block #[cyan]{self.tree.current_block_index()}[/cyan] of type [cyan]{block_type}[/cyan]")
         try:
-            block = self.generate_block(block_type,
-                                        self.context,
-                                        inference_questions,
-                                        weave_params,
-                                        hint=hint)
+            block = await self.generate_block(block_type,
+                                              self.context,
+                                              inference_questions,
+                                              weave_params,
+                                              hint=hint)
         except ValueError as e:
             tb = traceback.format_exc()
             # TODO: This isn't even correct, replace with dynamic hints -_-
@@ -909,7 +881,7 @@ class WeaveAgentNode:
         self.render_context()
         return block
     
-    def tick(self):
+    async def tick(self):
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -919,7 +891,7 @@ class WeaveAgentNode:
         self.current_tick = Tick(self, len(self.ticks))
 
         task_blocks = self._do_task_reminder_block()
-        observation_blocks = self._do_observation_blocks()
+        observation_blocks = await self._do_observation_blocks()
 
         # Inject these into the event stream
         for new_block in (task_blocks + observation_blocks):
@@ -930,7 +902,13 @@ class WeaveAgentNode:
 
         self.tree.dump_event_stream()
             
-        orientation_block = self._do_orientation_block()
+        orientation_block = asyncio.create_task(self._do_orientation_block())
+        # Index memories while waiting on block gen
+        while not orientation_block.done():
+            processed = memory.process_item()
+            if not processed:
+                break
+        await orientation_block
         
         if orientation_block:
             self.current_tick.orientation = orientation_block
@@ -938,11 +916,17 @@ class WeaveAgentNode:
             return
 
         for i in range(3):
-            is_action_setup = self._do_action_callback_setup(i)
+            is_action_setup = asyncio.create_task(self._do_action_callback_setup(i))
+            while not is_action_setup.done():
+                processed = memory.process_item()
+                if not processed:
+                    break
+            await is_action_setup
+
             if not is_action_setup:
                 failed = True
                 continue
-            is_action_executed, action_result = self._do_action_callback(i)
+            is_action_executed, action_result = await self._do_action_callback(i)
             if is_action_executed:
                 failed = False
                 break
@@ -953,21 +937,21 @@ class WeaveAgentNode:
         if not hasattr(self.current_tick, "action_setup") or failed:
             return
         
-        expectation_block = self._do_expectation_block()
+        expectation_block = await self._do_expectation_block()
         
         if expectation_block:
             self.current_tick.expectation = expectation_block
         else:
             return
             
-        observation_inference_block = self._do_observation_inference_block()
+        observation_inference_block = await self._do_observation_inference_block()
         
         if observation_inference_block:
             self.current_tick.observation_inference = observation_inference_block
         else:
             return
 
-        are_observations_updated = self._do_observation_updates()
+        are_observations_updated = await self._do_observation_updates()
         if not are_observations_updated:
             return
         
@@ -976,11 +960,11 @@ class WeaveAgentNode:
         evaluation_blocks = []
         for _ in range(1):
             for i in range(3):
-                eval_block = self._do_evaluation_block(i)
+                eval_block = await self._do_evaluation_block(i)
                 if not eval_block:
                     failed = True
                     continue
-                is_evaluation_setup = self._do_evaluation_callback_setup(i, eval_block)
+                is_evaluation_setup = await self._do_evaluation_callback_setup(i, eval_block)
                 if not is_evaluation_setup:
                     failed = True
                     continue
@@ -1005,7 +989,7 @@ class WeaveAgentNode:
                 tb = traceback.format_exc()
                 task_evaluation_results.append([evaluation['title'], "ERROR"])
 
-        action_evaluation_results = self._do_evaluation_callbacks()
+        action_evaluation_results = await self._do_evaluation_callbacks()
 
         outcomes =  []
         try:
@@ -1091,24 +1075,8 @@ if __name__ == "__main__":
     os.remove("hf_token.txt")
     agent.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
 
-    schema_builder = SchemaBuilder()
-    schema_builder.add_text_field("id", stored=True, tokenizer_name='raw')
-    schema_builder.add_text_field("type", stored=True)
-    schema_builder.add_text_field("render", stored=True)
-    schema_builder.add_text_field("q", stored=True)
-    schema_builder.add_float_field("score", stored=True)
-    schema_builder.add_integer_field("index", stored=True)
-    schema_builder.add_float_field("timestamp", stored=True)
-    schema_builder.add_text_field("description", stored=True)
-
-    bm25_schema = schema_builder.build()
-
-    if not os.path.exists("memories"):
-        os.mkdir("memories")
-    if not os.path.exists("memories/bm25"):
-        os.mkdir("memories/bm25")
-    bm25_index = Index(bm25_schema, path="./memories/bm25")
-    
+    memory = ModernBertRag(agent)
+        
     # Mock bootstrap agent so we can run the callbacks in bootstrap file
     self = agent.subagent(
         "bootstrap",
@@ -1165,7 +1133,7 @@ if __name__ == "__main__":
     if not os.path.exists("/app/weave-agent-logs"):
         os.mkdir("/app/weave-agent-logs")
         
-    result, event_stream = agent.run("main")
+    result, event_stream = asyncio.run(agent.run("main"))
     
     with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
         out = {"model_name":args.model_name,

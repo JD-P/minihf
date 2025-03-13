@@ -258,7 +258,7 @@ def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None)
     if stop:
         payload["stop"] = stop
     response = requests.post(f"http://localhost:{port}/v1/completions/",
-                             data=json.dumps(payload))
+                             json=payload)
     # return completion.json()["choices"][0]["text"]
     texts = [choice["text"] for choice in response.json()["choices"]]
     return texts
@@ -562,7 +562,7 @@ async def weave_tree_search_vllm(
 
     print("====== Generating with Weave ======")
     if tree.logit == float("-inf"):
-        root_score = evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))])[0]
+        root_score = (await evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))]))[0]
         tree.set_score(root_score, temperature)
     beam = [tree]
     round = 0
@@ -592,8 +592,8 @@ async def weave_tree_search_vllm(
 
             # Expansion - Expand the selected node
             n_expand_cur = min(n_expand, budget, round_budget_remaining)
-            texts = await generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
-            scores = evaluate_fn(
+            texts = generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
+            scores = await evaluate_fn(
                 [(chosen.root.text, chosen.branch_text(include_root=False) + text)
                 for text in texts]
             )

@@ -10,100 +10,33 @@ from rich import print as rprint
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
-from weave import weave_tree_search, TreeNode
+from weave import weave_tree_search_vllm, TreeNode
 from render_block import render_block
 from block_linters import lint_block
 
 def make_simple_bayes_score_prompt(question: str):
     """Simplify the process of making a bayesian weave evaluator question prompt
     maker so that it's just a matter of passing a question for the weave-agent."""
-    template = ("{response}\n\n"
-                + "# Answer yes or no and only yes or no to the following.\n"
-                + "# question about the incomplete code block above.\n"
-                + "# Keep in mind the following question is being asked as part\n"
-                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
-                + "# You're really being asked something like *will this trajectory*\n"
-                + "# eventually have quality X or satisfy predicate Y?\n"
+    template = ("{response}\n"
+                + "# Answer yes or no and only yes or no to the following\n"
+                + "# question about the code block above.\n"
                 + f"#q: {{parent_q}}\n# {question}")
     return partial(make_bayes_score_prompt_vllm, template, "", "")
     
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
-    template = ("<s> [INST] {response}\n\n"
+    template = ("<s> [INST] {response}\n"
                 + "#q: If I flip a fair coin will it come up heads? No. (50%)\n"
                 + "#q: X happens one in a hundred times. Did X happen? Yes. (1%)\n"
                 + "#q: If I pick a US state at random will that state be Idaho? No. (98%)\n"
                 + "#q: If I pick a book up from the thrift store will it be good according to Sturgeon's law? Yes. (10%)\n"
-                + "# Answer yes or no and only yes or no to the following.\n"
-                + "# question about the incomplete code block above.\n"
-                + "# Keep in mind the following question is being asked as part\n"
-                + "# of a Monte Carlo Tree Search so the above is usually a work in progress.\n"
-                + "# You're really being asked something like *will this trajectory*\n"
-                + "# eventually have quality X or satisfy predicate Y?\n"
+                + "# Answer yes or no and only yes or no to the following\n"
+                + "# question about the code block above.\n"
                 + f"#q: {question} [/INST]")
     return partial(make_score_prompt_vllm, template, "", "")
 
-def generate_block_inner(self, block_type, context, eval_questions, weave_params, hint=""):
-    def is_valid_syntax(code):
-        try:
-            ast.parse(code)
-            return True
-        except SyntaxError as e:
-            error_position = e.offset
-            code_length = len(code)
-            if code_length - error_position > 50:
-                return False
-            else:
-                return True
-
-    bm25_prompt =  f'<s> [INST] {context} [/INST]#startblock type: {block_type}\n'
-    bm25_prompt += "#timestamp {time.time()}\n"
-    bm25_prompt += "# I need to write a Tantivy BM 25 query to retrieve relevant blocks below.\n"
-    bm25_prompt += "# After the tag bm25_query I will write a series of words "
-    bm25_prompt += "# summarizing the situation. I will also search for words and "
-    bm25_prompt += "# phrases related to the problem I need to solve in the next block."
-    bm25_prompt += "# I put a + in front of a word +like +so to denote that I want "
-    bm25_prompt += "# to search for it and I put a - in front of a word to denote "
-    bm25_prompt += "# that I want to avoid it -like -so. Write a long series of "
-    bm25_prompt += "# relevant search words below, try to get at least a dozen:\n"
-    if self.tree.current_block_index() < 50:
-        bm25_prompt += f"#bm25_query type:'{block_type}' "
-    else:
-        bm25_prompt += "#bm25_query "
-
-    port = 5001
-    # TODO: Rejection sample this?
-    query_candidates = generate_outputs_vllm(self.model_name,
-                                             bm25_prompt,
-                                             256,
-                                             port=port,
-                                             n=8,
-                                             stop=["\n",])
-    bm25_query = None
-    for candidate in query_candidates:
-        # Prevent duplicate entries taking over through autoregressive reinforcement
-        candidate = " ".join([term for term in set(candidate.split(" "))])
-        try:
-            self.bm25_index.parse_query(candidate, ["render", "description"])
-            bm25_query = candidate
-            break
-        except ValueError:
-            continue
-    if bm25_query:
-        bm25_query = f"type:'{block_type}' " + bm25_query
-
-        searcher = self.bm25_index.searcher()
-        query = self.bm25_index.parse_query(bm25_query, ["render", "description"])
-        results = searcher.search(query, limit=25).hits
-        retrieved_blocks = [searcher.doc(result[1]) for result in results
-                            if searcher.doc(result[1])["score"][0] >= 2]
-        retrieved_blocks = sorted(retrieved_blocks,
-                                  key=lambda block: block["score"][0],
-                                  reverse=True)[:3]
-    else:
-        retrieved_blocks = None
-
+def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
     prompt = f'<s> [INST] {context}'
     if retrieved_blocks:
         prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"    
@@ -148,11 +81,25 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
         prefix = "def "
     else:
         prefix = ""
-    #if block_type in {"orientation"} and self.debugging:
-    #    with open("/app/error_stems.txt") as infile:
-    #        error_stem = random.choice(infile.readlines())
-    #        prefix += error_stem.strip().format(stage=self.failure_stage) + " "
     prompt += prefix
+    return prompt, prefix
+
+async def generate_block_inner(self, block_type, context, eval_questions, weave_params, hint=""):
+    def is_valid_syntax(code):
+        try:
+            ast.parse(code)
+            return True
+        except SyntaxError as e:
+            error_position = e.offset
+            code_length = len(code)
+            if code_length - error_position > 50:
+                return False
+            else:
+                return True
+
+    port = 5001
+
+    prompt, prefix = mk_prompt(self, block_type, context, hint)
 
     if not os.path.exists("/app/weave-agent-logs/block-prompts/"):
         os.mkdir("/app/weave-agent-logs/block-prompts/")
@@ -199,17 +146,37 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             return scores + syntax_penalties + completion_penalties + lint_penalties
     tree = TreeNode(prompt)
     wp = weave_params
-    # First try a simple rejection sampling
-    branches = weave_tree_search(tree=tree,
-                                 generate_fn=partial(generate_fn,
-                                                     n_tokens=768),
-                                 evaluate_fn=evaluate_fn,
-                                 budget=32,
-                                 round_budget=32,
-                                 n_expand=32,
-                                 beam_width=1,
-                                 max_lookahead=1,
-                                 temperature=0.01)
+    # Rejection sample candidate for iterative retrieval
+    query_candidates = await weave_tree_search_vllm(tree=tree,
+                                                    generate_fn=partial(generate_fn,
+                                                                        n_tokens=768),
+                                                    evaluate_fn=evaluate_fn,
+                                                    budget=4,
+                                                    round_budget=4,
+                                                    n_expand=4,
+                                                    beam_width=1,
+                                                    max_lookahead=1,
+                                                    temperature=0.01)
+    candidate = query_candidates[-1]
+
+    retrieved_blocks = self.memory.search(prompt + candidate.branch_text(), limit=3)
+    prompt, prefix = mk_prompt(self,
+                               block_type,
+                               context,
+                               hint,
+                               retrieved_blocks=retrieved_blocks)
+    tree = TreeNode(prompt)
+    # Rejection sample with retrieval
+    branches = await weave_tree_search_vllm(tree=tree,
+                                            generate_fn=partial(generate_fn,
+                                                                n_tokens=768),
+                                            evaluate_fn=evaluate_fn,
+                                            budget=16,
+                                            round_budget=16,
+                                            n_expand=16,
+                                            beam_width=1,
+                                            max_lookahead=1,
+                                            temperature=0.01)
     do_long = False
     if (branches[-1].score < 1):
         do_long = True
@@ -220,19 +187,19 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
     except Exception as e:
         do_long = True
         
-    # If rejection sampling fails backtrack or do full search
+    # If rejection sampling fails backtrack or do more rejection sampling
     if do_long:
         tree = TreeNode(prompt)
-        branches = weave_tree_search(tree=tree,
-                                     generate_fn=partial(generate_fn,
-                                                         n_tokens=wp["weave_n_tokens"]),
-                                     evaluate_fn=evaluate_fn,
-                                     budget=wp["weave_budget"],
-                                     round_budget=wp["weave_round_budget"],
-                                     n_expand=wp["weave_n_expand"],
-                                     beam_width=wp["weave_beam_width"],
-                                     max_lookahead=wp["weave_max_lookahead"],
-                                     temperature=wp["weave_temperature"]) 
+        branches = await weave_tree_search_vllm(tree=tree,
+                                                generate_fn=partial(generate_fn,
+                                                                    n_tokens=768),
+                                                evaluate_fn=evaluate_fn,
+                                                budget=128,
+                                                round_budget=128,
+                                                n_expand=128,
+                                                beam_width=1,
+                                                max_lookahead=1,
+                                                temperature=0.01)        
         program = branches[-1].branch_text()
         # Check we finished writing the code block and extract first block
         stop_indices = []
@@ -249,8 +216,6 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
              "body":program,
              "q":eval_questions[0],
              "score":branches[-1].score.item()}
-    if bm25_query:
-        block["bm25_query"] = bm25_query
     try:
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
@@ -271,9 +236,9 @@ def generate_block_inner(self, block_type, context, eval_questions, weave_params
             f"add_{block_type}"
         )
         block["body"] = callback + "\n\n" + registration
-    raw_score = asyncio.run(
-        evaluate_fn([prompt[:len(prompt) - len(prefix)] + block["body"],],
-                    raw=True)
+    raw_score = await evaluate_fn(
+        [prompt[:len(prompt) - len(prefix)] + block["body"],],
+        raw=True
     )
     block["raw_score"] = raw_score[0].item()
     self.add_block(block)
@@ -325,34 +290,3 @@ def extract_function_and_add_action_or_evaluation(code, slot_name):
     add_action_code = ast.unparse(visitor.add_action_call) if visitor.add_action_call else ""
 
     return function_code, add_action_code
-
-"""
-def tag_block(agent, context, block):
-    render = render_block(block, tags=False)
-    searcher = agent.bm25_index.searcher()
-    total_blocks = index.num_docs()
-
-    sample_size = 5
-    sampled_block_ids = random.sample(range(total_blocks), sample_size)
-
-    sampled_blocks = []
-    for block_id in sampled_block_ids:
-        block = searcher.doc(block_id)
-        block_dict = {
-            "type":block["type"],
-            "q":block["q"],
-            "score":block["score"],
-            "render":block["render"]
-            "index":block["index"],
-            "timestamp":block["timestamp"],
-            "tags":block["tags"]
-        }
-
-            
-        sampled_blocks.append(block_dict)
-        
-    few_shot_prompt = ''.join([f"{block['render']}\n#tags: {block['tags']}\n"
-                               for block in sampled_blocks])
-    few_shot_prompt += (render + "\n#tags: ")
-    guess = generate_outputs_vllm(
-"""
