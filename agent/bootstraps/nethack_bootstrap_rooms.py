@@ -38,12 +38,12 @@ I'll set up the main agent to play the rest of the game and make a few initial m
 
 def main_agent_and_initial_moves(subagent):
     def check_player_dead(subagent):
-        """Check if the game has been beaten."""
+        """Check if the character has died after we've explored a bunch of rooms."""
         pane_content = subagent.tools["nethack"].pane.capture_pane(start=0, end="-")
         return "Do you want your possessions identified?" in pane_content
 
     schema = {"check_player_dead": "boolean"}
-    main_agent = agent.subagent("main", None, "Beat Nethack", schema, args.budget)
+    main_agent = agent.subagent("main", None, "Leave every room I encounter", schema, args.budget)
     main_agent.task.add_evaluation("Check if player has died", check_player_dead)
 
     nethack = WeaveNethack(main_agent)
@@ -59,7 +59,8 @@ def main_agent_and_initial_moves(subagent):
     nethack.send_keys('  ') # Space through the game introduction
 
     # I should now try exploring the dungeon. Lets see if I can get out of this
-    # room...
+    # room. In the next orientation block I'll outline the keys I need to send to
+    # escape this first room.
 
     return True
 

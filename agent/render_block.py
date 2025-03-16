@@ -39,8 +39,8 @@ def render_block(event_block, tags=True):
     if "bm25_query" in event_block:
         header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
-    if "raw_score" in event_block:
-        yes_p = torch.sigmoid(torch.tensor(event_block["raw_score"])).item()
+    if "score" in event_block:
+        yes_p = torch.sigmoid(torch.tensor(event_block["score"])).item()
         no_p = 1 - yes_p
         yes_p, no_p = round(yes_p, 5), round(no_p, 5)
         answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]

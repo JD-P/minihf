@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import sqlite_vec
 import json
@@ -56,7 +57,7 @@ class ModernBertRag:
         assert "context" in item
         self.queue.put(item)
 
-    def process_item(self):
+    async def process_item(self):
         """Process one item from the queue"""
         if self.queue.empty():
             return None
@@ -66,29 +67,43 @@ class ModernBertRag:
         context = item["context"]
         block_id = item["id"]
 
-        # Generate descriptions
-        with open("/app/templates/describe1.txt") as infile:
-            template = infile.read()
-            prompt = template.format(rendered_block=render)
-            object_description = generate_outputs_vllm(
-                self.model_name, prompt, 512, port=self.port, n=1, stop=["</summary>"]
-            )[0]
+        """
+        if "description" not in item:
+            if not os.path.exists("/app/templates/describe1.txt"):
+                describe1_path = "templates/describe1.txt"
+            else:
+                describe1_path = "/app/templates/describe1.txt"
+            if not os.path.exists("/app/templates/describe2.txt"):
+                describe2_path = "templates/describe2.txt"
+            else:
+                describe2_path = "/app/templates/describe2.txt"
+            # Generate descriptions
+            with open(describe1_path) as infile:
+                template = infile.read()
+                prompt = template.format(rendered_block=render)
+                object_description = generate_outputs_vllm(
+                    self.model_name, prompt, 512, port=self.port, n=1, stop=["</summary>"]
+                )[0]
 
-        with open("/app/templates/describe2.txt") as infile:
-            template = infile.read()
-            prompt = template.format(
-                rendered_block=render,
-                object_description=object_description,
-                rendered_context=context
-            )
-            context_description = generate_outputs_vllm(
-                self.model_name, prompt, 512, port=self.port, n=1, stop=["</summary>"]
-            )[0]
+            with open(describe2_path) as infile:
+                template = infile.read()
+                prompt = template.format(
+                    rendered_block=render,
+                    object_description=object_description,
+                    rendered_context=context
+                )
+                context_description = generate_outputs_vllm(
+                    self.model_name, prompt, 512, port=self.port, n=1, stop=["</summary>"]
+                )[0]
 
-        full_description = f"{object_description}\n\n{context_description}"
+            full_description = f"{object_description}\n\n{context_description}"
+        else:
+            full_description = item["description"]
+        """
+        full_description = ""
         
         # Tokenize and process text
-        combined_text = f"{render}\n{context}\n{full_description}"
+        combined_text = f"{context}\n{render}\n\n{full_description}"
         inputs = self.tokenizer(combined_text, return_tensors="pt", truncation=False)
         tokens = inputs["input_ids"][0][-8192:]  # Take last 8192 tokens
         

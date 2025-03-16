@@ -50,6 +50,7 @@ import types
 import functools
 import asyncio
 import traceback
+import logging
 import hashlib
 import requests
 import torch
@@ -73,6 +74,10 @@ from planner import simulate_outcomes, simulate_observation
 from render_block import render_block
 from block_generators import generate_block_inner
 from block_generators import make_simple_bayes_score_prompt, make_simple_score_prompt
+import cProfile
+import pstats
+
+logger = logging.getLogger(__name__)
 
 class WeaveAgentTask:
     def __init__(self, subagent, title: str, description: str = ""):
@@ -381,6 +386,7 @@ class WeaveAgentNode:
         self.ticks = []
         self.memory = memory
         self.planning = False
+        self.logger = logger
         self.debugging = False
         self.failure_stage = "event stream"
         self.task = WeaveAgentTask(self, self.name, description)
@@ -482,6 +488,7 @@ class WeaveAgentNode:
         self.tree.add_block(block, context=self.context)
     
     def add_error_block(self, error_message):
+        self.logger.error(error_message)
         self.debugging = True
         error_block = {
             'type': 'error',
@@ -882,6 +889,18 @@ class WeaveAgentNode:
         return block
     
     async def tick(self):
+        profiler.disable()
+        # Step 2: Capture the profiling results
+        stats = pstats.Stats(profiler)
+
+        # Step 3: Sort the results by cumulative time
+        stats.sort_stats(pstats.SortKey.CUMULATIVE)
+
+        # Step 4: Write the sorted results to a file
+        with open("/app/weave-agent-logs/profile.txt", 'w') as f:
+            stats.stream = f  # Redirect the output to the file
+            stats.print_stats()  # Write the sorted profiling results to the file
+        profiler.enable()
         try:
             if "ERROR" in [outcome[1] for outcome in
                            self.current_tick.outcome["table"]]:
@@ -903,11 +922,30 @@ class WeaveAgentNode:
         self.tree.dump_event_stream()
             
         orientation_block = asyncio.create_task(self._do_orientation_block())
+        memory_task = asyncio.create_task(memory.process_item())
+        pending = {orientation_block, memory_task}
         # Index memories while waiting on block gen
-        while not orientation_block.done():
-            processed = memory.process_item()
-            if not processed:
+        self.logger.debug("Writing orientation block")
+        self.logger.debug("Processing memory for later retrieval")
+        while pending:
+            done, pending = await asyncio.wait(
+                pending,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            if orientation_block in done:
+                await orientation_block
+                await memory_task
+                self.logger.debug("Finished processing memory")
                 break
+            else:
+                processed = await memory_task
+                self.logger.debug("Finished processing memory")
+                if not processed:
+                    self.logger.debug("No more memories available")
+                    break
+                memory_task = asyncio.create_task(memory.process_item())
+                pending.add(memory_task)
+        self.logger.debug("Waiting for orientation block to finish writing")
         await orientation_block
         
         if orientation_block:
@@ -917,10 +955,28 @@ class WeaveAgentNode:
 
         for i in range(3):
             is_action_setup = asyncio.create_task(self._do_action_callback_setup(i))
-            while not is_action_setup.done():
-                processed = memory.process_item()
-                if not processed:
+            memory_task = asyncio.create_task(memory.process_item())
+            pending = {is_action_setup, memory_task}
+            self.logger.debug("Processing memory for later retrieval")
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                if is_action_setup in done:
+                    await is_action_setup
+                    await memory_task
+                    self.logger.debug("Finished processing memory")
                     break
+                else:
+                    processed = await memory_task
+                    self.logger.debug("Finished processing memory")
+                    if not processed:
+                        self.logger.debug("No more memories available")
+                        break
+                    memory_task = asyncio.create_task(memory.process_item())
+                    pending.add(memory_task)
+            self.logger.debug("Waiting for action setup block to finish writing")
             await is_action_setup
 
             if not is_action_setup:
@@ -1132,8 +1188,12 @@ if __name__ == "__main__":
 
     if not os.path.exists("/app/weave-agent-logs"):
         os.mkdir("/app/weave-agent-logs")
-        
-    result, event_stream = asyncio.run(agent.run("main"))
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    logging.basicConfig(filename='/app/weave-agent-logs/agent.txt', level=logging.DEBUG)
+    logger.info("Starting weave-agent...")
+    result, event_stream = profiler.run(asyncio.run(agent.run("main")))
     
     with open(f"/app/weave-agent-logs/{round(time.time())}/log.json", "w") as outfile:
         out = {"model_name":args.model_name,

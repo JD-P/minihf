@@ -41,9 +41,9 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
     if retrieved_blocks:
         prompt += f"# START RETRIEVED BLOCKS FOR BLOCK #{self.tree.current_block_index()}\n"    
         for i, block in enumerate(retrieved_blocks):
-            block_text = f"# <retrieval{i}>\n" + block["render"][0].replace(
-                block["type"][0],
-                "recalled-" + block["type"][0],
+            block_text = f"# <retrieval{i}>\n" + block["render"].replace(
+                block["type"],
+                "recalled-" + block["type"],
                 1
             ) + f"# </retrieval{i}>\n"
             block_text = "# " + block_text.replace("\n", "\n# ")
@@ -84,7 +84,7 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
     prompt += prefix
     return prompt, prefix
 
-async def generate_block_inner(self, block_type, context, eval_questions, weave_params, hint=""):
+async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_questions):
     def is_valid_syntax(code):
         try:
             ast.parse(code)
@@ -96,27 +96,11 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
                 return False
             else:
                 return True
-
-    port = 5001
-
-    prompt, prefix = mk_prompt(self, block_type, context, hint)
-
-    if not os.path.exists("/app/weave-agent-logs/block-prompts/"):
-        os.mkdir("/app/weave-agent-logs/block-prompts/")
-    logpath = ("/app/weave-agent-logs/block-prompts/"
-               + f"{block_type}_{self.tree.current_block_index()}.py")
-    with open(logpath, "w") as outfile:
-        outfile.write(prompt)
-        outfile.flush()
-    
-    stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
-    generate_fn = partial(generate_outputs_vllm,
-                          self.model_name,
-                          port=port,
-                          stop=stopstrings)
+            
     score_prompt_fns = []
     # TODO: Use the full set of questions somehow?
     score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
+
     async def evaluate_fn(texts, raw=False):
         score_fn = partial(evaluate_outputs_vllm,
                            self.model_name,
@@ -124,7 +108,7 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
                            port=port)
         scores = await score_fn(texts)
         # Penalize syntax errors more than 50 characters from end of string
-        syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text[1]) else -2
+        syntax_penalties = torch.tensor([0 if is_valid_syntax(prefix + text) else -2
                                          for text in texts])
         if block_type in {"task-inference"} and self.debugging:
             penalties = []
@@ -138,87 +122,97 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
         else:
             completion_penalties = torch.zeros(len(scores))
 
-        lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text[1])
+        lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text)
                                        for text in texts])
         if raw:
             return scores
         else:
-            return scores + syntax_penalties + completion_penalties + lint_penalties
+            return scores + syntax_penalties + completion_penalties + lint_penalties            
+
+
+    port = 5001
+    stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
+    candidates = generate_outputs_vllm(
+        self.model_name,
+        prompt,
+        768,
+        n=n,
+        port=port,
+        stop=stopstrings
+    )
+    scores = await evaluate_fn(candidates)
+    candidate_scores = [item for item in zip(candidates, scores)]
+    candidate_scores.sort(key=lambda pair: pair[1].item())
+    return prefix + candidate_scores[-1][0].strip(), candidate_scores[-1][1].item()
+    
+
+async def generate_block_inner(self, block_type, context, eval_questions, weave_params, hint=""):
+    prompt, prefix = mk_prompt(self, block_type, context, hint)
+    
     tree = TreeNode(prompt)
     wp = weave_params
     # Rejection sample candidate for iterative retrieval
-    query_candidates = await weave_tree_search_vllm(tree=tree,
-                                                    generate_fn=partial(generate_fn,
-                                                                        n_tokens=768),
-                                                    evaluate_fn=evaluate_fn,
-                                                    budget=4,
-                                                    round_budget=4,
-                                                    n_expand=4,
-                                                    beam_width=1,
-                                                    max_lookahead=1,
-                                                    temperature=0.01)
-    candidate = query_candidates[-1]
+    query_candidate, score = await rejection_sample_block(self,
+                                                          block_type,
+                                                          prefix,
+                                                          prompt,
+                                                          4,
+                                                          eval_questions)
+    try:
+        compile(query_candidate, f"block_{self.tree.current_block_index()}", "exec")
+        program = query_candidate
+        rejection_sample = False
+    except Exception as e:
+        rejection_sample = True
+    if (score < 1) or (block_type in {"orientation"}) or rejection_sample:
+        if block_type in {"orientation", "action", "backtrack"}:
+            self.logger.debug(f"Querying with candidate ```{query_candidate}``` ({score})")
+            retrieved_blocks = self.memory.search(prompt + query_candidate, limit=3)
+            prompt, prefix = mk_prompt(self,
+                                       block_type,
+                                       context,
+                                       hint,
+                                       retrieved_blocks=retrieved_blocks)
 
-    retrieved_blocks = self.memory.search(prompt + candidate.branch_text(), limit=3)
-    prompt, prefix = mk_prompt(self,
-                               block_type,
-                               context,
-                               hint,
-                               retrieved_blocks=retrieved_blocks)
-    tree = TreeNode(prompt)
-    # Rejection sample with retrieval
-    branches = await weave_tree_search_vllm(tree=tree,
-                                            generate_fn=partial(generate_fn,
-                                                                n_tokens=768),
-                                            evaluate_fn=evaluate_fn,
-                                            budget=16,
-                                            round_budget=16,
-                                            n_expand=16,
-                                            beam_width=1,
-                                            max_lookahead=1,
-                                            temperature=0.01)
+        if not os.path.exists("/app/weave-agent-logs/block-prompts/"):
+            os.mkdir("/app/weave-agent-logs/block-prompts/")
+        logpath = ("/app/weave-agent-logs/block-prompts/"
+                   + f"{block_type}_{self.tree.current_block_index()}.py")
+        with open(logpath, "w") as outfile:
+            outfile.write(prompt)
+            outfile.flush()
+
+        # Rejection sample with retrieval
+        program, score = await rejection_sample_block(self,
+                                                      block_type,
+                                                      prefix,
+                                                      prompt,
+                                                      16,
+                                                      eval_questions)
     do_long = False
-    if (branches[-1].score < 1):
+    if score < 1:
         do_long = True
     try:
-        program = branches[-1].branch_text()
-        program = prefix + program.strip()
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
         do_long = True
         
     # If rejection sampling fails backtrack or do more rejection sampling
     if do_long:
-        tree = TreeNode(prompt)
-        branches = await weave_tree_search_vllm(tree=tree,
-                                                generate_fn=partial(generate_fn,
-                                                                    n_tokens=768),
-                                                evaluate_fn=evaluate_fn,
-                                                budget=128,
-                                                round_budget=128,
-                                                n_expand=128,
-                                                beam_width=1,
-                                                max_lookahead=1,
-                                                temperature=0.01)        
-        program = branches[-1].branch_text()
-        # Check we finished writing the code block and extract first block
-        stop_indices = []
-        for stopstring in stopstrings:
-            candidate = program.find(stopstring)
-            if candidate > -1:
-                stop_indices.append(candidate)
-        if stop_indices:
-            stop_index = min(stop_indices)
-            program = prefix + program[:stop_index].strip()
-        else:
-            program = prefix + program.strip()
+        program, score = await rejection_sample_block(self,
+                                                      block_type,
+                                                      prefix,
+                                                      prompt,
+                                                      64,
+                                                      eval_questions)
     block = {"type":block_type,
              "body":program,
              "q":eval_questions[0],
-             "score":branches[-1].score.item()}
+             "score":score}
     try:
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
+        self.logger.debug(f"Compilation of ```{program}``` failed.")
         block["score"] -= 2
         self.add_block(block)
         if len(self.tree.tokenizer(program)["input_ids"]) >= 768:
@@ -236,13 +230,13 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
             f"add_{block_type}"
         )
         block["body"] = callback + "\n\n" + registration
-    raw_score = await evaluate_fn(
-        [prompt[:len(prompt) - len(prefix)] + block["body"],],
-        raw=True
-    )
-    block["raw_score"] = raw_score[0].item()
+    #raw_score = await evaluate_fn(
+    #    [prompt[:len(prompt) - len(prefix)] + block["body"],],
+    #    raw=True
+    #)
+    #block["raw_score"] = raw_score[0].item()
     self.add_block(block)
-    rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan]")
+    rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan] with score [cyan]{score}[/cyan]")
     print(block["body"])
     return block
 
