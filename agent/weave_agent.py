@@ -166,6 +166,7 @@ class WeaveAgentTree:
         # Pin genesis and bootstrap so agent knows how to use framework
         self.__pinned_events = [0, 1]
         self.__current_block_index = 0
+        self._history_len = 60
         self.__event_stream = []
         self.transitions = {
             BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION],
@@ -283,19 +284,21 @@ class WeaveAgentTree:
             if block["type"] == _type:
                 return block
         return None
+
+    def context_cutoff_time(self):
+        return self.__event_stream[-self._history_len:][0]["timestamp"]
     
     def render_context(self):
         context = ""
         context_blocks = []
-        history_len = 60
         for index in self.__pinned_events:
-            if (len(self.__event_stream) - index) > history_len:
+            if (len(self.__event_stream) - index) > self._history_len:
                 context_blocks.append(self.__event_stream[index])
-        context_blocks += self.__event_stream[-history_len:]
+        context_blocks += self.__event_stream[-self._history_len:]
         for event_block in context_blocks:
             context += render_block(event_block)
         return context
-        
+
     def view_board(self, root="main") -> str:
         problem_map = {}
         substack = [root,]
@@ -1132,6 +1135,7 @@ if __name__ == "__main__":
     agent.tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
 
     memory = ModernBertRag(agent)
+    asyncio.run(memory.setup())
         
     # Mock bootstrap agent so we can run the callbacks in bootstrap file
     self = agent.subagent(

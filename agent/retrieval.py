@@ -1,5 +1,7 @@
 import os
-import sqlite3
+import time
+from sqlite3 import Connection as SQLite3Connection
+import aiosqlite
 import sqlite_vec
 import json
 import torch
@@ -17,14 +19,15 @@ class ModernBertRag:
         self.model = AutoModelForMaskedLM.from_pretrained("answerdotai/ModernBERT-base")
         self.queue = Queue()
         
-        conn = self._connect()
+    async def setup(self):
+        conn = await self._connect()
                 
         # Create tables
-        cursor = conn.cursor()
-        cursor.execute("""
+        cursor = await conn.cursor()
+        await cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS block_embeddings USING vec0(rowid INTEGER PRIMARY KEY, embedding FLOAT[768])
         """)
-        cursor.execute("""
+        await cursor.execute("""
             CREATE TABLE IF NOT EXISTS blocks (
                 rowid INTEGER PRIMARY KEY,
                 block_id TEXT,
@@ -38,16 +41,32 @@ class ModernBertRag:
                 embed_context TEXT
             )
         """)
-        conn.commit()
-        cursor.close()
-        conn.close()
+        await cursor.execute("CREATE INDEX IF NOT EXISTS idx_blocks_rowid ON blocks(rowid);")
+        await conn.commit()
+        await cursor.close()
+        await conn.close()
 
-    def _connect(self):
-        # Initialize SQLite connection with sqlite-vec
-        conn = sqlite3.connect(self.db_path)
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
+    async def _connect(self):
+        """Async connection with sqlite_vec extension loading"""
+        conn = await aiosqlite.connect(
+            self.db_path,
+            timeout=30,
+            check_same_thread=False
+        )
+        
+        # Access raw SQLite3 connection to load extensions
+        raw_conn: SQLite3Connection = conn._connection
+        
+        # Run blocking extension loading in executor
+        raw_conn.enable_load_extension(True)
+        sqlite_vec.load(raw_conn)
+        raw_conn.enable_load_extension(False)
+        
+        # Critical performance settings
+        await conn.execute("PRAGMA journal_mode=WAL;")
+        await conn.execute("PRAGMA synchronous=NORMAL;")
+        await conn.execute("PRAGMA busy_timeout=5000;")
+        
         return conn
     
     def add(self, item):
@@ -117,9 +136,9 @@ class ModernBertRag:
         decoded_text = self.tokenizer.decode(tokens)
 
         # Insert into SQLite
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("""
+        conn = await self._connect()
+        cursor = await conn.cursor()
+        await cursor.execute("""
             INSERT INTO blocks (
                 block_id, type, render, q, score, _index, timestamp, description, embed_context
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -137,14 +156,14 @@ class ModernBertRag:
         
         # Insert embedding using same rowid
         rowid = cursor.lastrowid
-        cursor.execute("""
+        await cursor.execute("""
             INSERT INTO block_embeddings (rowid, embedding)
             VALUES (?, json(?))
         """, (rowid, json.dumps(embedding)))
         
-        conn.commit()
-        cursor.close()
-        conn.close()
+        await conn.commit()
+        await cursor.close()
+        await conn.close()
 
         # Update summary tree
         if hasattr(self, 'tree'):
@@ -153,35 +172,40 @@ class ModernBertRag:
         print(f"Embedded block {block_id}")
         return block_id
 
-    def search(self, text, limit=5):
+    async def search(self, text, limit=5, before=time.time()):
         """Search for similar blocks"""
         # Generate query embedding
+        print("Tokenizing input for search...")
         inputs = self.tokenizer(text,
                                 return_tensors="pt",
                                 truncation=False,
                                 add_special_tokens=False)
         truncated_text = self.tokenizer.decode(inputs["input_ids"][0][-8192:])
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=False)
+        inputs = self.tokenizer(truncated_text, return_tensors="pt", truncation=False)
+        print("Embedding input for search...")
         with torch.no_grad():
             outputs = self.model(**inputs, output_hidden_states=True)
             last_hidden = outputs.hidden_states[-1]
             query_embedding = last_hidden.mean(dim=1).squeeze().tolist()
 
         # Execute KNN search
-        conn = self._connect()
-        cursor = conn.cursor()
-        cursor.execute("""
+        print("Connecting to sqlite...")
+        conn = await self._connect()
+        cursor = await conn.cursor()
+        print("Executing search...")
+        await cursor.execute("""
             SELECT blocks.*, block_embeddings.distance
             FROM block_embeddings
             JOIN blocks ON block_embeddings.rowid = blocks.rowid
             WHERE block_embeddings.embedding MATCH json(?)
+            AND blocks.timestamp < ?
             AND k = ?
             ORDER BY distance
             
-        """, (json.dumps(query_embedding), limit))
-
+        """, (json.dumps(query_embedding), before, limit))
+        print("Fetching results...")
         results = []
-        for row in cursor.fetchall():
+        for row in await cursor.fetchall():
             results.append({
                 "id": row[1],
                 "type": row[2],

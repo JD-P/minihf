@@ -4,10 +4,11 @@ import ast
 import random
 import os
 import asyncio
+import aiohttp
 import torch
 from functools import partial
 from rich import print as rprint
-from weave import generate_outputs_vllm, evaluate_outputs_vllm
+from weave import async_generate_outputs_vllm, evaluate_outputs_vllm
 from weave import bayesian_evaluate_outputs_vllm
 from weave import make_score_prompt_vllm, make_bayes_score_prompt_vllm
 from weave import weave_tree_search_vllm, TreeNode
@@ -132,15 +133,35 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
 
     port = 5001
     stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock"]
-    candidates = generate_outputs_vllm(
-        self.model_name,
-        prompt,
-        768,
-        n=n,
-        port=port,
-        stop=stopstrings
-    )
-    scores = await evaluate_fn(candidates)
+    # TODO: Set up a real retry framework/library/contraption
+    try:
+        candidates = await async_generate_outputs_vllm(
+            self.model_name,
+            prompt,
+            768,
+            n=n,
+            port=port,
+            stop=stopstrings
+        )
+    except (aiohttp.client_exceptions.ClientConnectionResetError,
+            aiohttp.client_exceptions.ClientOSError,
+            aiohttp.client_exceptions.ConnectionTimeoutError):
+        await asyncio.sleep(60)
+        candidates = await async_generate_outputs_vllm(
+            self.model_name,
+            prompt,
+            768,
+            n=n,
+            port=port,
+            stop=stopstrings
+        )
+    try:
+        scores = await evaluate_fn(candidates)
+    except (aiohttp.client_exceptions.ClientConnectionResetError,
+            aiohttp.client_exceptions.ClientOSError,
+            aiohttp.client_exceptions.ConnectionTimeoutError):
+        await asyncio.sleep(60)
+        scores = await evaluate_fn(candidates)
     candidate_scores = [item for item in zip(candidates, scores)]
     candidate_scores.sort(key=lambda pair: pair[1].item())
     return prefix + candidate_scores[-1][0].strip(), candidate_scores[-1][1].item()
@@ -167,7 +188,25 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
     if (score < 1) or (block_type in {"orientation"}) or rejection_sample:
         if block_type in {"orientation", "action", "backtrack"}:
             self.logger.debug(f"Querying with candidate ```{query_candidate}``` ({score})")
-            retrieved_blocks = self.memory.search(prompt + query_candidate, limit=3)
+            before = self.tree.context_cutoff_time()
+            query_block = {"type":block_type,
+                           "body":query_candidate,
+                           "timestamp":time.time(),
+                           "q":eval_questions[0],
+                           "score":score}
+            if block_type == 'orientation':
+                query_block['metadata'] = {
+                    "block_index":self.tree.current_block_index(),
+                    "working_directory":os.getcwd()
+                }
+            query_block["render"] = render_block(query_block)
+            print("If this is what's blocking then we can tell from this...")
+            retrieved_blocks = await self.memory.search(prompt + query_block["render"],
+                                                        before=before,
+                                                        limit=3)
+            print("We're past the search now.")
+
+            retrieved_blocks = [query_block,] + retrieved_blocks
             prompt, prefix = mk_prompt(self,
                                        block_type,
                                        context,

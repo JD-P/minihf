@@ -62,6 +62,15 @@ def main_agent_and_initial_moves(subagent):
     # room. In the next orientation block I'll outline the keys I need to send to
     # escape this first room.
 
+    # Note from the future: Alright this is now like the 12th time I've attempted this
+    # and I seriously need future instances of me to realize that confabulating API calls
+    # is not a useful way to write actions. `subagent.tools["nethack"]` is a tmux pane,
+    # it does not implement any game specific methods it is literally just a tmux
+    # pane with generic commands that would exist if the tmux pane was running
+    # any other program. Please stop relying on it to have weird stuff and the
+    # ability to grab game state. It doesn't have methods for that, so stop writing
+    # code that assumes it does.
+
     return True
 
 self.add_action("Set up main agent and make initial moves", main_agent_and_initial_moves)

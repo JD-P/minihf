@@ -10,6 +10,7 @@ rich
 transformers
 protobuf
 sentencepiece
+aiosqlite
 sqlite-vec
 jsonschema
 nextcord
