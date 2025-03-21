@@ -3,6 +3,7 @@ import time
 from sqlite3 import Connection as SQLite3Connection
 import aiosqlite
 import sqlite_vec
+import aiohttp
 import json
 import torch
 from queue import Queue
@@ -10,13 +11,13 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM
 from weave import generate_outputs_vllm, evaluate_outputs_vllm
 
 class ModernBertRag:
-    def __init__(self, weave_tree, db_path="blocks.db", port=5001):
+    def __init__(self, weave_tree, db_path="blocks.db", port=5001, embed_port=5002):
         self.db_path = db_path
         self.tree = weave_tree
         self.model_name = weave_tree.model_name
         self.port = port
+        self.embed_port = embed_port
         self.tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
-        self.model = AutoModelForMaskedLM.from_pretrained("answerdotai/ModernBERT-base")
         self.queue = Queue()
         
     async def setup(self):
@@ -123,17 +124,24 @@ class ModernBertRag:
         
         # Tokenize and process text
         combined_text = f"{context}\n{render}\n\n{full_description}"
-        inputs = self.tokenizer(combined_text, return_tensors="pt", truncation=False)
+        inputs = self.tokenizer(combined_text,
+                                return_tensors="pt",
+                                add_special_tokens=False,
+                                truncation=False)
         tokens = inputs["input_ids"][0][-8192:]  # Take last 8192 tokens
-        
-        # Generate embedding
-        with torch.no_grad():
-            outputs = self.model(tokens.unsqueeze(0), output_hidden_states=True)
-            last_hidden = outputs.hidden_states[-1]
-            embedding = last_hidden.mean(dim=1).squeeze().tolist()
 
         # Decode tokens back to text
         decoded_text = self.tokenizer.decode(tokens)
+        
+        # Generate embedding
+        async with aiohttp.ClientSession() as session:
+            payload = {"input":decoded_text,
+                       "model": "modern-bert"}
+            async with session.post(f"http://localhost:{self.embed_port}/v1/embeddings",
+                                    json=payload) as response:
+                response_json = await response.json()
+                assert len(response_json["data"]) == 1
+                embedding = response_json["data"][0]["embedding"]
 
         # Insert into SQLite
         conn = await self._connect()
@@ -183,10 +191,14 @@ class ModernBertRag:
         truncated_text = self.tokenizer.decode(inputs["input_ids"][0][-8192:])
         inputs = self.tokenizer(truncated_text, return_tensors="pt", truncation=False)
         print("Embedding input for search...")
-        with torch.no_grad():
-            outputs = self.model(**inputs, output_hidden_states=True)
-            last_hidden = outputs.hidden_states[-1]
-            query_embedding = last_hidden.mean(dim=1).squeeze().tolist()
+        async with aiohttp.ClientSession() as session:
+            payload = {"input":truncated_text,
+                       "model": "modern-bert"}
+            async with session.post(f"http://localhost:{self.embed_port}/v1/embeddings",
+                                    json=payload) as response:
+                response_json = await response.json()
+                assert len(response_json["data"]) == 1
+                query_embedding = response_json["data"][0]["embedding"]
 
         # Execute KNN search
         print("Connecting to sqlite...")
