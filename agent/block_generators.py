@@ -27,7 +27,7 @@ def make_simple_bayes_score_prompt(question: str):
 def make_simple_score_prompt(question: str):
     """Simplify the process of making a weave evaluator question prompt maker so
     that it's just a matter of passing a question for the weave-agent."""
-    template = ("{response}\n"
+    template = ("{response}"
                 + "#q: If I flip a fair coin will it come up heads? No. (50%)\n"
                 + "#q: X happens one in a hundred times. Did X happen? Yes. (1%)\n"
                 + "#q: If I pick a US state at random will that state be Idaho? No. (98%)\n"
@@ -100,36 +100,26 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
 
     def is_valid_syntax2(code):
         try:
-            compile(code)
+            compile(code, filename="candidate_block", mode="exec")
             return True
         except Exception as e:
+            print(e)
             return False
         
     score_prompt_fns = []
     # TODO: Use the full set of questions somehow?
     score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
 
-    async def evaluate_fn(texts, raw=False):
+    async def evaluate_fn(prompt, texts, raw=False):
         score_fn = partial(evaluate_outputs_vllm,
                            self.model_name,
                            score_prompt_fns,
                            port=port)
-        scores = await score_fn(texts)
-        # Penalize syntax errors more than 50 characters from end of string
+        full_texts = [prompt + prefix + text for text in texts]
+        scores = await score_fn(full_texts)
         syntax_penalties = torch.tensor([0 if is_valid_syntax2(prefix + text) else -2
                                          for text in texts])
-        if block_type in {"task-inference"} and self.debugging:
-            penalties = []
-            for text in texts:
-                penalty = False
-                for string in [".completed", "complete"]:
-                    if string in (prefix + text[1]):
-                        penalty = True
-                penalties.append(-2 if penalty else 0)
-            completion_penalties = torch.tensor(penalties)
-        else:
-            completion_penalties = torch.zeros(len(scores))
-
+        completion_penalties = torch.zeros(len(scores))
         lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text)
                                        for text in texts])
         if raw:
@@ -162,17 +152,15 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
             port=port,
             stop=stopstrings
         )
-    full_candidates = [prompt + candidate for candidate in candidates]
     try:
-        scores = await evaluate_fn(full_candidates)
+        scores = await evaluate_fn(prompt, candidates)
     except (aiohttp.client_exceptions.ClientConnectionResetError,
             aiohttp.client_exceptions.ClientOSError,
             aiohttp.client_exceptions.ConnectionTimeoutError):
         await asyncio.sleep(60)
-        scores = await evaluate_fn(full_candidates)
+        scores = await evaluate_fn(prompt, candidates)
     candidate_scores = [item for item in zip(candidates, scores)]
     candidate_scores.sort(key=lambda pair: pair[1].item())
-    print(candidate_scores)
     return prefix + candidate_scores[-1][0].strip(), candidate_scores[-1][1].item()
     
 
@@ -216,11 +204,9 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
                     "working_directory":os.getcwd()
                 }
             query_block["render"] = render_block(query_block)
-            print("If this is what's blocking then we can tell from this...")
             retrieved_blocks = await self.memory.search(prompt + query_block["render"],
                                                         before=before,
                                                         limit=3)
-            print("We're past the search now.")
 
             retrieved_blocks = [query_block,] + retrieved_blocks
             prompt, prefix = mk_prompt(self,

@@ -438,8 +438,6 @@ async def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5
     async with aiohttp.ClientSession() as session:
         tasks = [process_text(session, port, model_name, score_prompt_fns, text, n) for text in texts]
         scores = await asyncio.gather(*tasks)
-        print(scores)
-        print(torch.stack(scores).mean(dim=1))
         return torch.stack(scores).mean(dim=1)
 
 async def bayes_process_text(session, port, model_name, parent_q, score_prompt_fns, text, n=1):

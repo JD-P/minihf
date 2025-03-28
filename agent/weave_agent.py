@@ -790,14 +790,14 @@ class WeaveAgentNode:
                                             score_prompt_fns,
                                             [self.context,],
                                             port=args.port)
-        yes_p = torch.sigmoid(torch.tensor(scores[0])).item()
+        yes_p = torch.sigmoid(scores[0]).item()
         no_p = 1 - yes_p
         yes_p, no_p = round(yes_p, 5), round(no_p, 5)
         answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
         observation_inference_option = {"type":"option",
                                         "q":question,
                                         "body":answer,
-                                        "score":score}
+                                        "score":scores[0].item()}
         self.add_block(observation_inference_option)
         return observation_inference_option
     
