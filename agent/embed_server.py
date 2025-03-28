@@ -24,7 +24,6 @@ class EmbeddingProcessor:
         self.tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
         self.model = AutoModelForMaskedLM.from_pretrained(
             "answerdotai/ModernBERT-base",
-            torch_dtype=torch.float16,
             attn_implementation="flash_attention_2",
             low_cpu_mem_usage=True
         ).to(self.device).eval()
@@ -48,14 +47,19 @@ class EmbeddingProcessor:
             
             outputs = self.model(**inputs, output_hidden_states=True)
             last_hidden = outputs.hidden_states[-1]
+            if len(last_hidden.shape) == 2:
+                last_hidden = last_hidden.unsqueeze(0)
             attention_mask = inputs.attention_mask.unsqueeze(-1)
-            
-            # Safe calculation with numerical stability
-            numerator = (last_hidden * attention_mask).sum(dim=1)
-            denominator = attention_mask.sum(dim=1)
-            denominator = torch.clamp(denominator, min=1e-9)
-            
-            embeddings = numerator / denominator
+
+            embeddings = last_hidden[:, -1, :]
+            # Mean pooling
+            #numerator = (last_hidden * attention_mask).sum(dim=1)
+            #denominator = attention_mask.sum(dim=1)
+            #denominator = torch.clamp(denominator, min=1e-9)
+            #embeddings = numerator / denominator
+
+            # L2 Normalization
+            #embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
             
             # Clean numerical values
             embeddings = embeddings.cpu().to(torch.float32)

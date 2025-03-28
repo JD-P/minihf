@@ -247,9 +247,9 @@ def generate_outputs_openai(text, n_tokens, n=1):
 
 def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
     payload = {"n":n,
-               "temperature":1,
+               "temperature":0.8,
                "top_k":50,
-               "repetition_penalty":1.02,
+               "repetition_penalty":1,
                "max_tokens": n_tokens,
                "model":model_name,
                "prompt":text,
@@ -438,6 +438,8 @@ async def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5
     async with aiohttp.ClientSession() as session:
         tasks = [process_text(session, port, model_name, score_prompt_fns, text, n) for text in texts]
         scores = await asyncio.gather(*tasks)
+        print(scores)
+        print(torch.stack(scores).mean(dim=1))
         return torch.stack(scores).mean(dim=1)
 
 async def bayes_process_text(session, port, model_name, parent_q, score_prompt_fns, text, n=1):

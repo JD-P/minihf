@@ -41,6 +41,9 @@
 # This is why the logit evaluator provided by the framework is an important
 # primitive for the agent to check its work.
 
+# Note: I'm currently refactoring this and we can just ignore the WeaveAgentTree
+# subagent stuff for now. Just focus on doing the task as given.
+
 import os
 import json
 import random
@@ -49,6 +52,7 @@ import ast
 import types
 import functools
 import asyncio
+import inspect
 import traceback
 import logging
 import hashlib
@@ -93,11 +97,14 @@ class WeaveAgentTask:
                                  "title":title,
                                  "callback":callback})
 
-    def run_evaluations(self):
+    async def run_evaluations(self):
         results = {}
         for evaluation in self.evaluations:
             try:
-                result = evaluation["callback"](self.subagent)
+                if inspect.iscoroutinefunction(evaluation["callback"]):
+                    result = await evaluation["callback"](self.subagent)
+                else:
+                    result = evaluation["callback"](self.subagent)
             except Exception as e:
                 result = traceback.format_exc()
             results[evaluation["callback"].__name__] = result
@@ -113,6 +120,7 @@ class BlockType(Enum):
     DEBUG = auto()
     BACKTRACK = auto()
     EXPECTATION = auto()
+    OPTION = auto()
     OBSERVATION_INFERENCE = auto()
     EVALUATION = auto()
     OUTCOME = auto()
@@ -169,7 +177,7 @@ class WeaveAgentTree:
         self._history_len = 60
         self.__event_stream = []
         self.transitions = {
-            BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION],
+            BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION, BlockType.ERROR],
             BlockType.TASK_REMINDER: [BlockType.OBSERVATION, BlockType.ORIENTATION],
             BlockType.ORIENTATION: [BlockType.ACTION, BlockType.ERROR],
             BlockType.ACTION: [BlockType.EXPECTATION, BlockType.ERROR, BlockType.BACKTRACK],
@@ -179,8 +187,9 @@ class WeaveAgentTree:
                               BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.BACKTRACK: [BlockType.ACTION, BlockType.EVALUATION,
                               BlockType.TASK_REMINDER, BlockType.ERROR],
-            BlockType.EXPECTATION: [BlockType.OBSERVATION_INFERENCE,
+            BlockType.EXPECTATION: [BlockType.OPTION, BlockType.OBSERVATION_INFERENCE,
                                     BlockType.TASK_REMINDER, BlockType.ERROR],
+            BlockType.OPTION: [BlockType.OBSERVATION_INFERENCE,],
             BlockType.OBSERVATION_INFERENCE: [BlockType.EVALUATION,
                                               BlockType.ERROR, BlockType.TASK_REMINDER],
             BlockType.EVALUATION: [BlockType.OUTCOME, BlockType.ERROR],
@@ -299,7 +308,7 @@ class WeaveAgentTree:
             context += render_block(event_block)
         return context
 
-    def view_board(self, root="main") -> str:
+    async def view_board(self, root="main") -> str:
         problem_map = {}
         substack = [root,]
         while substack:
@@ -319,7 +328,7 @@ class WeaveAgentTree:
                 current_level = current_level[key]
             current_level["name"] = subagent.name
             current_level["description"] = subagent.task.description
-            current_level["evaluations"] = subagent.task.run_evaluations()
+            current_level["evaluations"] = await subagent.task.run_evaluations()
             current_level["time_remaining"] = subagent.end_time - time.time()
             current_level["completed"] = subagent.completed
             current_level["schema"] = subagent.schema
@@ -489,6 +498,7 @@ class WeaveAgentNode:
         block["subagent"] = self.name
         block["time_remaining"] = self.end_time - time.time()
         self.tree.add_block(block, context=self.context)
+        self.render_context()
     
     def add_error_block(self, error_message):
         self.logger.error(error_message)
@@ -499,7 +509,7 @@ class WeaveAgentNode:
         }
         self.add_block(error_block)
 
-    def _do_task_reminder_block(self):
+    async def _do_task_reminder_block(self):
         task_reminder_body = ""
 
         try:
@@ -510,7 +520,8 @@ class WeaveAgentNode:
                 #task_reminder_body += "# Current Task:\n"
                 #task_reminder_body += ('"""\n' + self.task.view_task() + '\n"""\n')
             task_reminder_body += "# Problem Map:\n"
-            task_reminder_body += ('"""\n' + self.tree.view_board() + '\n"""')
+            board = await self.tree.view_board()
+            task_reminder_body += ('"""\n' + board + '\n"""')
         except Exception as e:
             tb = traceback.format_exc()
             self.failure_stage = "task reminder"
@@ -625,6 +636,36 @@ class WeaveAgentNode:
                                                       mcts_params)
         return orientation_block
 
+    DEBUG_HINT = (
+            "#hint Debug blocks are my opportunity to reason about the failure\n"
+            "# I just experienced. Because I get multiple opportunities to\n"
+            "# take an action before I'm booted to the next orientation stage\n"
+            "# I can formulate hypothesis and use the next action blocks to test them.\n"
+            "# I want to narrow in on the cause of failure and take steps to resolve\n"
+            "# the issue.\n"
+            "# GUIDE TO DEBUGGING BY JDP:\n"
+            "# Having had the opportunity to observe many instances of Weaver\n"
+            "# try and fail to debug something I can offer the following advice.\n"
+            "# 1. Your first impulse will be to say that the tool is broken somehow.\n"
+            "# It generally speaking is not. Prioritize other hypothesis. The most\n"
+            "# common failure modes I see are confabulating object methods that \n"
+            "# don't exist and overly complex action blocks.\n"
+            "# 2. If your action block has a lot going on consider how to simplify\n"
+            "# it. This can often eliminate an error even if you're not exactly sure\n"
+            "# what's wrong.\n"
+            "# 3. print() and similar do not work because your context window does\n"
+            "# not appear in the standard output. Instead I suggest habitually\n"
+            "# making assert statements for properties of objects, data, environment\n"
+            "# etc that you want to verify.\n"
+            "# 4. Code blocks in the weave-agent framework are causal and time flows\n"
+            "# in one direction. You cannot change the past or edit previously written\n"
+            "# blocks. Instead focus on doing better with the next block you sample.\n"
+            "# 5. Break processes you're trying to debug into parts and enumerate\n"
+            "# hypothesis in relation to the parts. Actively try to rule out and\n"
+            "# reorder the priority of different hypothesis in response to new evidence.\n"
+            "# 6. Provide evidence to establish warrant for each hypothesis you consider."
+        )
+    
     async def _do_action_callback_setup(self, i):
         # Write action block
         action_hint = (
@@ -646,14 +687,7 @@ class WeaveAgentNode:
             + "# to do it inside the callback because the tick gets executed in a\n"
             + "# local context."
         )
-        debug_hint = (
-            "#hint Debug blocks are my opportunity to reason about the failure\n"
-            "# I just experienced. Because I get multiple opportunities to\n"
-            "# take an action before I'm booted to the next orientation stage\n"
-            "# I can formulate hypothesis and use the next action blocks to test them.\n"
-            "# I want to narrow in on the cause of failure and take steps to resolve\n"
-            "# the issue."
-        )
+
         action_block = await self._do_tick_block("action",
                                                  action_hint,
                                                  {})
@@ -686,7 +720,7 @@ class WeaveAgentNode:
             self.failure_stage = "action"
             try:
                 debug_block = await self._do_tick_block("debug",
-                                                  debug_hint,
+                                                  WeaveAgentNode.DEBUG_HINT,
                                                   {})
             except:
                 pass
@@ -725,7 +759,7 @@ class WeaveAgentNode:
             self.failure_stage = "action"
             try:
                 debug_block = await self._do_tick_block("debug",
-                                                  debug_hint,
+                                                  WeaveAgentNode.DEBUG_HINT,
                                                   {})
             except:
                 pass
@@ -749,6 +783,24 @@ class WeaveAgentNode:
                                                 {})
         return expectation_block
 
+    async def _do_we_need_observation_inference(self):
+        question = "Do I need to set up or tear down any observation callbacks?"
+        score_prompt_fns= [make_simple_score_prompt(question),]
+        scores = await evaluate_outputs_vllm(self.model_name,
+                                            score_prompt_fns,
+                                            [self.context,],
+                                            port=args.port)
+        yes_p = torch.sigmoid(torch.tensor(scores[0])).item()
+        no_p = 1 - yes_p
+        yes_p, no_p = round(yes_p, 5), round(no_p, 5)
+        answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
+        observation_inference_option = {"type":"option",
+                                        "q":question,
+                                        "body":answer,
+                                        "score":score}
+        self.add_block(observation_inference_option)
+        return observation_inference_option
+    
     async def _do_observation_inference_block(self):
         # Observation Inference Block
         observation_inference_hint = (
@@ -849,7 +901,10 @@ class WeaveAgentNode:
                     if simulated_error:
                         raise Exception
                 else:
-                    result = evaluation["callback"](self)
+                    if inspect.iscoroutinefunction(evaluation["callback"]):
+                        result = await evaluation["callback"](self)
+                    else:
+                        result = evaluation["callback"](self)
                 # Stringify result for JSON serialization
                 if type(result) not in [str, int, bool, float, type(None)]:
                     result = repr(result)
@@ -912,7 +967,7 @@ class WeaveAgentNode:
             self.debugging = True
         self.current_tick = Tick(self, len(self.ticks))
 
-        task_blocks = self._do_task_reminder_block()
+        task_blocks = await self._do_task_reminder_block()
         observation_blocks = await self._do_observation_blocks()
 
         # Inject these into the event stream
@@ -982,7 +1037,7 @@ class WeaveAgentNode:
             self.logger.debug("Waiting for action setup block to finish writing")
             await is_action_setup
 
-            if not is_action_setup:
+            if not is_action_setup.result():
                 failed = True
                 continue
             is_action_executed, action_result = await self._do_action_callback(i)
@@ -1002,13 +1057,16 @@ class WeaveAgentNode:
             self.current_tick.expectation = expectation_block
         else:
             return
-            
-        observation_inference_block = await self._do_observation_inference_block()
+
+        # Give agent the option to skip observation inference if unnecessary
+        observation_inference_option = await self._do_we_need_observation_inference()
+        if observation_inference_option["body"] == "Yes.":
+            observation_inference_block = await self._do_observation_inference_block()
         
-        if observation_inference_block:
-            self.current_tick.observation_inference = observation_inference_block
-        else:
-            return
+            if observation_inference_block:
+                self.current_tick.observation_inference = observation_inference_block
+            else:
+                return
 
         are_observations_updated = await self._do_observation_updates()
         if not are_observations_updated:
@@ -1099,15 +1157,15 @@ if __name__ == "__main__":
                         help="Time budget for the run in minutes.")
     args = parser.parse_args()
         
-    def simple_evaluate_outputs(score_prompt_fns, texts):
+    async def simple_evaluate_outputs(score_prompt_fns, texts):
         if type(texts) == str:
             texts = [texts,]
         if type(score_prompt_fns) in [types.FunctionType, functools.partial]:
             score_prompt_fns = [score_prompt_fns,]
-        scores = asyncio.run(evaluate_outputs_vllm(args.model_name,
-                                                   score_prompt_fns,
-                                                   texts,
-                                                   port=args.port))
+        scores = await evaluate_outputs_vllm(args.model_name,
+                                             score_prompt_fns,
+                                             texts,
+                                             port=args.port)
         return torch.sigmoid(scores)
 
     def simple_bayes_evaluate_outputs(parent_q, questions, texts):

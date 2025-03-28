@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import asyncio
 from retrieval import ModernBertRag  # Assuming your ModernBertRag is in this module
 from argparse import ArgumentParser
 
@@ -14,10 +15,11 @@ class MockWeaveAgentTree:
         self.summaries.append(summary)
         print(f"Added summary: {summary[0]}")
 
-def bootstrap_rag_memories(model_name):
+async def bootstrap_rag_memories(model_name):
     # Initialize mock tree and RAG system
     mock_tree = MockWeaveAgentTree(model_name)
     rag = ModernBertRag(mock_tree, db_path="blocks.db")
+    await rag.setup()
     
     # Load example blocks
     example_dir = "./bootstraps/example_blocks"
@@ -38,12 +40,12 @@ def bootstrap_rag_memories(model_name):
         block_id = sha.hexdigest()
         
         # Check if block already exists
-        conn = rag._connect()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM blocks WHERE block_id=?", (block_id,))
-        exists = cursor.fetchone() is not None
-        cursor.close()
-        conn.close()
+        conn = await rag._connect()
+        cursor = await conn.cursor()
+        await cursor.execute("SELECT 1 FROM blocks WHERE block_id=?", (block_id,))
+        exists = await cursor.fetchone() is not None
+        await cursor.close()
+        await conn.close()
         
         if exists:
             print(f"Block {block_id[:8]}... already exists, skipping")
@@ -63,7 +65,7 @@ def bootstrap_rag_memories(model_name):
         
         # Add to processing queue and process immediately
         rag.add(rag_item)
-        processed_id = rag.process_item()
+        processed_id = await rag.process_item()
         
         if processed_id:
             print(f"Successfully added memory block {processed_id[:8]}...")
@@ -74,5 +76,5 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("model_name")
     args = parser.parse_args()
-    bootstrap_rag_memories(args.model_name)
+    asyncio.run(bootstrap_rag_memories(args.model_name))
     print("Bootstrap memories added!")

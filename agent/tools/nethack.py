@@ -31,14 +31,17 @@ class WeaveNethack:
 
     def render(self, agent):
         """Render the Nethack game display."""
-        rendered_text = "'''Nethack Game History (Last 5 Keys Sent):\n"
+        rendered_text = "'''Nethack Game History (Last 5 Keys Sequences Sent):\n"
         if not self.moves:
             return "You haven't made any moves yet. Please send some keys to see the game."
         for i, move in enumerate(self.moves[-5:]):
             screen, keys, timestamp = move
             screen = "\n".join(screen)
             hh_ss = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
-            rendered_text += f"<{hh_ss}>\n{screen}\nKeys: \"{keys}\"\n"
+            rendered_text += f"History Frame #{i} <{int(timestamp)}>\n"
+            if move == self.moves[-1]:
+                rendered_text += "(CURRENT FRAME)\n"
+            rendered_text += f"{screen}\nKeys: \"{keys}\"\n"
             # Make it clear whether the PC has moved
             rendered_text += f"Player Character Position: {screen.find('@')}"
             try:
@@ -93,6 +96,11 @@ class WeaveNethack:
         time.sleep(0.1)
         pane_content = self.pane.capture_pane(start=0, end="-")
         self.moves.append((pane_content, command, time.time()))
+
+    def send_command(self, command):
+        """Alias to send a keyboard command to the NetHack game which Qwen keeps
+           hallucinating exists."""
+        self.send_keys(command)
 
     def close(self):
         """Close the Nethack session."""
