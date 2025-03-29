@@ -90,7 +90,7 @@ def add_main_start_short_story(subagent):
     main_agent.task.add_evaluation("Satisfying conclusion", q5)
 
     # Initialize nano editor
-    nano = WeaveNano(main_agent)
+    nano = WeaveNano(main_agent, "horror.txt")
     
     # Create front matter and opening line
     front_matter = [
@@ -126,8 +126,10 @@ def add_main_start_short_story(subagent):
         nano.send_command(command)
         time.sleep(0.1)
     
-    # Save to horror.txt and show current cursor location in file
-    commands = ['C-o', 'horror.txt', 'Enter', 'C-c']
+    # Save changes and show current cursor location in file
+    # We current cursor location in file so we know where we are when
+    # the cursor is invisible in our non-curses plaintext context window
+    commands = ['C-o', 'Enter', 'C-c']
     for command in commands:
         nano.send_command(command)
         time.sleep(0.1)

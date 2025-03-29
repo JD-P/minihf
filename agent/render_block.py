@@ -1,3 +1,4 @@
+import math
 import random
 import torch
 
@@ -43,7 +44,7 @@ def render_block(event_block, tags=True):
         score = event_block["score"]
         if score == float('inf'):
             score = 9
-        elif score == float('nan'):
+        elif math.isnan(score):
             score = 0
         yes_p = torch.sigmoid(torch.tensor(score)).item()
         no_p = 1 - yes_p
@@ -108,6 +109,8 @@ def render_block(event_block, tags=True):
         score = event_block["score"]
         if score == float('inf'):
             score = 9
+        elif math.isnan(score):
+            score = 0
         yes_p = torch.sigmoid(torch.tensor(score)).item()
         no_p = 1 - yes_p
         yes_p, no_p = round(yes_p, 5), round(no_p, 5)

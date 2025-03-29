@@ -79,6 +79,10 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
                 # Check if the call has two arguments: a string literal and a variable name
                 if len(expr.args) == 2 and isinstance(expr.args[0], ast.Str) and isinstance(expr.args[1], ast.Name):
                     pattern_penalty = 0.0  # No penalty if the structure is correct
+                # Penalize evaluations which do not phrase their title
+                # in the form of a question
+                if slot_name == "add_evaluation" and expr.args[0].value[-1] != "?":
+                    pattern_penalty = 1.0
     if 'pattern_penalty' not in locals():
         pattern_penalty = 1.0
 

@@ -103,6 +103,9 @@ class WeaveAgentTask:
             try:
                 if inspect.iscoroutinefunction(evaluation["callback"]):
                     result = await evaluation["callback"](self.subagent)
+                    # Handle case where callback returns another coroutine
+                    while inspect.iscoroutine(result):
+                        result = await result
                 else:
                     result = evaluation["callback"](self.subagent)
             except Exception as e:
@@ -189,7 +192,7 @@ class WeaveAgentTree:
                               BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.EXPECTATION: [BlockType.OPTION, BlockType.OBSERVATION_INFERENCE,
                                     BlockType.TASK_REMINDER, BlockType.ERROR],
-            BlockType.OPTION: [BlockType.OBSERVATION_INFERENCE,],
+            BlockType.OPTION: [BlockType.OBSERVATION_INFERENCE, BlockType.EVALUATION],
             BlockType.OBSERVATION_INFERENCE: [BlockType.EVALUATION,
                                               BlockType.ERROR, BlockType.TASK_REMINDER],
             BlockType.EVALUATION: [BlockType.OUTCOME, BlockType.ERROR],
@@ -264,6 +267,12 @@ class WeaveAgentTree:
         # TODO: Make these parallel requests
         # TODO: Add view to tuner for training the descriptions
         render = render_block(block)
+        # Prevent coroutines from slipping into event trace
+        for value in block.values():
+            try:
+                assert not inspect.iscoroutinefunction(value)
+            except AssertionError:
+                raise ValueError(f"{value} is coroutine")
         self.__event_stream.append(block)
         
         if block["type"] not in {"genesis", "bootstrap"}:
@@ -846,7 +855,14 @@ class WeaveAgentNode:
             + "# writing flows well or if a source seems trustworthy. Like\n"
             + "# reminders both unit test callbacks and logit evaluators return\n"
             + "# a value between 0 and 1. I should be sure to add my callback to\n"
-            + "# the queue with agent.add_evaluation(title, callback)."
+            + "# the queue with self.add_evaluation(title, callback).\n"
+            + "# Note: The title of an evaluation should be phrased in the form of\n"
+            + "# a past tense question and end with a question mark. e.g.\n"
+            + "# self.add_evaluation('Did the action block send a message?', callback)\n"
+            + "# self.add_evaluation('Did our character escape the dungeon?', callback)\n"
+            + "# self.add_evaluation('Is the first diamond purple?', callback)\n"
+            + "# self.add_evaluation('Is our entry finished?', callback)\n"
+            
         )
         eval_block = await self._do_tick_block("evaluation",
                                                  evaluation_hint,
@@ -1068,9 +1084,9 @@ class WeaveAgentNode:
             else:
                 return
 
-        are_observations_updated = await self._do_observation_updates()
-        if not are_observations_updated:
-            return
+            are_observations_updated = await self._do_observation_updates()
+            if not are_observations_updated:
+                return
         
         # Write evaluation programs
         # TODO: Make this multiple blocks again
@@ -1099,6 +1115,8 @@ class WeaveAgentNode:
             try:
                 if self.planning:
                     result = None
+                elif inspect.iscoroutinefunction(evaluation["callback"]):
+                    result = await evaluation["callback"](self)
                 else:
                     result = evaluation["callback"](self)
                 task_evaluation_results.append([evaluation['title'], result])

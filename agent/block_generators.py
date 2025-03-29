@@ -1,6 +1,7 @@
 import time
 import re
 import ast
+import math
 import random
 import os
 import asyncio
@@ -117,15 +118,19 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
                            port=port)
         full_texts = [prompt + prefix + text for text in texts]
         scores = await score_fn(full_texts)
+        scores = torch.tensor([0 if math.isnan(score) else score for score in scores])
         syntax_penalties = torch.tensor([0 if is_valid_syntax2(prefix + text) else -2
                                          for text in texts])
-        completion_penalties = torch.zeros(len(scores))
         lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text)
                                        for text in texts])
+        # Punish adversarial examples harder
+        for i, text in enumerate(texts):
+            if syntax_penalties[i] == -2 and scores[i] > 4:
+                syntax_penalties[i] = (-2 - scores[i])
         if raw:
             return scores
         else:
-            return scores + syntax_penalties + completion_penalties + lint_penalties            
+            return scores + syntax_penalties + lint_penalties            
 
 
     port = 5001
