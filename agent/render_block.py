@@ -1,3 +1,4 @@
+import math
 import random
 import torch
 
@@ -39,8 +40,13 @@ def render_block(event_block, tags=True):
     if "bm25_query" in event_block:
         header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
-    if "raw_score" in event_block:
-        yes_p = torch.sigmoid(torch.tensor(event_block["raw_score"])).item()
+    if "score" in event_block and event_block["q"]:
+        score = event_block["score"]
+        if score == float('inf'):
+            score = 9
+        elif math.isnan(score):
+            score = 0
+        yes_p = torch.sigmoid(torch.tensor(score)).item()
         no_p = 1 - yes_p
         yes_p, no_p = round(yes_p, 5), round(no_p, 5)
         answer = random.choices(["Yes.", "No."], weights=[yes_p, no_p])[0]
@@ -98,5 +104,20 @@ def render_block(event_block, tags=True):
         return (header + "\n" 
                          + generate_outcome_table(event_block['table'])
                          + footer)
+    elif event_block["type"] == "option":
+        # Ignore everything else and just do a simple render
+        score = event_block["score"]
+        if score == float('inf'):
+            score = 9
+        elif math.isnan(score):
+            score = 0
+        yes_p = torch.sigmoid(torch.tensor(score)).item()
+        no_p = 1 - yes_p
+        yes_p, no_p = round(yes_p, 5), round(no_p, 5)
+        if event_block["body"] == "Yes.":
+            prob = f"({round(yes_p * 100, 5)}%)"
+        else:
+            prob = f"({round(no_p * 100, 5)}%)"
+        return f"#q: {event_block['q']} {event_block['body']} {prob}\n"
     else:
         return (header + repr(event_block) + footer)

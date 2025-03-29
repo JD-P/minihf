@@ -37,13 +37,30 @@ class DiscordBotServer:
     def __init__(self, token, channel_id):
         self.token = token
         self.channel_id = int(channel_id)
-        self.bot = commands.Bot(command_prefix="!", intents=intents)
+        
         self.messages = []
 
+
+    async def setup_bot(self):
+        """Initialize bot and register handlers inside async context"""
+        self.bot = commands.Bot(command_prefix="!", intents=intents)
+        
         @self.bot.event
         async def on_ready():
             print(f'Logged in as {self.bot.user}')
             self.channel = self.bot.get_channel(self.channel_id)
+
+            # Load message history on startup
+            if self.channel:
+                # Fetch last 50 messages (adjust limit as needed)
+                messages = []
+                async for msg in self.channel.history(limit=50):
+                    messages.append(msg)
+                # Store messages in chronological order
+                self.messages.extend(reversed(messages))
+                print(f"Loaded {len(messages)} historical messages")
+            else:
+                print(f"Error: Channel {self.channel_id} not found!")
 
         @self.bot.event
         async def on_message(message):
@@ -51,6 +68,7 @@ class DiscordBotServer:
                 self.messages.append(message)
 
     async def start_bot(self):
+        await self.setup_bot()
         await self.bot.start(self.token)
 
     async def send_message(self, content):

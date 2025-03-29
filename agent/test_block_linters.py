@@ -40,7 +40,7 @@ agent.add_action('Example Action', example_function)
 def example_function(agent):
     pass
 
-agent.add_action('Example Action', example_function)
+self.add_action('Example Action', example_function)
 """
 
         action2 = """
@@ -51,10 +51,10 @@ self.add_action('Example Action', example_function)
 """
         
         evaluation = """
-def example_function(agent):
+def example_function(subagent):
     pass
 
-agent.add_evaluation('Example Evaluation', example_function)
+self.add_evaluation('Is this an example evaluation?', example_function)
 """
         
         self.assertEqual(lint_block("action", action), 0.0)
@@ -70,6 +70,16 @@ This is a well-formatted block.
 """
         for block_type in block_types:
             self.assertEqual(lint_block(block_type, body), 0.0)
+
+    def test_non_question_evaluation_title(self):
+        evaluation = """
+def example_function(subagent):
+    pass
+
+self.add_evaluation('Is this an example evaluation', example_function)
+"""
+        self.assertEqual(lint_block("evaluation", evaluation), 1.0)
+
 
     def test_non_string_only_element_in_orientation_or_expectation(self):
         block_types = ["orientation", "expectation"]

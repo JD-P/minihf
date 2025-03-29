@@ -1,67 +1,80 @@
 import os
 import json
 import hashlib
-import tantivy
-from tantivy import Index, SchemaBuilder
+import asyncio
+from retrieval import ModernBertRag  # Assuming your ModernBertRag is in this module
+from argparse import ArgumentParser
 
-schema_builder = SchemaBuilder()
-schema_builder.add_text_field("id", stored=True, tokenizer_name='raw')
-schema_builder.add_text_field("type", stored=True)
-schema_builder.add_text_field("render", stored=True)
-schema_builder.add_text_field("q", stored=True)
-schema_builder.add_float_field("score", stored=True)
-schema_builder.add_integer_field("index", stored=True)
-schema_builder.add_float_field("timestamp", stored=True)
-schema_builder.add_text_field("description", stored=True)
-
-bm25_schema = schema_builder.build()
-
-if not os.path.exists("memories"):
-    os.mkdir("memories")
-if not os.path.exists("memories/bm25"):
-    os.mkdir("memories/bm25")
-bm25_index = Index(bm25_schema, path="./memories/bm25")
-
-example_filenames = [filename for filename in
-                     os.listdir("./bootstraps/example_blocks")
-                     if filename.endswith(".json")]
-example_blocks = []
-for filename in example_filenames:
-    with open("./bootstraps/example_blocks/" + filename) as infile: 
-        block_metadata = json.load(infile)
-    with open("./bootstraps/example_blocks/" + filename[:-5] + ".py") as infile:
-        block_render = infile.read()
-    block_metadata["render"] = block_render
-    example_blocks.append(block_metadata)
-
-writer = bm25_index.writer()
-for example in example_blocks:
-    sha256_hash = hashlib.sha256()
-    sha256_hash.update(example["render"].encode('utf-8'))
-    hash_hex = sha256_hash.hexdigest()
+class MockWeaveAgentTree:
+    """Mock tree that just tracks summaries in memory"""
+    def __init__(self, model_name):
+        self.model_name = model_name
+        self.summaries = []
     
-    bm25_query = f"id:'{hash_hex}'"
-    searcher = bm25_index.searcher()
-    query = bm25_index.parse_query(bm25_query, ["id",])
-    results = searcher.search(query, limit=25).hits
-    retrieved_blocks = [searcher.doc(result[1]) for result in results]
-    if retrieved_blocks:
-        print(f"Skipped block {hash_hex}")
-        continue
+    def add_summary(self, summary):
+        self.summaries.append(summary)
+        print(f"Added summary: {summary[0]}")
+
+async def bootstrap_rag_memories(model_name):
+    # Initialize mock tree and RAG system
+    mock_tree = MockWeaveAgentTree(model_name)
+    rag = ModernBertRag(mock_tree, db_path="blocks.db")
+    await rag.setup()
     
-    writer.add_document(tantivy.Document(
-        id=hash_hex,
-        type=example["type"],
-        render=example["render"],
-        q=example["q"],
-        score=example["score"],
-        index=example["index"],
-        timestamp=example["timestamp"],
-        description=example["description"],
-    ))
-    writer.commit()
-    print(f"Wrote block {hash_hex}")
+    # Load example blocks
+    example_dir = "./bootstraps/example_blocks"
+    example_files = [f for f in os.listdir(example_dir) if f.endswith(".json")]
+    
+    for filename in example_files:
+        json_path = os.path.join(example_dir, filename)
+        code_path = os.path.join(example_dir, filename[:-5] + ".py")
+        
+        with open(json_path) as f:
+            metadata = json.load(f)
+        with open(code_path) as f:
+            render_content = f.read()
+        
+        # Create unique ID from render content
+        sha = hashlib.sha256()
+        sha.update(render_content.encode('utf-8'))
+        block_id = sha.hexdigest()
+        
+        # Check if block already exists
+        conn = await rag._connect()
+        cursor = await conn.cursor()
+        await cursor.execute("SELECT 1 FROM blocks WHERE block_id=?", (block_id,))
+        exists = await cursor.fetchone() is not None
+        await cursor.close()
+        await conn.close()
+        
+        if exists:
+            print(f"Block {block_id[:8]}... already exists, skipping")
+            continue
+        
+        # Create the item structure ModernBERT-RAG expects
+        rag_item = {
+            "id": block_id,
+            "render": render_content,
+            "context": metadata.get("context", ""),
+            "type": metadata.get("type", "code_block"),
+            "q": metadata.get("q", ""),
+            "score": metadata.get("score", 0.0),
+            "_index": metadata.get("index", 0),
+            "timestamp": metadata.get("timestamp", 0.0)
+        }
+        
+        # Add to processing queue and process immediately
+        rag.add(rag_item)
+        processed_id = await rag.process_item()
+        
+        if processed_id:
+            print(f"Successfully added memory block {processed_id[:8]}...")
+        else:
+            print(f"Failed to process block {block_id[:8]}...")
 
-
-
-
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("model_name")
+    args = parser.parse_args()
+    asyncio.run(bootstrap_rag_memories(args.model_name))
+    print("Bootstrap memories added!")

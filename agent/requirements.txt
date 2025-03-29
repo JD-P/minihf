@@ -10,7 +10,8 @@ rich
 transformers
 protobuf
 sentencepiece
-tantivy
+aiosqlite
+sqlite-vec
 jsonschema
 nextcord
 libtmux

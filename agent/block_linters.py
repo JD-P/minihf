@@ -8,8 +8,8 @@ python_patterns = [
     r'\bdef\s+',
     r"':\n",
     r"\n# \[",
-    r"agent\.add",
-    r"agent\.agent",
+    r"self\.add",
+    r"self\.agent",
     r"\[INST\]",
 ]
 
@@ -68,7 +68,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
 
     # Check if the first element is a function definition
     if len(elements) >= 1 and isinstance(elements[0], ast.FunctionDef):
-        # Check if the second element is an expression with agent.add_action
+        # Check if the second element is an expression with self.add_action
         if len(elements) >= 2 and isinstance(elements[1], ast.Expr):
             expr = elements[1].value
             if (isinstance(expr, ast.Call)
@@ -79,6 +79,10 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
                 # Check if the call has two arguments: a string literal and a variable name
                 if len(expr.args) == 2 and isinstance(expr.args[0], ast.Str) and isinstance(expr.args[1], ast.Name):
                     pattern_penalty = 0.0  # No penalty if the structure is correct
+                # Penalize evaluations which do not phrase their title
+                # in the form of a question
+                if slot_name == "add_evaluation" and expr.args[0].value[-1] != "?":
+                    pattern_penalty = 1.0
     if 'pattern_penalty' not in locals():
         pattern_penalty = 1.0
 

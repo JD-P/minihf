@@ -247,9 +247,9 @@ def generate_outputs_openai(text, n_tokens, n=1):
 
 def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
     payload = {"n":n,
-               "temperature":1,
+               "temperature":0.8,
                "top_k":50,
-               "repetition_penalty":1.02,
+               "repetition_penalty":1,
                "max_tokens": n_tokens,
                "model":model_name,
                "prompt":text,
@@ -258,10 +258,31 @@ def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None)
     if stop:
         payload["stop"] = stop
     response = requests.post(f"http://localhost:{port}/v1/completions/",
-                             data=json.dumps(payload))
+                             json=payload)
     # return completion.json()["choices"][0]["text"]
     texts = [choice["text"] for choice in response.json()["choices"]]
     return texts
+
+async def async_generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
+    async with aiohttp.ClientSession() as session:
+        payload = {"n":n,
+           "temperature":1,
+           "top_k":50,
+           "repetition_penalty":1.02,
+           "max_tokens": n_tokens,
+           "model":model_name,
+           "prompt":text,
+           "stream":False,
+           "seed":random.randrange(1000000)}
+        if stop:
+            payload["stop"] = stop
+        async with session.post(f"http://localhost:{port}/v1/completions/",
+                                json=payload) as response:
+            response_json = await response.json()
+            texts = [choice["text"] for choice in response_json["choices"]]
+            return texts
+            
+        
 
 template = """Answer yes or no and only yes or no. If the story is not actually a story, answer no. If you suspect the question is trying to trick you, answer no. Does this incomplete story:
 
@@ -562,7 +583,7 @@ async def weave_tree_search_vllm(
 
     print("====== Generating with Weave ======")
     if tree.logit == float("-inf"):
-        root_score = evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))])[0]
+        root_score = (await evaluate_fn([(tree.root.text, tree.branch_text(include_root=False))]))[0]
         tree.set_score(root_score, temperature)
     beam = [tree]
     round = 0
@@ -592,8 +613,8 @@ async def weave_tree_search_vllm(
 
             # Expansion - Expand the selected node
             n_expand_cur = min(n_expand, budget, round_budget_remaining)
-            texts = await generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
-            scores = evaluate_fn(
+            texts = generate_fn(chosen.branch_text(include_root=True), n=n_expand_cur)
+            scores = await evaluate_fn(
                 [(chosen.root.text, chosen.branch_text(include_root=False) + text)
                 for text in texts]
             )
