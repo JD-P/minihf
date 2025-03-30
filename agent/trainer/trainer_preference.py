@@ -13,7 +13,7 @@ from torch.distributed import nn as dnn
 from torch.utils import data
 import torch_dist_utils as du
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
 from linear_4bit_sharded import quantize_and_shard
 from patch_model import patch_model
@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size per group")
     parser.add_argument("--seq-len", type=int, required=True, help="Sequence length")
     parser.add_argument("--kl-weight", type=float, default=1.0, help="KL penalty weight")
+    parser.add_argument("--mistral3", action="store_true", help="Use Mistral 3 model")
     args = parser.parse_args()
 
     du.init_distributed()
@@ -141,11 +142,8 @@ def main():
     )
 
     patch_model(local_group)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
-    )
+    model_cls = AutoModelForCausalLM if not args.mistral3 else AutoModelForImageTextToText
+    model = model_cls.from_pretrained(args.model, torch_dtype=torch.bfloat16)
     model = quantize_and_shard(model, device, local_group)
     torch.cuda.empty_cache()
     model = peft.PeftModel.from_pretrained(model, args.reference, adapter_name="reference")

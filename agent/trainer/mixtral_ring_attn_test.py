@@ -40,7 +40,6 @@ def main():
             device_map={"": device},
             torch_dtype=torch.bfloat16,
             quantization_config=bnb_config,
-            attn_implementation="flash_attention_2",
         )
         .eval()
         .requires_grad_(False)
@@ -57,7 +56,6 @@ def main():
             device_map={"": device},
             torch_dtype=torch.bfloat16,
             quantization_config=bnb_config,
-            attn_implementation="flash_attention_2",
         )
         .eval()
         .requires_grad_(False)

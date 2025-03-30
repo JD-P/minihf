@@ -16,4 +16,4 @@ class RingAttentionForward:
 
 
 def patch_model(group=None):
-    modeling_utils.ALL_ATTENTION_FUNCTIONS["flash_attention_2"] = RingAttentionForward(group)
+    modeling_utils.ALL_ATTENTION_FUNCTIONS["sdpa"] = RingAttentionForward(group)

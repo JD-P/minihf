@@ -4,7 +4,7 @@ import torch
 from torch import distributed as dist
 from torch.distributed import nn as dnn
 import torch_dist_utils as du
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoModelForImageTextToText, AutoTokenizer, BitsAndBytesConfig
 
 from patch_model import patch_model
 
@@ -21,7 +21,7 @@ def main():
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 
-    model_name = "Qwen/Qwen2.5-Coder-32B-Instruct"
+    model_name = "mistralai/Mistral-Small-3.1-24B-Base-2503"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     prompt = "The quick brown fox jumps over the lazy dog, " * 8
     tokens = tokenizer(prompt, return_tensors="pt").to(device)["input_ids"][:, :64]
@@ -35,7 +35,7 @@ def main():
     bnb_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)
 
     model = (
-        AutoModelForCausalLM.from_pretrained(
+        AutoModelForImageTextToText.from_pretrained(
             model_name,
             device_map={"": device},
             torch_dtype=torch.bfloat16,
@@ -51,7 +51,7 @@ def main():
     patch_model()
 
     model = (
-        AutoModelForCausalLM.from_pretrained(
+        AutoModelForImageTextToText.from_pretrained(
             model_name,
             device_map={"": device},
             torch_dtype=torch.bfloat16,
