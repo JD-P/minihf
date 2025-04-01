@@ -52,6 +52,13 @@ class WeaveNethack:
             # Don't track changes if there aren't at least 6 moves yet
             except IndexError:
                 rendered_text += "\n"
+        rendered_text += "Notable Objects In Current Frame:\n"
+        onscreen_objects = self.get_objects()
+        if len(onscreen_objects) == 1:
+            rendered_text += "{No notable objects on screen}\n"
+        else:
+            for key, value in self.get_objects().items():
+                rendered_text += f"{key}: {value}\n"
         command_cheat_sheet = (
             "Key Command Cheat Sheet:\n"
             "  y ( move northwest )\n"
@@ -107,6 +114,146 @@ class WeaveNethack:
         self.session.kill_session()
         del self.agent.tools["nethack"]
         self.agent.remove_observation_view(self.observation_view)
+
+    # Add these symbol mappings at the class level
+    FEATURE_SYMBOLS = {
+        '-': 'horizontal wall',
+        '|': 'vertical wall',
+        '+': 'door',
+        '#': 'corridor',
+        '.': 'floor',
+        '<': 'up staircase',
+        '>': 'down staircase',
+        '^': 'trap',
+        '_': 'altar',
+        '=': 'throne',
+        '"': 'pool',
+    }
+
+    MONSTER_SYMBOLS = {
+        # Uppercase monsters (hostile)
+        'A': 'giant ant', 'B': 'bat', 'C': 'centaur', 'D': 'dragon',
+        'E': 'flaming sphere', 'F': 'violet fungi', 'G': 'gnome',
+        # Lowercase monsters (mostly peaceful)
+        'a': 'grid bug', 'b': 'bat', 'c': 'centipede', 'd': 'dog',
+        'e': 'energy vortex', 'f': 'fox', 'g': 'goblin',
+        # Add more as needed from wiki
+    }
+
+    ITEM_SYMBOLS = {
+        ')': 'weapon', '(': 'projectile', '[': 'armor', ']': 'ring',
+        '/': 'wand', '?': 'scroll', '!': 'potion', '=': 'amulet',
+        '"': 'spellbook', '$': 'gold piece', '_': 'tool'
+    }
+
+    def get_objects(self):
+        """Return parsed game objects with relative coordinates"""
+        if not self.moves:
+            return {}
+        
+        current_screen = self.moves[-1][0]
+        parsed = self._parse_screen(current_screen)
+        return self._generate_object_dict(parsed)
+
+    MAP_HEIGHT = 20  # NetHack's standard map height in 80x24 terminal
+
+    def _parse_screen(self, screen_lines):
+        """Parse screen contents into raw object positions"""
+        player_pos = None
+        objects = {}
+        map_area = screen_lines[:self.MAP_HEIGHT]
+
+        # Find player position within map area
+        for y, line in enumerate(map_area):
+            if '@' in line:
+                x = line.index('@')
+                player_pos = (x, y)
+                break
+        
+        if not player_pos:
+            return {}
+
+        # Process all map area characters
+        px, py = player_pos
+        for y, line in enumerate(map_area):
+            for x, char in enumerate(line):
+                if char == '@' or char == ' ':  # Skip player and empty spaces
+                    continue
+                
+                # Calculate relative coordinates (north=positive Y)
+                rel_x = x - px
+                rel_y = py - y  # Inverted Y-axis
+
+                # Classify characters using symbol mappings
+                obj_type = None
+                if char in self.FEATURE_SYMBOLS:
+                    obj_type = self.FEATURE_SYMBOLS[char]
+                elif char in self.MONSTER_SYMBOLS:
+                    obj_type = self.MONSTER_SYMBOLS[char]
+                elif char in self.ITEM_SYMBOLS:
+                    obj_type = self.ITEM_SYMBOLS[char]
+                
+                if obj_type:
+                    if obj_type not in objects:
+                        objects[obj_type] = []
+                    objects[obj_type].append((rel_x, rel_y))
+
+        return {'player': (px, py), 'objects': objects}
+    
+    def _generate_object_dict(self, parsed):
+        """Generate the final object dictionary with shortcut entries"""
+        if not parsed:
+            return {}
+        
+        result = {'player': (0, 0)}  # Always relative to player
+        px, py = parsed['player']
+        objects = parsed['objects']
+
+        # Process exits (doors and corridors)
+        exits = []
+        for exit_type in ['door', 'corridor']:
+            exits += objects.get(exit_type, [])
+        
+        if exits:
+            result['nearest-exits'] = self._find_nearest(exits)
+            result['northmost-exit'] = self._find_extreme(exits, 'y', max)
+            result['southmost-exit'] = self._find_extreme(exits, 'y', min)
+            result['eastmost-exit'] = self._find_extreme(exits, 'x', max)
+            result['westmost-exit'] = self._find_extreme(exits, 'x', min)
+
+        # Process stairs
+        stairs = []
+        for stair_type in ['up staircase', 'down staircase']:
+            stairs += objects.get(stair_type, [])
+        
+        if stairs:
+            result['nearest-stairs'] = self._find_nearest(stairs)
+            result['northmost-stairs'] = self._find_extreme(stairs, 'y', max)
+
+        # Add walls and other features as lists
+        for feature in ['horizontal wall', 'vertical wall', 'floor']:
+            if feature in objects:
+                result[feature] = objects[feature]
+
+        # Add monsters and items as lists
+        for obj_type in list(self.MONSTER_SYMBOLS.values()) + list(self.ITEM_SYMBOLS.values()):
+            if obj_type in objects:
+                result[obj_type] = objects[obj_type]
+
+        # Filter out empty entries
+        return {k: v for k, v in result.items() if (isinstance(v, list) and len(v) > 0) or (not isinstance(v, list))}
+
+    def _find_nearest(self, positions):
+        """Find position with smallest Euclidean distance"""
+        positions.sort(key=lambda p: p[0]**2 + p[1]**2)
+        return positions
+
+    def _find_extreme(self, positions, axis, func):
+        """Find extreme position in specified axis"""
+        idx = 0 if axis == 'x' else 1
+        return func(positions, key=lambda p: p[idx])
+
+    # ... existing methods ...
 
 # Example usage
 if __name__ == "__main__":

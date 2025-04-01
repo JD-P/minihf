@@ -91,6 +91,10 @@ def add_main_start_short_story(subagent):
 
     # Initialize nano editor
     nano = WeaveNano(main_agent, "horror.txt")
+
+    # Demonstrate how to retrieve nano editor for use in actions
+    nano = main_agent.tools["nano-/app/horror.txt"] # Use subagent.tools in actions
+    # Like this: subagent.tools["nano-/app/horror.txt"]
     
     # Create front matter and opening line
     front_matter = [
@@ -108,7 +112,6 @@ def add_main_start_short_story(subagent):
     for line in front_matter:
         nano.send_command(line)
         nano.send_command('Enter')  # Explicit newline
-        time.sleep(0.1)
     for i in range(3):
         nano.send_command("-")
 
@@ -124,7 +127,6 @@ def add_main_start_short_story(subagent):
     ]
     for command in commands:
         nano.send_command(command)
-        time.sleep(0.1)
     
     # Save changes and show current cursor location in file
     # We current cursor location in file so we know where we are when
@@ -132,7 +134,6 @@ def add_main_start_short_story(subagent):
     commands = ['C-o', 'Enter', 'C-c']
     for command in commands:
         nano.send_command(command)
-        time.sleep(0.1)
         
     return True
 

@@ -48,7 +48,7 @@ def main_agent_and_initial_moves(subagent):
 
     nethack = WeaveNethack(main_agent)
     # To recall the tool during actions do this:
-    # nethack = self.tools["nethack"]
+    nethack = main_agent.tools["nethack"] # But with subagent.tools
 
     # Don't need to add observation view because tool already includes it
     
@@ -58,18 +58,48 @@ def main_agent_and_initial_moves(subagent):
     nethack.send_keys('y') # Accept random character creation
     nethack.send_keys('  ') # Space through the game introduction
 
-    # I should now try exploring the dungeon. Lets see if I can get out of this
-    # room. In the next orientation block I'll outline the keys I need to send to
-    # escape this first room.
+    # We can access 2D coordinates of notable objects in the frame with the
+    # get_objects() method. This lets us plan actions relative to items in
+    # the room with the player (@) as origin.
+    notable_objects = nethack.get_objects()
+    exits = []
+    if "nearest-stairs" in notable_objects:
+        if ('up staircase' in notable_objects and
+            notable_objects["nearest-stairs"] in notable_objects["up staircase"]):
+            go_downstairs = True
+            x_move = notable_objects["nearest-stairs"][0][0]
+            y_move = notable_objects["nearest-stairs"][0][1]
+    if "nearest-exits" in notable_objects and "go_downstairs" not in locals():
+        if len(notable_objects["nearest-exits"]) > 1:
+            _exit = random.choice(notable_objects["nearest-exits"][1:])
+            x_move = _exit[0]
+            y_move = _exit[1]
+        else:
+            x_move = notable_objects["nearest-exits"][0][0]
+            y_move = notable_objects["nearest-exits"][0][1]
+    if "x_move" not in locals():
+        x_move = random.randrange(-10,10)
+    if "y_move" not in locals():
+        y_move = random.randrange(-10,10)
+    keys = ""
+    if x_move > 0:
+        keys += "l" * x_move
+    elif x_move < 0:
+        keys += "h" * (-1 * x_move)
+    if y_move > 0:
+        keys += "k" * y_move
+    elif y_move < 0:
+        keys += "j" * (-1 * y_move)
+    if "go_downstairs" in locals():
+        keys += ">"
+    nethack.send_keys(keys)
+    
+    # I should now try exploring the dungeon. Lets see if I got out of this room.
 
     # Note from the future: Alright this is now like the 12th time I've attempted this
     # and I seriously need future instances of me to realize that confabulating API calls
-    # is not a useful way to write actions. `subagent.tools["nethack"]` is a tmux pane,
-    # it does not implement any game specific methods it is literally just a tmux
-    # pane with generic commands that would exist if the tmux pane was running
-    # any other program. Please stop relying on it to have weird stuff and the
-    # ability to grab game state. It doesn't have methods for that, so stop writing
-    # code that assumes it does.
+    # is not a useful way to write actions.
+    
 
     return True
 
