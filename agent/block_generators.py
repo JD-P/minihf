@@ -166,7 +166,8 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
         scores = await evaluate_fn(prompt, candidates)
     candidate_scores = [item for item in zip(candidates, scores)]
     candidate_scores.sort(key=lambda pair: pair[1].item())
-    return prefix + candidate_scores[-1][0].strip(), candidate_scores[-1][1].item()
+    return [(prefix + candidate[0].strip(), candidate[1].item())
+            for candidate in candidate_scores]
     
 
 async def generate_block_inner(self, block_type, context, eval_questions, weave_params, hint=""):
@@ -181,12 +182,13 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
         outfile.flush()
     
     # Rejection sample candidate for iterative retrieval
-    query_candidate, score = await rejection_sample_block(self,
-                                                          block_type,
-                                                          prefix,
-                                                          prompt,
-                                                          4,
-                                                          eval_questions)
+    candidates = await rejection_sample_block(self,
+                                              block_type,
+                                              prefix,
+                                              prompt,
+                                              4,
+                                              eval_questions)
+    query_candidate, score = candidates[-1]
     
     try:
         compile(query_candidate, f"block_{self.tree.current_block_index()}", "exec")
@@ -229,12 +231,13 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
             outfile.flush()
 
         # Rejection sample with retrieval
-        program, score = await rejection_sample_block(self,
-                                                      block_type,
-                                                      prefix,
-                                                      prompt,
-                                                      16,
-                                                      eval_questions)
+        candidates = await rejection_sample_block(self,
+                                                  block_type,
+                                                  prefix,
+                                                  prompt,
+                                                  16,
+                                                  eval_questions)
+        program, score = candidates[-1]
     do_long = False
     if score < 1:
         do_long = True
@@ -245,16 +248,19 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
         
     # If rejection sampling fails backtrack or do more rejection sampling
     if do_long:
-        program, score = await rejection_sample_block(self,
-                                                      block_type,
-                                                      prefix,
-                                                      prompt,
-                                                      64,
-                                                      eval_questions)
+        candidates = await rejection_sample_block(self,
+                                                  block_type,
+                                                  prefix,
+                                                  prompt,
+                                                  64,
+                                                  eval_questions)
+        program, score = candidates[-1]
     block = {"type":block_type,
              "body":program,
              "q":eval_questions[0],
-             "score":score}
+             "score":score,
+             "candidates":[candidates[0], candidates[1],
+                           candidates[-2], candidates[-1]]}
     try:
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:

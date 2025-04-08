@@ -18,7 +18,10 @@ agent.add_action('Example Action', example_function)
     def test_empty_string_penalty(self):
         block_types = ["action", "evaluation", "expectation", "orientation"]
         for block_type in block_types:
-            self.assertEqual(lint_block(block_type, ""), 1.0)
+            if block_type == "action":
+                self.assertEqual(lint_block(block_type, ""), 1.5)
+            else:
+                self.assertEqual(lint_block(block_type, ""), 1.0)
 
     def test_patterns_in_orientation_and_expectation(self):
         block_types = ["orientation", "expectation"]
@@ -57,8 +60,8 @@ def example_function(subagent):
 self.add_evaluation('Is this an example evaluation?', example_function)
 """
         
-        self.assertEqual(lint_block("action", action), 0.0)
-        self.assertEqual(lint_block("action", action2), 0.0)
+        self.assertEqual(lint_block("action", action), 0.5)
+        self.assertEqual(lint_block("action", action2), 0.5)
         self.assertEqual(lint_block("evaluation", evaluation), 0.0)
 
     def test_well_formatted_orientation_or_expectation_block(self):
@@ -80,7 +83,6 @@ self.add_evaluation('Is this an example evaluation', example_function)
 """
         self.assertEqual(lint_block("evaluation", evaluation), 1.0)
 
-
     def test_non_string_only_element_in_orientation_or_expectation(self):
         block_types = ["orientation", "expectation"]
         body = """
@@ -101,5 +103,76 @@ self.add_evaluation('Is this an example evaluation', example_function)
         for block_type in block_types:
             self.assertEqual(lint_block(block_type, body), expected_penalty)
 
+    # New test cases for assertion penalties
+    def test_action_no_assertions(self):
+        action = """
+def example_function(agent):
+    pass
+
+self.add_action('Example Action', example_function)
+"""
+        self.assertEqual(lint_block("action", action), 0.5)
+
+    def test_action_assert_without_message(self):
+        action = """
+def example_function(agent):
+    assert True
+
+self.add_action('Example Action', example_function)
+"""
+        self.assertEqual(lint_block("action", action), 0.3)
+
+    def test_action_assert_message_not_question(self):
+        action = """
+def example_function(agent):
+    assert True, "This is a message"
+
+self.add_action('Example Action', example_function)
+"""
+        self.assertEqual(lint_block("action", action), 0.2)
+
+    def test_action_assert_in_try(self):
+        action = """
+def example_function(agent):
+    try:
+        assert True
+    except:
+        pass
+
+self.add_action('Example Action', example_function)
+"""
+        self.assertEqual(lint_block("action", action), 0.5)
+
+    def test_action_multiple_assert_penalties(self):
+        action = """
+def example_function(agent):
+    try:
+        assert True
+        assert False, "This is not a question"
+    except:
+        pass
+
+self.add_action('Example Action', example_function)
+"""
+        self.assertEqual(lint_block("action", action), 0.7)
+
+    def test_evaluation_with_assertions(self):
+        evaluation = """
+def example_function(subagent):
+    assert True
+
+self.add_evaluation('Is this an example evaluation?', example_function)
+"""
+        self.assertEqual(lint_block("evaluation", evaluation), 0.0)
+
+    def test_evaluation_with_mismatched_callback_name(self):
+        evaluation = """
+def example_function(subagent):
+    assert True
+
+self.add_evaluation('Is this an example evaluation?', new_function)
+"""
+        self.assertEqual(lint_block("evaluation", evaluation), 2.0)
+        
 if __name__ == '__main__':
     unittest.main()
