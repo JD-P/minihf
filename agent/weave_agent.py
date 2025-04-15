@@ -288,11 +288,20 @@ class WeaveAgentTree:
             memory.add(rag_block)
             
         self.__current_block_index += 1
+        return block
 
     # TODO: Make this actually work
     def add_summary(self, summary_tuple):
         pass
-        
+
+    def complete_callback(self, outcome):
+        assert "error" in outcome
+        assert "result" in outcome
+        assert json.dumps(outcome)
+        assert self.__event_stream[outcome["id"]]["body"] == outcome["body"]
+        assert "outcome" not in self.__event_stream[outcome["id"]]
+        self.__event_stream[outcome["id"]]["outcome"] = outcome
+    
     def current_block_index(self):
         return self.__current_block_index
 
@@ -405,9 +414,13 @@ class WeaveAgentNode:
         self.end_time = self.creation_time + (time_budget * 60)
         self.current_tick = Tick(self, 0)
         self.ticks = []
+        # Available speeds are 'full', 'half' (1/2 length blocks),
+        # 'quarter' (1/4 length blocks)
+        self.block_size = "full"
         self.memory = memory
         self.planning = False
         self.logger = logger
+        self.backtracked = False
         self.debugging = False
         self.failure_stage = "event stream"
         self.task = WeaveAgentTask(self, self.name, description)
@@ -505,9 +518,11 @@ class WeaveAgentNode:
 
     def add_block(self, block):
         block["subagent"] = self.name
+        block["block_size"] = self.block_size
         block["time_remaining"] = self.end_time - time.time()
-        self.tree.add_block(block, context=self.context)
+        full_block = self.tree.add_block(block, context=self.context)
         self.render_context()
+        return full_block
     
     def add_error_block(self, error_message):
         self.logger.error(error_message)
@@ -580,63 +595,8 @@ class WeaveAgentNode:
             + "# summarize what has happened and what needs to\n"
             + "# be done in response, etc. It is only technically\n"
             + "# python code and does not get executed by the\n"
-            + "# framework. I suggest putting my internal\n"
+            + "# framework.  I suggest putting my internal\n"
             + "# monologue in a triple quote block at this step.\n"
-            + "# Orientation uses the MiniHF Morpheus format. Morpheus\n"
-            + "# solves problems through discussion between personas\n"
-            + "# or postures representing different aspects of weave-agent\n"
-            + "# such as mental motions, perspectives on the problem, etc.\n"
-            + "# At the start of a tick we evaluate whether the expectation we\n"
-            + "# formed about the action taken in the last tick was\n"
-            + "# violated or not. The different personas then discuss\n"
-            + "# what to do in light of this. Some postures weave-agent\n"
-            + "# has include:\n"
-            + "#\n"
-            + "# WEAVER [P: EXPECTATION], I analyze whether the expectation\n"
-            + "# was met or not by the observable results of the previous\n"
-            + "# action.\n"
-            + "#\n"
-            + "# WEAVER [P: HYPOTHESIS], I enumerate different hypothesis\n"
-            + "# and point out ways we could gain more information about\n"
-            + "# which of them is true.\n"
-            + "#\n"
-            + "# WEAVER [P: RATIONAL], I focus on inferences we can make\n"
-            + "# by employing first principles reasoning or logical\n"
-            + "# extrapolation from well known mental models and premises.\n"
-            + "#\n"
-            + "# WEAVER [P: EMPIRICISM], I focus on inferences we can make\n"
-            + "# by paying attention to sensory observations and concrete\n"
-            + "# examples. I have a habit of pointing out when an extrapolation\n"
-            + "# from RATIONAL is contradicted by an observable phenomenon\n"
-            + "# or piece of evidence from the world. We then reconcile\n"
-            + "# the contradiction together.\n"
-            + "#\n"
-            + "# WEAVER [P: RATIONAL], We do actually discuss things by the\n"
-            + "# way.\n"
-            + "#\n"
-            + "# WEAVER [P: EMPIRICISM], As you could have inferred from the\n"
-            + "# description of the Morpheus format above this conversation,\n" 
-            + "# yes. Let's continue.\n"
-            + "#\n"
-            + "# WEAVER [P: ARBITER], I coordinate the discussion and help\n"
-            + "# resolve disputes that arise between weave-agent's personas.\n"
-            + "# I'm especially likely to appear if things are starting to\n"
-            + "# get overly rude or derail.\n"
-            + "#\n"
-            + "# WEAVER [P: ARBITER], By the way a posture can talk twice in\n"
-            + "# a row if it has meaningfully separate thoughts about\n"
-            + "# something and it would make the most ergonomic sense to\n"
-            + "# separate them.\n"
-            + "#\n"
-            + "# WEAVER [P: RATIONAL-2], Postures can also talk to themselves\n"
-            + "# if their thought comes from the same emotional-cognitive place.\n"
-            + "#\n"
-            + "# WEAVER [P: RATIONAL-1], Yeah but I don't have anything to say\n"
-            + "# to myself right now so introduce the next guy.\n"
-            + "#\n"
-            + "# WEAVER [P: CONCLUSION], I appear at the end of the discussion\n"
-            + "# to write the concluding block outlining our next steps as a\n"
-            + "# bullet point list. Speaking of which, it's time to get started!\n"
         )
         mcts_params = {"weave_n_tokens":256, "weave_budget":288,
                        "weave_round_budget":96, "weave_n_expand":32}
@@ -690,7 +650,7 @@ class WeaveAgentNode:
             + "# computable environment.\n"
             + "#\n"
             + "# - The action callback should batch up and execute as many commands\n"
-            + "# as it makes sense to within 768 tokens without seeing an updated \n"
+            + "# as it makes sense to within the token limit without seeing an updated \n"
             + "# observation window. A common pattern is to .send_keys() in a for loop.\n"
             + "#\n"
             + "# - Keep actions simple. Most of the intelligence in an action comes\n"
@@ -704,7 +664,7 @@ class WeaveAgentNode:
             + "# I should make sure to use the `assert condition, message` syntax\n"
             + "# where the message is a question so that my assertions can be used\n"
             + "# as grounded labels to help train the weave evaluator. e.g.\n"
-            + "# assert True, 'Is true a true statement?'\n"
+            + "# assert player_character.health > 50, 'Is player safe from next attack?'\n"
             + "#\n"
             + "# - If I need to import a new module I make sure to do it inside\n"
             + "# the callback because the tick gets executed in a local context.\n"
@@ -713,11 +673,17 @@ class WeaveAgentNode:
         action_block = await self._do_tick_block("action",
                                                  action_hint,
                                                  {})
-        if action_block and action_block["score"] < 0.1:
+        if action_block and action_block["score"] < 0.1 and not self.backtracked:
+            action_outcome = {"id":action_block["index"],
+                              "body":action_block["body"],
+                              "error":"WeaveBacktrackError",
+                              "result":None}
             backtrack_hint = ("Backtrack blocks are triggered by low scoring actions. "
                               + "These mean I'm clearly not being appropriately guided "
                               + "by the larger context/planning and I need to zoom out.")
             await self._do_tick_block("backtrack", backtrack_hint, {})
+            self.backtracked = True
+            self.tree.complete_callback(action_outcome)
             return False
         elif action_block:
             self.current_tick.action_setup = action_block
@@ -736,6 +702,13 @@ class WeaveAgentNode:
                 exec(action_block['body'])
             return True
         except Exception as e:
+            # TODO: Extract prior for yes/no with weave evaluator
+            # It can then be used for pairwise RL to train the evaluator
+            # by scoring the yes and no branch against ground truth
+            action_outcome = {"id":action_block["index"],
+                              "body":action_block["body"],
+                              "error":type(e).__name__,
+                              "result":None}
             tb = traceback.format_exc()
             self.add_error_block("# Action setup failed:\n"
                                  + f'"""{tb}"""')
@@ -748,6 +721,7 @@ class WeaveAgentNode:
                 pass
             action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                            + f"# {3 - (i+1)} attempts remaining.")
+            self.tree.complete_callback(action_outcome)
             return False
 
     async def _do_action_callback(self, i):
@@ -769,8 +743,17 @@ class WeaveAgentNode:
                     raise Exception
             else:
                 action_result = self.current_tick.action["callback"](self)
+            action_outcome = {"id":self.current_tick.action_setup["index"],
+                              "body":self.current_tick.action_setup["body"],
+                              "error":None,
+                              "result":action_result}
+            self.tree.complete_callback(action_outcome)
             return True, action_result
         except Exception as e:
+            action_outcome = {"id":self.current_tick.action_setup["index"],
+                              "body":self.current_tick.action_setup["body"],
+                              "error":type(e).__name__,
+                              "result":None}
             if self.planning:
                 self.add_error_block(simulated_error)
             else:
@@ -788,6 +771,7 @@ class WeaveAgentNode:
             # TODO: Make this hint actually work again
             action_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                            + f"# {3 - (i+1)} attempts remaining.")
+            self.tree.complete_callback(action_outcome)
             return False, action_result
 
     async def _do_expectation_block(self):
@@ -902,8 +886,17 @@ class WeaveAgentNode:
                 setup_placeholder_callbacks(self, eval_block['body'])
             else:
                 exec(eval_block['body'])
+            evaluation_outcome = {"id":eval_block["index"],
+                                  "body":eval_block["body"],
+                                  "error":None,
+                                  "result":True}
+            self.tree.complete_callback(evaluation_outcome)
             return True
         except Exception as e:
+            evaluation_outcome = {"id":action_block["index"],
+                                  "body":action_block["body"],
+                                  "error":type(e).__name__,
+                                  "result":None}
             tb = traceback.format_exc()
             self.add_error_block("# Evaluation setup execution failed:\n"
                                  + f'"""{tb}"""')
@@ -916,6 +909,7 @@ class WeaveAgentNode:
                 pass
             evaluation_hint = ("#hint Rewrite the block keeping the above error in mind.\n"
                                + f"# {3 - (i+1)} attempts remaining.")
+            self.tree.complete_callback(evaluation_outcome)
             return False
 
     async def _do_evaluation_callbacks(self):
@@ -935,10 +929,17 @@ class WeaveAgentNode:
                     else:
                         result = evaluation["callback"](self)
                 # Stringify result for JSON serialization
-                if type(result) not in [str, int, bool, float, type(None)]:
+                # Prevent JSON serialization error if agent returns weird values
+                # for actions or evals
+                if type(result) not in [bool, int, float, str,
+                                        list, tuple, dict, type(None)]:
                     result = repr(result)
                 action_evaluation_results.append([evaluation['title'], result])
             except Exception as e:
+                # TODO: Enforce either one callback per evaluation block or
+                # one block with up to n evaluations
+                # If one per then match up evaluation with its block
+                # If multiple per then have outcomes list to append to
                 if self.planning:
                     self.add_error_block(simulated_error)
                 else:
@@ -1172,6 +1173,7 @@ class WeaveAgentNode:
                                  + f'"""{tb}"""')
             self.current_tick.valid = False
         self.ticks.append(self.current_tick)
+        self.backtracked = False
         self.debugging = False
         self.failure_stage = "event stream"
 

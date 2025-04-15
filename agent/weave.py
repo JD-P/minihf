@@ -247,7 +247,7 @@ def generate_outputs_openai(text, n_tokens, n=1):
 
 def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
     payload = {"n":n,
-               "temperature":0.8,
+               "temperature":0.5,
                "top_k":50,
                "repetition_penalty":1,
                "max_tokens": n_tokens,
@@ -416,18 +416,26 @@ async def evaluate_prompts(session, port, model_name, prompts, n=1):
         "model": model_name,
         "prompt": prompts,
         "stream": False,
-        "logprobs": 100,
+        "logprobs": 25,
         "seed": random.randrange(1000000)
     }
     async with session.post(f"http://localhost:{port}/v1/completions/", json=payload) as response:
         response_json = await response.json()
         choices = []
-        for choice in response_json["choices"]:
-            choice_o = Choice()
-            mocklogprobs_o = MockLogProbs()
-            choice_o.logprobs = mocklogprobs_o
-            choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
-            choices.append(choice_o)
+        try:
+            for choice in response_json["choices"]:
+                choice_o = Choice()
+                mocklogprobs_o = MockLogProbs()
+                choice_o.logprobs = mocklogprobs_o
+                choice_o.logprobs.top_logprobs = choice["logprobs"]["top_logprobs"]
+                choices.append(choice_o)
+        except Exception as e:
+            # TODO: Remove this after bug is found
+            with open("/app/weave-agent-logs/prompts.json", "w") as outfile:
+                json.dump(prompts, outfile)
+            print([type(prompt) for prompt in prompts])
+            print(response_json)
+            raise e
         return torch.tensor([get_score_from_completion(choice) for choice in choices])
 
 async def process_text(session, port, model_name, score_prompt_fns, text, n=1):

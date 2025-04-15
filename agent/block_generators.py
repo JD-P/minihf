@@ -58,12 +58,20 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
     prompt += f" [/INST]#subagent {self.name}\n"
     prompt += f"#startblock type: {block_type}\n"
     prompt += f"#time_remaining {time_remaining} seconds\n"
+    if self.block_size == "full":
+        prompt += f'#block_size 768 tokens (full)\n'
+    elif self.block_size == "half":
+        prompt += f'#block_size 384 tokens (half)\n'
+    elif self.block_size == "quarter":
+        prompt += f'#block_size 192 tokens (quarter)\n'
 
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type == "orientation":
-        prefix = '"""WEAVER [P: PLANNER], '
+        # \nWEAVER [P: PLANNER], '
+        prefix = '"""<think>'
     elif block_type == "debug":
-        prefix = '"""WEAVER [P: HYPOTHESIS], '
+        # WEAVER [P: HYPOTHESIS], '
+        prefix = '"""<think>'
         with open("/app/error_stems.txt") as infile:
             stems = infile.readlines()
             stem = random.choice(stems)
@@ -72,7 +80,8 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
                 stem = stem.format(timestamp=error["timestamp"])
             prefix += stem
     elif block_type == "backtrack":
-        prefix = '"""WEAVER [P: PLANNER], '
+        # WEAVER [P: PLANNER], '
+        prefix = '"""<think>'
         with open("/app/backtrack_stems.txt") as infile:
             stems = infile.readlines()
             stem = random.choice(stems)
@@ -106,6 +115,16 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
         except Exception as e:
             print(e)
             return False
+
+    if self.block_size == "full":
+        block_size = 768
+    elif self.block_size == "half":
+        block_size = 768 // 2
+    elif self.block_size == "quarter":
+        block_size = 768 // 4
+    else:
+        raise ValueError("Agent's block_size parameter was not one of "
+                         "['full', 'half', 'quarter']")
         
     score_prompt_fns = []
     # TODO: Use the full set of questions somehow?
@@ -140,7 +159,7 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
         candidates = await async_generate_outputs_vllm(
             self.model_name,
             prompt,
-            768,
+            block_size,
             n=n,
             port=port,
             stop=stopstrings
@@ -152,7 +171,7 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
         candidates = await async_generate_outputs_vllm(
             self.model_name,
             prompt,
-            768,
+            block_size,
             n=n,
             port=port,
             stop=stopstrings
@@ -287,7 +306,7 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
     #    raw=True
     #)
     #block["raw_score"] = raw_score[0].item()
-    self.add_block(block)
+    block = self.add_block(block)
     rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan] with score [cyan]{score}[/cyan]")
     print(block["body"])
     return block

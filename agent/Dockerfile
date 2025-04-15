@@ -34,7 +34,10 @@ RUN chmod +x /usr/local/bin/geckodriver
 # Cache HuggingFace
 COPY hf_token.txt /app/
 COPY cache_hf.py /app/
-ENV TOKENIZER "Qwen/QwQ-32B"
+# ENV MODEL "weave-agent"
+# ENV TOKENIZER "Qwen/QwQ-32B"
+ENV MODEL "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+ENV TOKENIZER "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
 RUN python3 cache_hf.py $TOKENIZER
 RUN rm /app/hf_token.txt
 
@@ -48,4 +51,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/zombie_game_bootstrap.py" "weave-agent" --tokenizer $TOKENIZER & python -m http.server 8991 --directory "/app/weave-agent-logs/"
+CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/vigenere_bootstrap_nano.py" $MODEL --tokenizer $TOKENIZER & python -m http.server 8991 --directory "/app/weave-agent-logs/"

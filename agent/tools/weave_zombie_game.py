@@ -41,9 +41,11 @@ class WeaveZombieGame:
         try:
             # Capture pane safely
             pane_lines = self.pane.capture_pane()
-            #if not pane_lines:
-            #    pane_lines = ["The game has ended. Please restart it for another 
             parsed_state = self._parse_game_state(pane_lines)
+            if "root@" in "\n".join(pane_lines):
+                pane_lines.append("GAME OVER - The game has ended. "
+                                  "Please restart it for another round with "
+                                  'send_keys("python3 /app/tools/zombie_game.py"')
 
             # Build observation text using parsed state
             obs = pane_lines

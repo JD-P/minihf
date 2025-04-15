@@ -82,10 +82,17 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
                     pattern_penalty = 0.0  # No penalty if the structure is correct
                 # Penalize evaluations which do not phrase their title
                 # in the form of a question
-                if slot_name == "add_evaluation" and expr.args[0].value[-1] != "?":
-                    pattern_penalty += 1.0
+                try:
+                    if slot_name == "add_evaluation" and expr.args[0].value[-1] != "?":
+                        pattern_penalty += 1.0
+                except Exception as e:
+                    pattern_penalty += 2.0
                 # Penalize callback name not matching name in add_X method
-                if elements[0].name != elements[1].value.args[1].id:
+                try:
+                    if elements[0].name != elements[1].value.args[1].id:
+                        pattern_penalty += 2.0
+                except Exception as e:
+                    print(candidate_string)
                     pattern_penalty += 2.0
     if 'pattern_penalty' not in locals():
         pattern_penalty = 1.0

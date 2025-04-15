@@ -37,6 +37,15 @@ def render_block(event_block, tags=True):
         header += f'#timestamp {event_block["timestamp"]}\n'
     if "time_remaining" in event_block:
         header += f'#time_remaining {event_block["time_remaining"]} seconds\n'
+    if "block_size" in event_block:
+        if event_block["block_size"] == "full":
+            header += f'#block_size I have 768 tokens (full) to write with\n'
+        elif event_block['block_size'] == "half":
+            header += f'#block_size I have 384 tokens (half) to write with\n'
+        elif event_block['block_size'] == "quarter":
+            header += f'#block_size I have 192 tokens (quarter) to write with\n'
+        else:
+            header += f'#block_size [INVALID BLOCKSIZE GIVEN] (How did that happen?)'
     if "bm25_query" in event_block:
         header += f'#bm25_query {event_block["bm25_query"]}\n'
     footer = ""
@@ -57,6 +66,13 @@ def render_block(event_block, tags=True):
         footer += f'\n#q: {event_block["q"]} {answer} {prob}'
     if "tags" in event_block:
         footer += f"\n#tags: {' '.join(event_block['tags'])}"
+    if "outcome" in event_block:
+        with open("run_without_errors_questions.txt") as infile:
+            question = random.choice(infile.readlines())
+        if event_block["outcome"]["error"]:
+            footer += f"\n#q: {question.strip()} No."
+        else:
+            footer += f"\n#q: {question.strip()} Yes."
     footer += '\n#endblock\n'
     if event_block["type"] in ("genesis",
                                "action",

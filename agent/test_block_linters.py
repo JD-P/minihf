@@ -173,6 +173,16 @@ def example_function(subagent):
 self.add_evaluation('Is this an example evaluation?', new_function)
 """
         self.assertEqual(lint_block("evaluation", evaluation), 2.0)
+
+    def test_real_evaluation_with_mismatched_callback_name(self):
+        evaluation = """
+def check_move_to_warehouse(agent):
+    game_state = agent.tools['zombie_game'].last_state
+    return game_state['location'] == 'WAREHOUSE'
+
+self.add_evaluation('Did we prepare for night defense?', check_night_defense)
+"""
+        self.assertEqual(lint_block("evaluation", evaluation), 2.0)
         
 if __name__ == '__main__':
     unittest.main()
