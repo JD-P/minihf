@@ -1,7 +1,6 @@
 Will this block run without errors?
-Does this block throw an error?
-Did the above program throw an error?
+Does this block successfully run?
 Can this program run without errors on this runtime state?
-Will the callback above error at runtime?
+Will the callback above complete?
 Will this callback run successfully?
 Is the above program error-free?

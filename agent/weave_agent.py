@@ -893,8 +893,8 @@ class WeaveAgentNode:
             self.tree.complete_callback(evaluation_outcome)
             return True
         except Exception as e:
-            evaluation_outcome = {"id":action_block["index"],
-                                  "body":action_block["body"],
+            evaluation_outcome = {"id":eval_block["index"],
+                                  "body":eval_block["body"],
                                   "error":type(e).__name__,
                                   "result":None}
             tb = traceback.format_exc()
