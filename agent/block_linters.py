@@ -112,7 +112,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
     if slot_name == "add_action":
         class AssertVisitor(ast.NodeVisitor):
             def __init__(self):
-                self.has_assert = False
+                self.assert_count = 0
                 self.has_assert_without_message = False
                 self.has_assert_message_not_question = False
                 self.has_assert_in_try = False
@@ -124,7 +124,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
                 self.current_try_depth -= 1
 
             def visit_Assert(self, node):
-                self.has_assert = True
+                self.assert_count += 1
                 if node.msg is None:
                     self.has_assert_without_message = True
                 else:
@@ -140,7 +140,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
         visitor.visit(tree)
 
         assert_penalty = 0.0
-        if not visitor.has_assert:
+        if visitor.assert_count < 1:
             assert_penalty += 0.5
         else:
             if visitor.has_assert_without_message:
@@ -149,6 +149,9 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
                 assert_penalty += 0.2
             if visitor.has_assert_in_try:
                 assert_penalty += 0.2
+        # Penalize asserting every statement
+        if visitor.assert_count > 3:
+            assert_penalty += 0.2 * (visitor.assert_count - 3)
 
         return existing_penalty + assert_penalty
     else:

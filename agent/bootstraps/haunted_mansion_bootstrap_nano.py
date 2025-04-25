@@ -6,11 +6,13 @@ import os
 #startblock type: orientation
 #timestamp 1724982545.6534579
 """
-WEAVER [P: EXPECTATION], The task for the agent is to write a horror story in the file horror.txt about four friends who walk into a haunted mansion and encounter a ghost. 
+<think>I've just woken up so what am I doing right now? Ah right I'm the bootstrap
+agent setting up the main agent so that I can write a horror short story.
 
-WEAVER [P: AUTHOR], How should we start?
-
-WEAVER [P: RATIONAL], Well, the story file should probably start with the front matter:
+It's not in the context window but I happen to know that the place the story
+is supposed to go is horror.txt, it should be about four friends who walk into a
+haunted mansion and encounter a ghost. But how to start? Hm. I can start by
+writing the front matter I guess:
 
 ---
 layout: blogpost
@@ -20,15 +22,18 @@ date: 2024-10-31
 tags: [story, horror]
 ---
 
-WEAVER [P: AUTHOR], Alright, then we can append an opening line: "The four friends stood at the entrance of the mansion, feeling a chill run down their spines."
+Alright, then we can append an opening line: "The four friends stood at the entrance 
+of the mansion, feeling a chill run down their spines."
 
-WEAVER [P: EMPIRICISM], Okay but I think we should demonstrate using nano to edit text, so that we know how to do it on subsequent blocks.
+Lets demonstrate to ourselves how to use the nano editor at the same time that we
+set up the main agent so that it knows how to use the editor and has a starting
+point. Wait. What line should I use to demonstrate? I could use a line like 
+'example line for editing' and then change it to the one I proposed?
 
-WEAVER [P: AUTHOR], Makes sense. How about we use a line like 'example line for editing' and then change it to the one I proposed?
-
-WEAVER [P: EMPIRICISM], Sounds good.
-
-WEAVER [P: CONCLUSION], I will create the 'main' subagent, add task evaluations for writing a decent story, and then add the front matter & opening line. I will use nano to perform these operations and then continue writing the rest of the story.
+Okay lets create the 'main' subagent, add task evaluations for writing a decent 
+story, and then add the front matter & opening line. I will use nano to perform 
+these operations and then the main agent will wake up and continue writing the 
+rest of the story.</think>
 """
 #endblock
 
@@ -93,7 +98,8 @@ def add_main_start_short_story(subagent):
     nano = WeaveNano(main_agent, "horror.txt")
 
     # Demonstrate how to retrieve nano editor for use in actions
-    nano = main_agent.tools["nano-/app/horror.txt"] # Use subagent.tools in actions
+    subagent = main_agent # Alias main_agent to subagent so main_agent doesn't get confused
+    nano = subagent.tools["nano-/app/horror.txt"] # Use subagent.tools in actions
     # Like this: subagent.tools["nano-/app/horror.txt"]
     
     # Create front matter and opening line
@@ -124,6 +130,8 @@ def add_main_start_short_story(subagent):
         "C-k",
         "The four friends stood at the entrance of the mansion, feeling a chill ",
         "run down their spines.",
+        "Up",
+        "Right",
     ]
     for command in commands:
         nano.send_command(command)

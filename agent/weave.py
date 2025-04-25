@@ -3,6 +3,7 @@
 """Samples from a language model using Weave tree search."""
 
 import argparse
+import re
 import json
 from functools import partial
 import heapq
@@ -170,7 +171,7 @@ get_scores_from_logits_mistral = partial(
 def get_score_from_completion(choice):
     p_yes, p_no, p_all = 0.0, 0.0, 0.0
     for token, logprob in choice.logprobs.top_logprobs[0].items():
-        token = token.lower().lstrip()
+        token = re.sub(r'^[^a-z]*', '', token.lower())
         prob = math.exp(logprob)
         p_all += prob
         if token.startswith("yes"):
@@ -247,7 +248,7 @@ def generate_outputs_openai(text, n_tokens, n=1):
 
 def generate_outputs_vllm(model_name, text, n_tokens, n=1, port=5000, stop=None):
     payload = {"n":n,
-               "temperature":0.5,
+               "temperature":1,
                "top_k":50,
                "repetition_penalty":1,
                "max_tokens": n_tokens,
@@ -446,7 +447,8 @@ async def evaluate_outputs_vllm(model_name, score_prompt_fns, texts, n=1, port=5
     async with aiohttp.ClientSession() as session:
         tasks = [process_text(session, port, model_name, score_prompt_fns, text, n) for text in texts]
         scores = await asyncio.gather(*tasks)
-        return torch.stack(scores).mean(dim=1)
+        mean_scores = torch.stack(scores).mean(dim=1)
+        return mean_scores
 
 async def bayes_process_text(session, port, model_name, parent_q, score_prompt_fns, text, n=1):
     posterior_prompts = [score_prompt_fn("", text) for score_prompt_fn in score_prompt_fns[1:]]

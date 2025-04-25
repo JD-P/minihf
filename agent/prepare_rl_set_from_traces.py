@@ -10,16 +10,71 @@ def init_worker(tokenizer_name):
     global tokenizer
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
-def apply_error_penalty(block):
-    if "outcome" not in block:
-        return 0
-    if block["outcome"]["error"] == "AssertionError":
-        return 0.25
-    elif block["outcome"]["error"]:
-        return 0.5
-    elif block["outcome"]["result"]:
-        return 0
+def process_trace_rewards(trace):
+    index_map = {block["index"]: i for i, block in enumerate(trace) if "index" in block}
     
+    # First pass - apply action outcome-based rewards
+    for i, block in enumerate(trace):
+        if "outcome" in block and block.get("type") == "action":
+            # Find preceding block that needs adjustment
+            preceding_types = ["orientation", "debug", "backtrack"]
+            preceding_idx = None
+            
+            # Walk backwards to find nearest eligible block
+            for j in range(i-1, -1, -1):
+                if trace[j].get("type") in preceding_types:
+                    preceding_idx = trace[j]["index"]
+                    break
+                if trace[j].get("type") == "orientation" and j != i-1:
+                    break
+
+            if preceding_idx is None:
+                continue
+            
+            # Check action failure
+            action_failed = False
+            if i+1 < len(trace) and trace[i+1].get("type") == "error":
+                action_failed = True
+
+            # Calculate adjustment
+            original_score = trace[index_map[preceding_idx]].get("score", 0.0)
+            if action_failed:
+                if original_score <= 2.0:
+                    adjustment = -0.1
+                elif 2 < original_score <= 3:
+                    adjustment = -0.1 - (original_score - 2) * 0.1
+                else:
+                    adjustment = -0.2 - (original_score - 3) * 0.1
+            else:
+                if original_score < 2:
+                    adjustment = 0.2
+                elif 2 <= original_score <= 3:
+                    adjustment = 0.1
+                elif 3 < original_score <= 4:
+                    adjustment = 0.01
+                elif 4 < original_score <= 5:
+                    adjustment = 0.001
+                else:
+                    adjustment = 0
+
+            trace[index_map[preceding_idx]]["score"] += adjustment
+
+    # Second pass - apply direct error penalties
+    for block in trace:
+        if "outcome" in block and block.get("score", 0) >= 0:
+            error = block["outcome"].get("error")
+            penalty = 0
+            if error == "AssertionError":
+                penalty = 0.25
+            # Punish hallucinated methods harder
+            elif error == "AttributeError":
+                penalty = 1.0
+            elif error:
+                penalty = 0.5
+            block["score"] = block["score"] - penalty
+    
+    return trace
+
 def process_block(task):
     trace, i = task
     block = trace[i]
@@ -50,48 +105,44 @@ def process_block(task):
         sample["prompt"] = context
         sample["completions"] = []
         block2 = block.copy()
-        block3 = block.copy()
         block2["body"] = block["candidates"][0][0]
         block2["score"] = block["candidates"][0][1]
-        block3["body"] = block["candidates"][-1][0]
-        block3["score"] = block["candidates"][-1][1]
         sample["completions"].append({
             "completion": render_block(block2),
             "reward": block2["score"]
         })
         sample["completions"].append({
-            "completion": render_block(block3),
-            "reward": block3["score"]
+            "completion": render_block(block),
+            "reward": block["score"]
         })
         return sample
     except Exception as e:
         print(f"Error processing block {i}: {e}")
         return None
+    
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("traces")
+    parser.add_argument("tokenizer")
+    parser.add_argument("--n", type=int, default=8)
+    args = parser.parse_args()
 
-parser = ArgumentParser()
-parser.add_argument("traces")
-parser.add_argument("tokenizer")
-parser.add_argument("--n", type=int, default=8, help="Number of processes to use")
-args = parser.parse_args()
+    tasks = []
+    for filename in os.listdir(args.traces):
+        if filename.endswith(".json"):
+            with open(os.path.join(args.traces, filename)) as f:
+                trace = json.load(f)
+            trace = process_trace_rewards(trace)
+            # Create tasks after reward propagation
+            for i, block in enumerate(trace):
+                if "candidates" in block:
+                    tasks.append((trace, i))
 
-tasks = []
-for filename in os.listdir(args.traces):
-    filepath = os.path.join(args.traces, filename)
-    if filepath.endswith(".json"):
-        with open(filepath) as infile:
-            trace = json.load(infile)
-        for i, block in enumerate(trace):
-            if "candidates" in block:
-                tasks.append((trace, i))
+    with Pool(args.n, initializer=init_worker, initargs=(args.tokenizer,)) as pool:
+        samples = list(filter(None, pool.map(process_block, tasks)))
 
-with Pool(processes=args.n, initializer=init_worker, initargs=(args.tokenizer,)) as pool:
-    results = pool.map(process_block, tasks)
+    random.shuffle(samples)
 
-samples = [result for result in results if result]
-random.shuffle(samples)
-
-with open("rl_tuning_set.json", "w") as outfile:
-    for sample in samples:
-        outfile.write(json.dumps(sample) + "\n")
-    outfile.flush()
-
+    with open("rl_tuning_set.json", "w") as f:
+        for sample in samples:
+            f.write(json.dumps(sample) + "\n")
