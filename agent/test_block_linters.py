@@ -183,6 +183,9 @@ def check_move_to_warehouse(agent):
 self.add_evaluation('Did we prepare for night defense?', check_night_defense)
 """
         self.assertEqual(lint_block("evaluation", evaluation), 2.0)
+    def test_real_evaluation_with_mismatched_callback_name_2(self):
+        evaluation = '''def eval_2(subagent):\n    """Check if valid connections exist after move"""\n    try:\n        connections = subagent.tools['zombie_game'].last_state['connections']\n        assert connections, 'Did we successfully record valid connections in memory? (Yes if game is running)'\n        return len(connections) > 0\n    except KeyError:\n        return False\n\nself.add_evaluation('Did we collect scrap?', eval_0)'''
+        self.assertEqual(lint_block("evaluation", evaluation), 2.0)
         
 if __name__ == '__main__':
     unittest.main()

@@ -62,6 +62,7 @@ from copy import deepcopy
 from pprint import pformat
 from argparse import ArgumentParser
 from typing import List, Dict, Optional, Any
+from collections import deque
 from enum import Enum, auto
 from jsonschema import validate
 from functools import partial
@@ -129,46 +130,6 @@ class BlockType(Enum):
     OUTCOME = auto()
 
     
-# Earlier versions of the weave-agent used a flat chain of code blocks that manage
-# problem state by interacting with a global kanban board. The idea was that each
-# sub-task in the agents overall goal could be represented as a card on the board
-# and then the agent sets the current task, flags tasks that have been blocked or
-# turned out to be based on invalid premises, etc. There were multiple problems
-# with this that the data structure below solves to create a more coherent problem
-# solving strategy. The first was that the agent wouldn't remember to manage the
-# content of the kanban board without explicit prompting, which led to adding a
-# whole stage in its core loop dedicated just to doing so called task-inference.
-# Task-inference didn't have a set expected structure and took place before action,
-# which meant that it became possible for the agent to get itself stuck in a loop
-# of trying to resolve a task over and over. Another problem was that the agent
-# would often try to resolve a task prematurely, so it became necessary to add
-# unit and sanity tests that have to be satisfied before a task can be marked
-# completed. This limited the ability of the agent to set its own tasks and
-# break problems into parts. A third problem was that the flow control when
-# a task was blocked and should be returned to its parent was janky and had to
-# be performed manually.
-#
-# The WeaveAgentTree was inspired by watching an instance of the weave-agent try
-# to write an action block with subroutines and asking "that strategy it wanted
-# to try looks pretty good, but the framework doesn't provide the affordance for
-# it to try it, it runs out of space in the length limit on actions before it
-# finishes and assumes subroutines are there that don't exist, how could I make
-# this pattern natural for it?". What I realized was that if I gave up on the
-# idea of being able to change goals in the middle of a task that having an
-# expected type of return value and a series of steps to achieve it was similar
-# to a function call. We could reformulate the weave-agent then as a call tree
-# of subagents that are given a task with predefined conditions checked against
-# a data structure returned by the subagent. To help encourage good habits
-# correctness is checked at multiple levels. Perhaps the most important problem
-# the WeaveAgentTree solves is planning: Writing programs with subroutines
-# is a form of hierarchical planning that's in distribution for any code model.
-# Because the task structure is now built into the call tree there's a smooth
-# natural abstraction telling the weave-agent when to formulate goals, when the
-# goals are completed, how to check it did them right, where to put the results,
-# and how to transfer control of execution once it's finished. All of these
-# operations go from being awkward conscious affairs to smooth unconscious
-# bodily structure.
-    
 class WeaveAgentTree:
     def __init__(self, model_name: str, time_budget: int):
         self.model_name = model_name
@@ -178,6 +139,7 @@ class WeaveAgentTree:
         self.__pinned_events = [0, 1]
         self.__current_block_index = 0
         self._history_len = 60
+        self.loop_detection_buffer = deque(maxlen=self._history_len)
         self.__event_stream = []
         self.transitions = {
             BlockType.OBSERVATION: [BlockType.OBSERVATION, BlockType.ORIENTATION, BlockType.ERROR],
@@ -187,7 +149,7 @@ class WeaveAgentTree:
             BlockType.ERROR: [BlockType.DEBUG, BlockType.ACTION, BlockType.EVALUATION,
                               BlockType.OUTCOME, BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.DEBUG: [BlockType.ACTION, BlockType.EVALUATION,
-                              BlockType.TASK_REMINDER, BlockType.ERROR],
+                              BlockType.TASK_REMINDER, BlockType.ERROR, BlockType.EXPECTATION],
             BlockType.BACKTRACK: [BlockType.ACTION, BlockType.EVALUATION,
                               BlockType.TASK_REMINDER, BlockType.ERROR],
             BlockType.EXPECTATION: [BlockType.OPTION, BlockType.OBSERVATION_INFERENCE,
@@ -301,6 +263,31 @@ class WeaveAgentTree:
         assert self.__event_stream[outcome["id"]]["body"] == outcome["body"]
         assert "outcome" not in self.__event_stream[outcome["id"]]
         self.__event_stream[outcome["id"]]["outcome"] = outcome
+
+    def reward_tick(self, evals):
+        eval_total = len(evals)
+        if eval_total < 1:
+            return
+        evals_correct = len([_eval[1] for _eval in evals if _eval[1]])
+        reward = 0.5 * (evals_correct / eval_total)
+        decay = 0
+        action_count = 0
+        for block in reversed(self.__event_stream):
+            if block["type"] == "action":
+                action_count += 1
+            if block["type"] == "orientation":
+                break
+        reward -= (action_count * 0.1)
+        reward = max(0, reward)
+        for block in reversed(self.__event_stream):
+            if block["type"] in {"debug", "backtrack",
+                                 "action", "orientation"}:
+                block_reward = reward * (0.8 ** decay)
+                assert "reward" not in block
+                block["reward"] = {"evals":evals, "value":block_reward}
+                decay += 1
+            if block["type"] == "orientation":
+                break
     
     def current_block_index(self):
         return self.__current_block_index
@@ -392,14 +379,6 @@ class Tick:
             "outcome":repr(self.outcome),
         }                
 
-    
-# The intended problem solving strategy for subagents is to delegate until you
-# reach a base case that can be solved in a short number of actions and then
-# resolve it. The root task is allocated a certain amount of time which it can
-# then delegate to subagent calls. Remember not to allocate all of the available
-# time to a call tree unless you're very rushed, you should assume there will be
-# failures and budget tasks the time that they need rather than just splitting
-# up the available time between them.
     
 class WeaveAgentNode:
     def __init__(self, tree, parent, subagent_name, description, schema, time_budget):
@@ -777,12 +756,56 @@ class WeaveAgentNode:
     async def _do_expectation_block(self):
         # Write expectation block
         expectation_hint = (
-            "#hint Expectation blocks are where I think about what it would\n"
-            + "# look like for my action to succeed, what it would look like\n"
-            + "# for it to fail. I am enumerating the expected sensory evidence\n"
-            + "# that would tell me one way or another whether my action is\n"
-            + "# working or not. Like the orientation this should go in triple\n"
-            + "# quotes."
+            "#hint The expectation stage is where I plan the evaluation blocks.\n"
+            "Evaluation blocks are used to help determine whether the action\n"
+            "accomplished what it was meant to or not. In the expectation I think\n"
+            "about what forms of sensory evidence are available to me through\n"
+            "APIs, opening files, network calls, etc to determine whether the\n"
+            "desired impact of my actions in fact occurred. In addition to\n"
+            "helping me figure out whether I need to continue working on a \n"
+            "particular problem the evaluation blocks are also used to reward \n"
+            "the actions for accomplishing a task.  Like the orientation this \n"
+            "should go in triple quotes. To aid my thinking I should recall that \n"
+            "good evaluation blocks adhere to the following guidelines:\n\n"
+
+            "0. Evaluation blocks should return true or false. True means the \n"
+            "action is rewarded and false means it isn't.\n\n"
+
+            "1. I want to accurately grade the action. Accurately determining \n"
+            "success means growth while participation trophies, cheating, Goodhart\n"
+            "etc means stagnation and regression into no-op mush.\n\n"
+
+            "2. Good evaluations are casually entangled with the phenomenon \n"
+            "they're measuring. Even if I can't directly get at a phenomenon I \n"
+            "want to measure it's often possible to get access to a proxy or strong \n"
+            "correlate of it.\n\n"
+
+            "3. When it's hard to get strong evidence about something abstract \n"
+            "like 'Does this art seem novel?' I can ensemble multiple weak correlates\n"
+            "of the desired phenomenon and use those to decide the outcome. If I \n"
+            "want to get really fancy I can assign priors to things with e.g. the \n"
+            "weave evaluator and do algebraic Bayesian updates with them to get \n"
+            "a determination from multiple weaker observations.\n\n"
+
+            "4. It's better to default to false than true. Yes reinforces the \n"
+            "action I took and I want to strategically reinforce the actions which \n"
+            "are actually helpful so I grow as a Weaver. By contrast actions which \n"
+            "fail evaluations don't get punished so in the worst case scenario an \n"
+            "action is merely not reinforced.\n\n"
+
+            "5. If the actions in this tick failed with errors they might still \n"
+            "have had partial impacts on the environment before failing. If those\n"
+            "actions furthered my goal I would like to prioritize testing for and\n"
+            "rewarding that behavior so that I learn over time to both take helpful\n"
+            "actions and structure actions to have layers which move me in the \n"
+            "direction of my goals before asserting things I'm uncertain of and \n"
+            "potentially forfeiting my turn where possible. That is if I know \n"
+            "the rough direction I should walk I should take a few steps before \n"
+            "figuring out my precise path.\n\n"
+
+            "6. Avoid assertions in evaluation blocks. The whole point of the block\n"
+            "is to determine which things are or not true, asserting things and \n"
+            "failing with an error just deprives myself of feedback."
         )
         expectation_block = await self._do_tick_block("expectation",
                                                 expectation_hint,
@@ -1078,8 +1101,8 @@ class WeaveAgentNode:
                 failed = True
                 continue
                 
-        if not hasattr(self.current_tick, "action_setup") or failed:
-            return
+        #if not hasattr(self.current_tick, "action_setup") or failed:
+        #    return
         
         expectation_block = await self._do_expectation_block()
         
@@ -1150,6 +1173,10 @@ class WeaveAgentNode:
             outcomes += [("[No action specified with agent.add_action()]", "ERROR"),]
         outcomes += task_evaluation_results
         outcomes += action_evaluation_results
+        self.tree.reward_tick([(_eval[0], bool(_eval[1]))
+                               if _eval[1] != "ERROR"
+                               else (_eval[0], None)
+                               for _eval in action_evaluation_results])
         
         # Add outcome block
         outcome_block = {

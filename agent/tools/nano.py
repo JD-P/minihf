@@ -62,12 +62,20 @@ Nano Cheat Sheet:
 '''"""
         except Exception as e:
             return f"Error getting Nano state: {str(e)}"
-
-    def send_command(self, command):
+        
+    def send_keys(self, command):
         """Send commands to Nano with proper timing"""
         # Special handling for control sequences
         self.pane.send_keys(command, enter=False)
         time.sleep(0.2)  # Nano needs time to process
+
+    def send_command(self, command):
+        """Alias of send_keys"""
+        self.send_keys(command)
+
+    def send_commands(self, commands):
+        for command in commands:
+            self.send_keys(command)
 
     def close(self):
         """Close the Nano session"""

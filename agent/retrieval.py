@@ -211,6 +211,7 @@ class ModernBertRag:
             JOIN blocks ON block_embeddings.rowid = blocks.rowid
             WHERE block_embeddings.embedding MATCH json(?)
             AND blocks.timestamp < ?
+            AND score > 2
             AND k = ?
             ORDER BY distance
             

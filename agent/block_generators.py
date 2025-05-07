@@ -86,36 +86,75 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
             stems = infile.readlines()
             stem = random.choice(stems)
             prefix += stem
-    elif block_type in {"expectation", "task-inference", "observation_inference"}:
+    elif block_type in {"expectation"}:
+        prefix = '"""<think>'
+    elif block_type in {"task-inference", "observation_inference"}:
         prefix = '"""'
-    elif block_type in {"action", "evaluation"}:
-        prefix = "def "
+    elif block_type in {"action"}:
+        prefix = "def action_"
+    elif block_type in {"evaluation"}:
+        prefix = "def eval_"
     else:
         prefix = ""
     prompt += prefix
     return prompt, prefix
 
-async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_questions):
-    def is_valid_syntax(code):
-        try:
-            ast.parse(code)
-            return True
-        except SyntaxError as e:
-            error_position = e.offset
-            code_length = len(code)
-            if code_length - error_position > 50:
-                return False
-            else:
-                return True
-
-    def is_valid_syntax2(code):
-        try:
-            compile(code, filename="candidate_block", mode="exec")
-            return True
-        except Exception as e:
-            print(e)
+def is_valid_syntax(code):
+    try:
+        ast.parse(code)
+        return True
+    except SyntaxError as e:
+        error_position = e.offset
+        code_length = len(code)
+        if code_length - error_position > 50:
             return False
+        else:
+            return True
 
+def is_valid_syntax2(code):
+    try:
+        compile(code, filename="candidate_block", mode="exec")
+        return True
+    except Exception as e:
+        print(e)
+        return False
+
+async def evaluate_fn(self, block_type, prefix, prompt,
+                      texts, eval_questions, port=5001, raw=False):
+    score_prompt_fns = []
+    # TODO: Use the full set of questions somehow?
+    score_prompt_fns.append(make_simple_score_prompt(eval_questions[0])) 
+    score_fn = partial(evaluate_outputs_vllm,
+                       self.model_name,
+                       score_prompt_fns,
+                       port=port)
+    full_texts = [prompt + prefix + text for text in texts]
+    scores = await score_fn(full_texts)
+    scores = torch.tensor([0 if math.isnan(score) else score for score in scores])
+    # TODO: Separate penalties into separate features in block so I can
+    # reweigh/rescore later
+    syntax_penalties = torch.tensor([0 if is_valid_syntax2(prefix + text) else -2
+                                     for text in texts])
+    lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text)
+                                   for text in texts])
+    last_debug_block = self.tree.find_last_block_of_type("debug")
+    if last_debug_block and last_debug_block["index"] == (self.tree.current_block_index() - 1):
+        length_penalties = torch.tensor([
+            max(0, len(self.tree.tokenizer(text)["input_ids"]) - 96) * (0.5 / 672)
+            for text in texts
+        ])
+    else:
+        length_penalties = torch.tensor([0 for text in texts])
+    # Punish adversarial examples harder
+    for i, text in enumerate(texts):
+        if syntax_penalties[i] == -2 and scores[i] > 4:
+            syntax_penalties[i] = (-2 - scores[i])
+    if raw:
+        return scores
+    else:
+        return scores + syntax_penalties + lint_penalties + length_penalties  
+
+async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_questions):
     if self.block_size == "full":
         block_size = 768
     elif self.block_size == "half":
@@ -124,33 +163,7 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
         block_size = 768 // 4
     else:
         raise ValueError("Agent's block_size parameter was not one of "
-                         "['full', 'half', 'quarter']")
-        
-    score_prompt_fns = []
-    # TODO: Use the full set of questions somehow?
-    score_prompt_fns.append(make_simple_score_prompt(eval_questions[0]))
-
-    async def evaluate_fn(prompt, texts, raw=False):
-        score_fn = partial(evaluate_outputs_vllm,
-                           self.model_name,
-                           score_prompt_fns,
-                           port=port)
-        full_texts = [prompt + prefix + text for text in texts]
-        scores = await score_fn(full_texts)
-        scores = torch.tensor([0 if math.isnan(score) else score for score in scores])
-        syntax_penalties = torch.tensor([0 if is_valid_syntax2(prefix + text) else -2
-                                         for text in texts])
-        lint_penalties = torch.tensor([-1 * lint_block(block_type, prefix + text)
-                                       for text in texts])
-        # Punish adversarial examples harder
-        for i, text in enumerate(texts):
-            if syntax_penalties[i] == -2 and scores[i] > 4:
-                syntax_penalties[i] = (-2 - scores[i])
-        if raw:
-            return scores
-        else:
-            return scores + syntax_penalties + lint_penalties            
-
+                         "['full', 'half', 'quarter']")        
 
     port = 5001
     stopstrings = ["\n#q: ", "\n# q:", "#endblock", "#startblock", "</s>", "[/INST]"]
@@ -177,12 +190,14 @@ async def rejection_sample_block(self, block_type, prefix, prompt, n, eval_quest
             stop=stopstrings
         )
     try:
-        scores = await evaluate_fn(prompt, candidates)
+        scores = await evaluate_fn(self, block_type, prefix,
+                                   prompt, candidates, eval_questions)
     except (aiohttp.client_exceptions.ClientConnectionResetError,
             aiohttp.client_exceptions.ClientOSError,
             aiohttp.client_exceptions.ConnectionTimeoutError):
         await asyncio.sleep(60)
-        scores = await evaluate_fn(prompt, candidates)
+        scores = await evaluate_fn(self, block_type, prefix,
+                                   prompt, candidates, eval_questions)
     candidate_scores = [item for item in zip(candidates, scores)]
     candidate_scores.sort(key=lambda pair: pair[1].item())
     return [(prefix + candidate[0].strip(), candidate[1].item())
@@ -274,12 +289,17 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
                                                   64,
                                                   eval_questions)
         program, score = candidates[-1]
+    scores = torch.tensor([candidate[1] for candidate in candidates])
+    sample_indices = torch.multinomial(torch.softmax(scores, dim=-1), 4)
+    samples = [candidates[index] for index in sample_indices]
+    program, score = samples[0]
+    samples = samples[1:]
+    random.shuffle(samples)
     block = {"type":block_type,
              "body":program,
              "q":eval_questions[0],
              "score":score,
-             "candidates":[candidates[0], candidates[1],
-                           candidates[-2], candidates[-1]]}
+             "candidates":samples}
     try:
         compile(program, f"block_{self.tree.current_block_index()}", "exec")
     except Exception as e:
@@ -301,11 +321,10 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
             f"add_{block_type}"
         )
         block["body"] = callback + "\n\n" + registration
-    #raw_score = await evaluate_fn(
-    #    [prompt[:len(prompt) - len(prefix)] + block["body"],],
-    #    raw=True
-    #)
-    #block["raw_score"] = raw_score[0].item()
+    raw_score = await evaluate_fn(self, block_type, "",
+                                  prompt, [block["body"],],
+                                  eval_questions, raw=True)
+    block["raw_score"] = raw_score[0].item()
     block = self.add_block(block)
     rprint(f"Finished writing block #[cyan]{self.tree.current_block_index()-1}[/cyan] of type [cyan]{block_type}[/cyan] with score [cyan]{score}[/cyan]")
     print(block["body"])

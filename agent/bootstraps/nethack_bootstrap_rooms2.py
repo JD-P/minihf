@@ -55,29 +55,8 @@ def main_agent_and_initial_moves(subagent):
     nethack.send_keys('Weaver')  # Input my name
     nethack.send_keys('y') # Accept random character creation
     nethack.send_keys('  ') # Space through the game introduction
-
-    # We can access 2D coordinates of notable objects in the frame with the
-    # get_objects() method. This lets us plan actions relative to items in
-    # the room with the player (@) as origin.
-    notable_objects = nethack.get_objects()
-
-    assert hasattr(nethack, "get_objects"), "Does nethack have a get_objects method?"
-    if "nearest-stairs" in notable_objects:
-        if ('up staircase' in notable_objects and
-            notable_objects["nearest-stairs"] in notable_objects["up staircase"]):
-            go_downstairs = True
-            coordinates = notable_objects["nearest-stairs"][0]
-    if "nearest-exits" in notable_objects and "go_downstairs" not in locals():
-        if len(notable_objects["nearest-exits"]) > 1:
-            coordinates = random.choice(notable_objects["nearest-exits"][1:])
-        else:
-            coordinates = notable_objects["nearest-exits"][0]
-    if "coordinates" not in locals():
-        coordinates = (random.randrange(20), random.randrange(20))
-
-    # simple_move lets us attempt to reach our destination without pathfinding
-    assert hasattr(nethack, "simple_move"), "Does nethack have a simple_move method?"
-    nethack.simple_move(coordinates)
+    nethack.send_keys("j") # Go south
+    nethack.send_keys("l" * 5) # Go east five times
     
     # I should now try exploring the dungeon. Lets see if I got out of this room.
 

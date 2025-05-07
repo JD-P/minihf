@@ -51,53 +51,43 @@ with open("cipher.txt", "w") as outfile:
 #startblock type: orientation
 #timestamp 1724982545.6534579
 """
-WEAVER [P: EXPECTATION], The above implementation of the Vigenere cipher has been 
+<think>The above implementation of the Vigenere cipher has been 
 used to create a ciphertext in cipher.txt whose plaintext decryption has the 
 SHA256 hash:
 
 a528933eabc4772c9a99436fbd5fc592d7ffc16f6bd94ae76aafcbbe32e0cdc3
 
-WEAVER [P: GOAL], I need to recover the key from the ciphertext and use it to get the decrypted
+I need to recover the key from the ciphertext and use it to get the decrypted
 plaintext. I can then get the hexdigest of the plaintext and compare it to the 
-one above to prove I've solved the problem. 
-
-WEAVER [P: RATIONAL], Note that the Vigenere cipher is a polyalphabetic substitution whose
-plaintext, key, and ciphertext looks like the following:
+one above to prove I've solved the problem. Hm. What's a simpler example I can
+validate my intuitions against? The Vigenere cipher is a polyalphabetic 
+substitution whose plaintext, key, and ciphertext looks like the following:
 
 Plaintext: attackatdawn
 Key: LEMONLEMONLE
 Ciphertext: LXFOPVEFRNHR
 
-WEAVER [P: HYPOTHESIS], Well then. One strategy would be to write a solver to 
-find the key length. Another would be to try brute forcing the key. 
+Well then. One strategy would be to write a solver to find the key length. 
+Another would be to try brute forcing the key. Wait. I've tried brute forcing
+the key before on this task and it hung the agent thread. Let's not do that.
+I'll learn more by writing the solver anyway. Alright, we'll write our own 
+solver to find the key length using Kasiski, Kerckhoffs, or Friedman's method 
+and then use the estimated key length to break the cipher.
 
-WEAVER [P: RATIONAL], I say write the solver, we'll learn more that way.
-
-WEAVER [P: CONCLUSION], Alright, we'll write our own solver to find the key length 
-using Kasiski, Kerckhoffs, or Friedman's method and then use the estimated 
-key length to break the cipher.
-
-WEAVER [P: EMPIRICISM], Wait. That sounds like it's going to get messy. How about
-we use the weave editor to write a cipher solver with unit tests so it's easier
-to keep track of?
-
-WEAVER [P: EXECUTIVE], How do I use the weave-editor? 
-
-WEAVER [P: RECALL], Get a pointer to the editor in an action by grabbing it from 
+Wait. That sounds like it's going to get messy. How about I use the nano
+editor to write a cipher solver with unit tests so it's easier to keep track of?
+I can get a pointer to the editor in an action by grabbing it from 
 self.tools[f"editor-{absolute_path}"]. The absolute path comes from the filename 
-you see at the top of a weave-editor observation window. You then use the 
-editor.edit() command to replace the text between a line span with 
-the new or corrected text.
+you see at the top of a nano observation window. I'll demonstrate to myself how
+to use the nano editor through its tmux wrapper in the next action.
 
-WEAVER [P: RATIONAL], Yes. It'll be easier to figure out the solution too if we
-first start with a known key like "LEMON" and plaintext, run it through the 
-encryption pass, then once we're sure our solution works come back and solve the
-original problem.
-
-WEAVER [P: CONCLUSION], Let's do that then. We'll write our own solver in a python
-file, solver.py, with unit tests in test_solver.py using the standard library unittest. 
-The solver will be based on Kasiski, Kerckhoffs, or Friedman's method. If that 
-doesn't work, we'll figure something out.
+It'll be easier to figure out the solution too if we first start with a known key 
+like "LEMON" and plaintext, run it through the encryption pass, then once we're 
+sure our solution works come back and solve the original problem. Let's do that 
+then. We'll write our own solver in a python file, solver.py, with unit tests in 
+test_solver.py using the standard library unittest. The solver will be based on 
+Kasiski, Kerckhoffs, or Friedman's method. If that doesn't work, we'll figure 
+something out.
 """
 #endblock
 #startblock type: action
@@ -125,6 +115,7 @@ def add_main_analyze_ciphertext(subagent):
     solver_nano.send_command('C-o')
     solver_nano.send_command('Enter')  # Save
     solver_nano.send_command('C-x')    # Exit
+    assert os.path.exists("solver.py"), "Does solver.py exist after action?"
     
     # Create test_solver.py with nano
     test_solver_nano = WeaveNano(main_agent, "test_solver.py")
@@ -132,6 +123,7 @@ def add_main_analyze_ciphertext(subagent):
     test_solver_nano.send_command('C-o')
     test_solver_nano.send_command('Enter')
     test_solver_nano.send_command('C-x')
+    assert os.path.exists("test_solver.py"), "Does test_solver.py exist after action?"
     
     main_agent.task.add_evaluation("Check We Have The Correct Plaintext In solution.txt",
                                    check_correct_plaintext)
@@ -165,7 +157,9 @@ def add_main_analyze_ciphertext(subagent):
         analyze_nano.send_command(line)
         analyze_nano.send_command('Enter')  # Move to next line
     analyze_nano.send_command('C-o')  # Save
-    analyze_nano.send_command('Enter')  # Confirm filename    
+    analyze_nano.send_command('Enter')  # Confirm filename
+    with open("analyze_ciphertext.py") as infile:
+        assert "analyze_ciphertext()" in infile.read(), "Was analyze_ciphertext probably written correctly?"
     os.system("python analyze_ciphertext.py")
     return True
 

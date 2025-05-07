@@ -109,6 +109,21 @@ class WeaveNethack:
            hallucinating exists."""
         self.send_keys(command)
 
+    def simple_move(self, coordinates):
+        x_move, y_move = coordinates
+        keys = ""
+        if x_move > 0:
+            keys += "l" * x_move
+        elif x_move < 0:
+            keys += "h" * (-1 * x_move)
+        if y_move > 0:
+            keys += "k" * y_move
+        elif y_move < 0:
+            keys += "j" * (-1 * y_move)
+        if "go_downstairs" in locals():
+            keys += ">"
+        self.send_keys(keys)
+        
     def close(self):
         """Close the Nethack session."""
         self.session.kill_session()

@@ -28,7 +28,7 @@ class EmbeddingProcessor:
             low_cpu_mem_usage=True
         ).to(self.device).eval()
         
-        self.max_batch_size = 16
+        self.max_batch_size = 4
         self.batch_timeout = 0.1
         self.queue = Queue()
         self.stop_event = False
@@ -162,4 +162,7 @@ async def shutdown_event():
     processor.shutdown()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5002)))
+    uvicorn.run(app,
+                host="0.0.0.0",
+                port=int(os.getenv("PORT", 5002)),
+                log_level="debug")
