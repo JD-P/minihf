@@ -13,6 +13,7 @@ def generate_outcome_table(evaluation_results):
 
 def render_block(event_block, tags=True):
     defunct_body_keys = {
+        "genesis":"program",
         "bootstrap":"program",
         "observation":"content",
         "orientation":"program",

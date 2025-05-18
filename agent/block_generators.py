@@ -290,10 +290,19 @@ async def generate_block_inner(self, block_type, context, eval_questions, weave_
                                                   eval_questions)
         program, score = candidates[-1]
     scores = torch.tensor([candidate[1] for candidate in candidates])
-    sample_indices = torch.multinomial(torch.softmax(scores, dim=-1), 4)
+    program_index = torch.multinomial(torch.softmax(scores, dim=-1), 1)
+    program, score = candidates[program_index]
+    # Remove candidate so we can sample just its neighbors
+    scores = [score.item() for score in scores]
+    del(scores[program_index])
+    scores = torch.tensor(scores)
+    inverse_scores = torch.tensor([score.item() * -1 for score in scores])
+    # Flip a coin to determine whether we take neighbors from high or low range
+    if random.randrange(2):
+        sample_indices = torch.multinomial(torch.softmax(inverse_scores, dim=-1), 3)
+    else:
+        sample_indices = torch.multinomial(torch.softmax(scores, dim=-1), 3)
     samples = [candidates[index] for index in sample_indices]
-    program, score = samples[0]
-    samples = samples[1:]
     random.shuffle(samples)
     block = {"type":block_type,
              "body":program,

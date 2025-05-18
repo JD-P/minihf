@@ -2,9 +2,33 @@ import os
 import random
 import json
 from argparse import ArgumentParser
+from itertools import islice
 from multiprocessing import Pool
 from transformers import AutoTokenizer
 from render_block import render_block
+
+def batched(iterable, n):
+    "Batch data into tuples of length n. The last batch may be shorter."
+    # batched('ABCDEFG', 3) --> ABC DEF G
+    if n < 1:
+        raise ValueError("n must be at least one")
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch
+
+def extract_chunks(tokenizer_name, traces_path):
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    chunks = []
+    for filename in os.listdir(traces_path):
+        infile_path = os.path.join(traces_path, filename)
+        with open(infile_path) as infile:
+            blocks = json.load(infile)
+        trace_text = ""
+        for block in blocks:
+            trace_text += render_block(block)
+        chunk_tokens = list(batched(tokenizer(trace_text)["input_ids"], 48000))[:-1]
+        chunks += [tokenizer.decode(tokens) for tokens in chunk_tokens]
+    return chunks
 
 def init_worker(tokenizer_name):
     global tokenizer
@@ -72,6 +96,11 @@ def process_trace_rewards(trace):
             elif error:
                 penalty = 0.5
             block["score"] = block["score"] - penalty
+
+    # Apply rewards from evaluations
+    for block in trace:
+        if "reward" in block:
+            block["score"] += block["reward"]["value"]
     
     return trace
 
@@ -124,6 +153,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("traces")
     parser.add_argument("tokenizer")
+    parser.add_argument("--bad-traces")
     parser.add_argument("--n", type=int, default=8)
     args = parser.parse_args()
 
@@ -141,6 +171,27 @@ if __name__ == "__main__":
     with Pool(args.n, initializer=init_worker, initargs=(args.tokenizer,)) as pool:
         samples = list(filter(None, pool.map(process_block, tasks)))
 
+    if args.bad_traces:
+        good_chunks = extract_chunks(args.tokenizer, args.traces)
+        bad_chunks = extract_chunks(args.tokenizer, args.bad_traces)
+        random.shuffle(good_chunks)
+        random.shuffle(bad_chunks)
+        chunk_train_pairs = zip(good_chunks, bad_chunks)
+        for pair in chunk_train_pairs:
+            good, bad = pair
+            sample = {}
+            sample["prompt"] = ""
+            sample["completions"] = []
+            sample["completions"].append({
+                "completion":good,
+                "reward":10,
+            })
+            sample["completions"].append({
+                "completion":bad,
+                "reward":0,
+            })
+            samples.append(sample)
+        
     random.shuffle(samples)
 
     with open("rl_tuning_set.json", "w") as f:
