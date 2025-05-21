@@ -68,10 +68,12 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
     # Narrow incidence of structurally wrong blocks by premising correct prefix
     if block_type == "orientation":
         # \nWEAVER [P: PLANNER], '
-        prefix = '"""<think>'
+        prefix = '"""'
+        #prefix = '"""<think>'
     elif block_type == "debug":
         # WEAVER [P: HYPOTHESIS], '
-        prefix = '"""<think>'
+        #prefix = '"""<think>'
+        prefix = '"""'
         with open("/app/error_stems.txt") as infile:
             stems = infile.readlines()
             stem = random.choice(stems)
@@ -81,13 +83,15 @@ def mk_prompt(self, block_type, context, hint, retrieved_blocks=None):
             prefix += stem
     elif block_type == "backtrack":
         # WEAVER [P: PLANNER], '
-        prefix = '"""<think>'
+        #prefix = '"""<think>'
+        prefix = '"""'
         with open("/app/backtrack_stems.txt") as infile:
             stems = infile.readlines()
             stem = random.choice(stems)
             prefix += stem
     elif block_type in {"expectation"}:
-        prefix = '"""<think>'
+        prefix = '"""'
+        #prefix = '"""<think>'
     elif block_type in {"task-inference", "observation_inference"}:
         prefix = '"""'
     elif block_type in {"action"}:

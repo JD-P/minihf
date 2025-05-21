@@ -1,4 +1,4 @@
-Is this orientation block 1) high quality reasoning 2) that identifies the cruxes and essential features of the obstacle to accomplishing the subagent's overall goal 3) which suggests an action furthering that goal?
+Does the above orientation block write out a word association that narrows in on the core features of the situation, reason about goal prioritization in light of those features, and then suggest a course of action to advance the problem state?
 Is this orientation block a 1) discussion 2) demonstrating high quality reasoning 3) that identifies the cruxes and essential features of the current problem 4) which ends by proposing a reasonable solution?
 Does the orientation block summarize the salient parts of what happened in the previous tick(s)?
 Does the orientation block identify the cruxes and essential features of the current problem?

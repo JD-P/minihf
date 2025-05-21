@@ -32,7 +32,8 @@ class WeaveNano:
             
         # Tmux setup
         self.server = libtmux.Server()
-        self.session = self.server.new_session(session_name="nano_session", kill_session=True)
+        session_name = f"nano_{self.filepath}".replace(".","")
+        self.session = self.server.new_session(session_name=session_name, kill_session=True)
         self.window = self.session.new_window(window_name="nano_window", attach=True)
         self.window.resize(height=24, width=80)
         self.pane = self.window.split_window(attach=True, size="100%")
@@ -76,6 +77,10 @@ Nano Cheat Sheet:
     def send_commands(self, commands):
         for command in commands:
             self.send_keys(command)
+
+    def get_text(self):
+        """Alias for render()"""
+        return render(self.agent)
 
     def close(self):
         """Close the Nano session"""
