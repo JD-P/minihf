@@ -52,9 +52,9 @@ class DiscordBotServer:
 
             # Load message history on startup
             if self.channel:
-                # Fetch last 50 messages (adjust limit as needed)
+                # Fetch last 10 messages (adjust limit as needed)
                 messages = []
-                async for msg in self.channel.history(limit=50):
+                async for msg in self.channel.history(limit=10):
                     messages.append(msg)
                 # Store messages in chronological order
                 self.messages.extend(reversed(messages))

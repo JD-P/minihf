@@ -188,7 +188,7 @@ def compute_callback_structure_penalty(candidate_string, slot_name):
     assert_penalty = 0
     if slot_name == "add_evaluation":
         if visitor.assert_count > 0:
-            assert_penalty += 0.5
+            assert_penalty += 0.3 * visitor.assert_count
     
     if slot_name == "add_action":
         assert_penalty = 0.0

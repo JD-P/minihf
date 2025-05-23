@@ -47,19 +47,25 @@ class WeaveNano:
         try:
             content = ''
             for i, line in enumerate(self.pane.capture_pane(start=0, end="-")):
-                content += f"{i+1}. | {line}\n"
+                content += line + "\n"
+                #if i < 3:
+                #    content += line + "\n"
+                #elif i > 18:
+                #    content += line + "\n"
+                #else:
+                #    content += f"{i-2}. | {line}\n"
             content = content[:-1]
             return f"""'''Nano Editor State:
 {content}
 -----------------
 Nano Cheat Sheet:
-  Ctrl+O - Save
-  Ctrl+X - Exit
-  Ctrl+K - Cut line
-  Ctrl+U - Paste
-  Ctrl+W - Search
-  Ctrl+\\ - Replace
-  Ctrl+G - Help
+  C-o - Save
+  C-x - Exit
+  C-k - Cut line
+  C-u - Paste
+  C-w - Search
+  C-\\ - Replace
+  C-g - Help
 '''"""
         except Exception as e:
             return f"Error getting Nano state: {str(e)}"
@@ -78,7 +84,7 @@ Nano Cheat Sheet:
         for command in commands:
             self.send_keys(command)
 
-    def get_text(self):
+    def get_screen_text(self):
         """Alias for render()"""
         return render(self.agent)
 
