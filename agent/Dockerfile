@@ -54,4 +54,4 @@ EXPOSE 5001
 ENV NAME World
 
 # Run the agent script when the container launches
-CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/nano_practice_bootstrap_easy.py" $MODEL --tokenizer $TOKENIZER & python -m http.server 8991 --directory "/app/weave-agent-logs/"
+CMD python weave_agent.py --port 5001 --bootstrap "bootstraps/nano_exercises_bootstrap.py" $MODEL --tokenizer $TOKENIZER & python -m http.server 8991 --directory "/app/weave-agent-logs/"

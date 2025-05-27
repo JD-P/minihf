@@ -1,0 +1,52 @@
+# Nano Editor Practice Exercises
+# Make a file with the nano editor that satisfies the property in the docstring
+
+# Exercise 17
+def test_file_every_line_starts_with_number(subagent) -> bool:
+    """A file where every line starts with a number (e.g., "1. First", "2. Second")."""
+    try:
+        with open("exercise17.txt", 'r') as f:
+            lines = f.readlines()
+            for line in lines:
+                stripped_line = line.lstrip()
+                if not stripped_line or not stripped_line[0].isdigit():
+                    return False
+            return True
+    except FileNotFoundError:
+        return False
+
+# Exercise 18
+def test_file_line5_error_line10_success(subagent) -> bool:
+    """A file where the fifth line contains "ERROR" and the tenth line contains "SUCCESS"."""
+    try:
+        with open("exercise18.txt", 'r') as f:
+            lines = f.readlines()
+            return (
+                len(lines) >= 10 and
+                "ERROR" in lines[4].split() and
+                "SUCCESS" in lines[9].split()
+            )
+    except FileNotFoundError:
+        return False
+
+# Exercise 19
+def test_file_exactly_100_chars_ends_with_period(subagent) -> bool:
+    """A file exactly 100 characters long, ending with a period."""
+    try:
+        with open("exercise19.txt", 'r') as f:
+            content = f.read()
+            return len(content) == 100 and content.endswith('.')
+    except FileNotFoundError:
+        return False
+
+# Exercise 20
+def test_file_hello_world_middle_of_7_lines(subagent) -> bool:
+    """A file with "Hello, World!" on the middle line of a 7-line document."""
+    try:
+        with open("exercise20.txt", 'r') as f:
+            lines = [line.rstrip('\n') for line in f.readlines()]
+            return len(lines) == 7 and lines[3] == "Hello, World!"
+    except FileNotFoundError:
+        return False
+
+# Exercise {iteration}
