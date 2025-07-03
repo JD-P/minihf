@@ -39,10 +39,6 @@ class LoomTree {
 
     createNode(type, parent, text, summary) {
 	const parentRenderedText = this.renderNode(parent);
-	// TODO: Make this work when the model does arbitrary edits
-	if (type == "gen") {
-	    text = parentRenderedText + text;
-	}
 	const patch = dmp.patch_make(parentRenderedText, text);
 	const newNodeId = String(Object.keys(this.nodeStore).length + 1);
 	const newNode = new Node(newNodeId, type, parent.id, patch, summary);
@@ -273,6 +269,7 @@ function renderTick() {
     loomTreeView.innerHTML = '';
     renderTree(focus, loomTreeView, 2);
     errorMessage.textContent = "";
+    updateCounterDisplay(editor.value);
 }
 
     function rotate(direction) {
@@ -342,7 +339,7 @@ async function getSummary(taskText) {
     // otherwise we eventually end up pushing the few shot prompt out of the context window
     const prompt = summarizePrompt + "\n\n" + "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
 
-    if (!["together", "openai"].includes(sampler.value)) {
+    if (!["together", "openai", "openai-chat"].includes(sampler.value)) {
 	r = await fetch(endpoint + "generate", {
 	    method: "POST",
 	    body: JSON.stringify({
@@ -360,6 +357,25 @@ async function getSummary(taskText) {
 	return batch[1]["text"].trim();
     } // TODO: Figure out how I might have to change this if I end up supporting
     // multiple APIs
+    else if (sampler.value == "openai-chat") {
+	r = await fetch(endpoint, {
+	    method: "POST",
+	    body: JSON.stringify({
+		messages: [{"role":"system", "content": prompt}],
+		model: document.getElementById('model-name').value,
+		max_tokens: 4,
+		temperature: document.getElementById('temperature').value,
+		"top_p": document.getElementById('top-p').value,
+		"top_k": document.getElementById('top-k').value,
+		"repetition_penalty": document.getElementById('repetition-penalty').value,
+	    }),
+	    headers: {
+		"Content-type": "application/json; charset=UTF-8"
+	    }
+	});
+	let batch = await r.json();
+	return batch.choices[0]["message"]["content"];
+    }
     else {
 	const tp = {
 	    "api-key": document.getElementById('api-key').value,
@@ -606,6 +622,9 @@ async function reroll(id, weave=true) {
     else if (sampler.value === "openai") {
 	togetherRoll(id, openai=true);
     }
+    else if (sampler.value === "openai-chat") {
+        await openaiChatCompletionsRoll(id);
+    }
 };
 
 async function baseRoll(id, weave=true) {
@@ -638,9 +657,10 @@ async function baseRoll(id, weave=true) {
     for (let i = 0; i < responses.length; i++) {
 	const response = responses[i];
 	const responseSummary = await getSummary(response["text"]);
+	const childText = loomTree.renderNode(rerollFocus) + response["text"];
 	const responseNode = loomTree.createNode("gen",
 						 rerollFocus,
-						 response["text"],
+						 childText,
 						 responseSummary);
 	loomTree.nodeStore[responseNode.id]["model"] = response["base_model"];
     }
@@ -702,9 +722,10 @@ async function vaeGuidedRoll(id) {
     for (let i = 0; i < responses.length; i++) {
 	const response = responses[i];
 	const responseSummary = await getSummary(response["text"]);
+	const childText = loomTree.renderNode(rerollFocus) + response["text"];
 	const responseNode = loomTree.createNode("gen",
 						 rollFocus,
-						 response["text"],
+						 childText,
 						 responseSummary);
     }
     focus = loomTree.nodeStore[rollFocus.children.at(-1)];
@@ -748,9 +769,10 @@ async function togetherRoll(id, openai=false) {
     for (let i = 0; i < newResponses.length; i++) {
 	response = newResponses[i];
 	const responseSummary = await delay(apiDelay).then(() => {return getSummary(response["text"])});
+	const childText = loomTree.renderNode(rerollFocus) + response["text"];
 	const responseNode = loomTree.createNode("gen",
 						 rollFocus,
-						 response["text"],
+						 childText,
 						 responseSummary);
 	loomTree.nodeStore[responseNode.id]["model"] = response["model"];
     }
@@ -758,76 +780,168 @@ async function togetherRoll(id, openai=false) {
     diceTeardown();
     renderTick();
 };
-			       
+
+// Add this function for OpenAI Chat Completions API calls
+async function openaiChatCompletionsRoll(id) {
+    diceSetup();
+    await autoSaveTick();
+    await updateFocusSummary();
+    const rollFocus = loomTree.nodeStore[id];
+    let promptText = loomTree.renderNode(rollFocus);
+    
+    try {
+        // Parse the JSON from the editor
+        let chatData = JSON.parse(promptText);
+        
+        if (!chatData.messages || !Array.isArray(chatData.messages)) {
+            throw new Error("Invalid chat format: messages array not found");
+        }
+        
+        const apiKey = document.getElementById('api-key').value;
+        const modelName = document.getElementById('model-name').value;
+        const temperature = parseFloat(document.getElementById('temperature').value);
+        const topP = parseFloat(document.getElementById('top-p').value);
+        const outputBranches = parseInt(document.getElementById('output-branches').value);
+        const tokensPerBranch = parseInt(document.getElementById('tokens-per-branch').value);
+                
+        // Prepare the API request
+        const requestBody = {
+            model: modelName,
+            messages: chatData.messages,
+            max_tokens: tokensPerBranch,
+            temperature: temperature,
+            top_p: topP,
+            n: outputBranches
+        };
+        
+        // Make the API call
+        const response = await fetch(document.getElementById('api-url').value, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`OpenAI API Error: ${errorData.error?.message || response.statusText}`);
+        }
+        
+        const responseData = await response.json();
+        
+        // Process each choice (for multiple outputs)
+        for (let i = 0; i < responseData.choices.length; i++) {
+            const choice = responseData.choices[i];
+            const assistantMessage = choice.message;
+            
+            // Create a new chat data object with the assistant's response
+            const newChatData = JSON.parse(JSON.stringify(chatData)); // Deep clone
+            newChatData.messages.push({
+                role: assistantMessage.role,
+                content: assistantMessage.content
+            });
+            
+            const newChatText = JSON.stringify(newChatData, null, 2);
+            
+            // Generate a summary for the new node
+            const summary = await getSummary(assistantMessage.content || "Assistant response");
+            
+            // Create the new node
+            const responseNode = loomTree.createNode("gen",
+                rollFocus,
+                newChatText,
+                summary);
+            
+            // Store metadata
+            loomTree.nodeStore[responseNode.id]["model"] = responseData.model;
+            loomTree.nodeStore[responseNode.id]["usage"] = responseData.usage;
+            loomTree.nodeStore[responseNode.id]["finish_reason"] = choice.finish_reason;
+        }
+        
+        // Focus on the last generated response
+        focus = loomTree.nodeStore[rollFocus.children.at(-1)];
+        
+    } catch (error) {
+        diceTeardown();
+        errorMessage.textContent = "Error: " + error.message;
+        console.error("OpenAI Chat Completions Error:", error);
+        return;
+    }
+    
+    diceTeardown();
+    renderTick();
+}
+
+function countCharacters(text) {
+    return text.length;
+}
+
+function countWords(text) {
+    return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+}
+
+function updateCounterDisplay(text) {
+    const charCount = countCharacters(text);
+    const wordCount = countWords(text);
+    
+    promptTokenCounter.innerText = `${wordCount} Words (${charCount} Characters)`;
+}
     
 var secondsSinceLastTyped = 0;
 var updatingNode = false;
 editor.addEventListener('keydown', async (e) => {
     secondsSinceLastTyped = 0;
     const prompt = editor.value;
+    
     // Autosave users work when writing next prompt
     if (focus.children.length > 0 || ["gen", "rewrite", "root"].includes(focus.type)) {
-	const child = loomTree.createNode("user", focus, prompt, "New Node");
-	changeFocus(child.id);
+        const child = loomTree.createNode("user", focus, prompt, "New Node");
+        changeFocus(child.id);
     }
     if ((focus.children.length == 0) && (focus.type == "user") && !updatingNode) {
-	updatingNode = true;
-	loomTree.updateNode(focus, prompt, focus.summary);
-	updatingNode = false;
+        updatingNode = true;
+        loomTree.updateNode(focus, prompt, focus.summary);
+        updatingNode = false;
     }
+    
     if (e.key != "Enter") {
-	if ((prompt.length % 32) == 0) {
-	    try {
-		const r = await fetch("http://localhost:5000/check-tokens", {
-		    method: "POST",
-		    body: JSON.stringify({
-			text: prompt,
-		    }),
-		    headers: {
-			"Content-type": "application/json; charset=UTF-8",
-		    }
-		});
-		const tokens = await r.json();
-		if (tokens > (4096 - settingNewTokens.value)) {
-		    promptTokenCounter.classList = ['over-token-limit']
-		}
-		else {
-		    promptTokenCounter.classList = []
-		}
-		promptTokenCounter.innerText = tokens;
-	    } catch (error) {
-		console.error("The MiniHF server didn't respond to a token count check. Is it running?",
-			      error.message);
-	    };
-	    // Update summary while user is writing next prompt
-	    if ((focus.children.length == 0)
-		&& (focus.type == "user")
-		&& ["base", "vae-base",
-		    "vae-guided", "vae-paragraph",
-		    "vae-bridge"].includes(sampler.value)
-		&& !updatingNode) {
-		try {
-		    updatingNode = true;
-		    const summary = await getSummary(prompt);
-		    loomTree.updateNode(focus, prompt, summary);
-		    updatingNode = false;
-		}
-		catch (error) {
-		    console.log(error);
-		    updatingNode = false;
-		}
-	    }
-	    // Render only the loom tree so we don't interrupt their typing
-	    loomTreeView.innerHTML = '';
-	    renderTree(focus, loomTreeView, 2);
-	}
-	return null;
-      }
-      else if (!(e.shiftKey)) {
-	  return null
-      }
+        // Update character/word count on every keystroke
+        updateCounterDisplay(prompt);
+        
+        if ((prompt.length % 32) == 0) {
+            // Removed the fetch call to check-tokens endpoint
+            
+            // Update summary while user is writing next prompt
+            if ((focus.children.length == 0)
+                && (focus.type == "user")
+                && ["base", "vae-base",
+                    "vae-guided", "vae-paragraph",
+                    "vae-bridge"].includes(sampler.value)
+                && !updatingNode) {
+                try {
+                    updatingNode = true;
+                    const summary = await getSummary(prompt);
+                    loomTree.updateNode(focus, prompt, summary);
+                    updatingNode = false;
+                }
+                catch (error) {
+                    console.log(error);
+                    updatingNode = false;
+                }
+            }
+            // Render only the loom tree so we don't interrupt their typing
+            loomTreeView.innerHTML = '';
+            renderTree(focus, loomTreeView, 2);
+        }
+        return null;
+    }
+    else if (!(e.shiftKey)) {
+        return null
+    }
     reroll(focus.id, settingUseWeave.checked);
-    });
+});
 
 function saveFile() {
   const data = {
@@ -850,7 +964,7 @@ function loadFile() {
 };
 
 function loadSettings() {
-    ipcRenderer.invoke('load-settings')
+    return ipcRenderer.invoke('load-settings')
 	.then(data => {
 	    if (data != null) {
 		samplerSettingsStore = data;
@@ -1102,6 +1216,79 @@ function openaiCompletionsSamplerMenu() {
     samplerOptionMenu.append(modelName);
 }
 
+// Add this function for the OpenAI Chat Completions sampler menu
+function openaiChatCompletionsSamplerMenu() {
+    baseSamplerMenu();
+    const apiUrl = document.getElementById('api-url');
+    apiUrl.value = "https://api.openai.com/v1/chat/completions";
+    
+    const topPLabel = document.createElement('label');
+    topPLabel.for = "top-p";
+    topPLabel.textContent = "Top-P";
+    const topP = document.createElement('input');
+    topP.type = "text";
+    topP.id = "top-p";
+    topP.name = "top-p";
+    topP.value = "1";
+
+    const topKLabel = document.createElement('label');
+    topKLabel.for = "top-k";
+    topKLabel.textContent = "Top-K";
+    const topK = document.createElement('input');
+    topK.type = "text";
+    topK.id = "top-k";
+    topK.name = "top-k";
+    topK.value = "100";
+    
+    const repetitionPenaltyLabel = document.createElement('label');
+    repetitionPenaltyLabel.for = "repetition-penalty";
+    repetitionPenaltyLabel.textContent = "Repetition Penalty";
+    const repetitionPenalty = document.createElement('input');
+    repetitionPenalty.type = "text";
+    repetitionPenalty.id = "repetition-penalty";
+    repetitionPenalty.name = "repetition-penalty";
+    repetitionPenalty.value = "1";
+    
+    const apiKeyLabel = document.createElement('label');
+    apiKeyLabel.for = "api-key";
+    apiKeyLabel.textContent = "API Key";
+    const apiKey = document.createElement('input');
+    apiKey.type = "password";
+    apiKey.id = "api-key";
+    apiKey.name = "api-key";
+
+    const apiDelayLabel = document.createElement('label');
+    apiDelayLabel.for = "api-delay";
+    apiDelayLabel.textContent = "API Delay";
+    const apiDelay = document.createElement('input');
+    apiDelay.type = "text";
+    apiDelay.id = "api-delay";
+    apiDelay.name = "api-delay";
+    apiDelay.value = 3000;
+    
+    const modelNameLabel = document.createElement('label');
+    modelNameLabel.for = "model-name";
+    modelNameLabel.textContent = "Model Name";
+    const modelName = document.createElement('input');
+    modelName.type = "text";
+    modelName.id = "model-name";
+    modelName.name = "model-name";
+    modelName.value = "gpt-4";
+    
+    samplerOptionMenu.append(topPLabel);
+    samplerOptionMenu.append(topP);
+    samplerOptionMenu.append(topKLabel);
+    samplerOptionMenu.append(topK);
+    samplerOptionMenu.append(repetitionPenaltyLabel);
+    samplerOptionMenu.append(repetitionPenalty);
+    samplerOptionMenu.append(apiKeyLabel);
+    samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(apiDelayLabel);
+    samplerOptionMenu.append(apiDelay);
+    samplerOptionMenu.append(modelNameLabel);
+    samplerOptionMenu.append(modelName);
+}
+
 function baseSamplerMenuToDict() {
     const out = {};
     out["apiUrl"] = document.getElementById("api-url").value;
@@ -1132,6 +1319,11 @@ function openaiCompletionsSamplerMenuToDict() {
     return togetherSamplerMenuToDict();
 }
 
+// Add the sampler settings functions
+function openaiChatCompletionsSamplerMenuToDict() {
+    return togetherSamplerMenuToDict();
+}
+
 function loadBaseSamplerMenuDict(samplerMenuDict) {
     document.getElementById("api-url").value = samplerMenuDict["apiUrl"];
     document.getElementById("output-branches").value = samplerMenuDict["outputBranches"];
@@ -1158,6 +1350,26 @@ function loadOpenAICompletionsSamplerMenuDict(samplerMenuDict) {
     loadTogetherSamplerMenuDict(samplerMenuDict);
 }
 
+// Add this function to create a default chat JSON structure
+function createDefaultChatJson() {
+    return JSON.stringify({
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant."
+            },
+            {
+                "role": "user", 
+                "content": "Hello!"
+            }
+        ]
+    }, null, 2);
+}
+
+function loadOpenAIChatCompletionsSamplerMenuDict(samplerMenuDict) {
+    loadTogetherSamplerMenuDict(samplerMenuDict);
+}
+
 function internalSaveSamplerSettings() {
     let currentSampler = document.getElementById("sampler").value;
     if (currentSampler === "base") {
@@ -1180,6 +1392,9 @@ function internalSaveSamplerSettings() {
     }
     else if (currentSampler === "openai") {
 	samplerSettingsStore["openai"] = openaiCompletionsSamplerMenuToDict();
+    }
+    else if (currentSampler === "openai-chat") {
+        samplerSettingsStore["openai-chat"] = openaiChatCompletionsSamplerMenuToDict();
     }
 }
 
@@ -1224,7 +1439,28 @@ sampler.addEventListener('change', function() {
 	    loadOpenAICompletionsSamplerMenuDict(samplerSettingsStore["openai"]);
 	}
     }
+    else if (selectedSampler === "openai-chat") {
+        openaiChatCompletionsSamplerMenu();
+        // Initialize with default chat JSON if editor is empty or not valid JSON
+        if (!editor.value.trim() || !isValidChatJson(editor.value)) {
+            editor.value = createDefaultChatJson();
+            updateCounterDisplay(editor.value);
+        }
+        if ("openai-chat" in samplerSettingsStore) {
+            loadOpenAIChatCompletionsSamplerMenuDict(samplerSettingsStore["openai-chat"]);
+        }
+    }
 });
+
+// Helper function to validate chat JSON
+function isValidChatJson(text) {
+    try {
+        const data = JSON.parse(text);
+        return data.messages && Array.isArray(data.messages);
+    } catch (e) {
+        return false;
+    }
+}
 
 editor.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -1232,8 +1468,11 @@ editor.addEventListener('contextmenu', (e) => {
 });
 
 renderTick();
-baseSamplerMenu();
-loadSettings();
-if ("base" in samplerSettingsStore) {
-    loadBaseSamplerMenuDict(samplerSettingsStore["base"]);
-}
+openaiCompletionsSamplerMenu();
+console.log("openai" in samplerSettingsStore);
+loadSettings().then(() => {
+    if ("openai" in samplerSettingsStore) {
+        loadOpenAICompletionsSamplerMenuDict(samplerSettingsStore["openai"]);
+    }
+});
+updateCounterDisplay(editor.value || "");
