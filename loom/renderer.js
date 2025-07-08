@@ -338,8 +338,8 @@ async function getSummary(taskText) {
     // and 512 is the number of words to summarize over
     // otherwise we eventually end up pushing the few shot prompt out of the context window
     const prompt = summarizePrompt + "\n\n" + "<tasktext>\n" + taskText.slice(-4096) + "\n</tasktext>\n\nThree Words:"
-
-    if (!["together", "openai", "openai-chat"].includes(sampler.value)) {
+    // TODO: Flip this case around
+    if (!["together", "openrouter", "openai", "openai-chat"].includes(sampler.value)) {
 	r = await fetch(endpoint + "generate", {
 	    method: "POST",
 	    body: JSON.stringify({
@@ -540,14 +540,14 @@ async function delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function togetherGetResponses({endpoint, prompt, togetherParams = {}, openai=false}) {
+async function togetherGetResponses({endpoint, prompt, togetherParams = {}, api="openai"}) {
     const tp = togetherParams;
     const auth_token = "Bearer " + tp["api-key"];
     const apiDelay = Number(tp["delay"]);
     let batch_promises = [];
     // Together doesn't let you get more than one completion at a time
     // But OpenAI expects you to use the n parameter
-    let calls = openai ? 1 : tp["output-branches"];
+    let calls = api === "openai" ? 1 : tp["output-branches"];
     for (let i = 1; i <= calls; i++) {
 	console.log("Together API called");
 	const promise = delay(apiDelay * i).then(async () => {
@@ -557,7 +557,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 		    model: tp["model-name"],
 		    prompt: prompt,
 		    max_tokens: Number(tp["tokens-per-branch"]),
-		    n: openai ? Number(tp["output-branches"]) : 1,
+		    n: api === "openai" ? Number(tp["output-branches"]) : 1,
 		    temperature: Number(tp["temperature"]),
 		    top_p: Number(tp["top-p"]),
 		    top_k: Number(tp["top-k"]),
@@ -573,14 +573,21 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 	}).then(response_json => {
 	    let outs = [];
 	    let choices_length;
-	    if (openai) {
+	    if (api === "openai") {
+		choices_length = response_json["choices"].length;
+	    }
+	    else if (api === "openrouter") {
 		choices_length = response_json["choices"].length;
 	    }
 	    else {
 		choices_length = response_json["output"]["choices"].length;
 	    }
 	    for (let i = 0; i < choices_length; i++) {
-		if (openai) {
+		if (api === "openai") {
+		    outs.push({"text": response_json["choices"][i]["text"],
+			       "model": response_json["model"]});
+		}
+		else if (api === "openrouter") {
 		    outs.push({"text": response_json["choices"][i]["text"],
 			       "model": response_json["model"]});
 		}
@@ -589,7 +596,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 			       "model": response_json["model"]});
 		}
 	    }
-	    if (openai) {
+	    if (api === "openai") {
 		return outs;
 	    }
 	    else {
@@ -599,7 +606,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, open
 	batch_promises.push(promise);
     }
     let batch;
-    if (openai) {
+    if (api === "openai") {
 	batch = await Promise.all(batch_promises);
 	batch = batch[0];
     }
@@ -617,10 +624,13 @@ async function reroll(id, weave=true) {
 	await vaeGuidedRoll(id);
     }
     else if (sampler.value === "together") {
-	togetherRoll(id);
+	togetherRoll(id, api="together");
+    }
+    else if (sampler.value === "openrouter") {
+	togetherRoll(id, api="openrouter");
     }
     else if (sampler.value === "openai") {
-	togetherRoll(id, openai=true);
+	togetherRoll(id, api="openai");
     }
     else if (sampler.value === "openai-chat") {
         await openaiChatCompletionsRoll(id);
@@ -734,7 +744,7 @@ async function vaeGuidedRoll(id) {
 }
 						   
 
-async function togetherRoll(id, openai=false) {
+async function togetherRoll(id, api="openai") {
     diceSetup();
     await autoSaveTick();
     await updateFocusSummary();
@@ -759,7 +769,7 @@ async function togetherRoll(id, openai=false) {
 	    endpoint: document.getElementById('api-url').value,
 	    prompt: prompt,
 	    togetherParams: tp,
-	    openai: openai
+	    api: api
 	});
     } catch (error) {
 	diceTeardown();
@@ -769,7 +779,7 @@ async function togetherRoll(id, openai=false) {
     for (let i = 0; i < newResponses.length; i++) {
 	response = newResponses[i];
 	const responseSummary = await delay(apiDelay).then(() => {return getSummary(response["text"])});
-	const childText = loomTree.renderNode(rerollFocus) + response["text"];
+	const childText = loomTree.renderNode(rollFocus) + response["text"];
 	const responseNode = loomTree.createNode("gen",
 						 rollFocus,
 						 childText,
@@ -1151,6 +1161,71 @@ function togetherSamplerMenu() {
     samplerOptionMenu.append(modelName);
 }
 
+function openrouterSamplerMenu() {
+    baseSamplerMenu();
+    const apiUrl = document.getElementById('api-url');
+    apiUrl.value = "https://openrouter.ai/api/v1/chat/completions";
+    const topPLabel = document.createElement('label');
+    topPLabel.for = "top-p";
+    topPLabel.textContent = "Top-P";
+    const topP = document.createElement('input');
+    topP.type = "text";
+    topP.id = "top-p";
+    topP.name = "top-p";
+    topP.value = "1";
+    const topKLabel = document.createElement('label');
+    topKLabel.for = "top-k";
+    topKLabel.textContent = "Top-K";
+    const topK = document.createElement('input');
+    topK.type = "text";
+    topK.id = "top-k";
+    topK.name = "top-k";
+    topK.value = "100";
+    const repetitionPenaltyLabel = document.createElement('label');
+    repetitionPenaltyLabel.for = "repetition-penalty";
+    repetitionPenaltyLabel.textContent = "Repetition Penalty";
+    const repetitionPenalty = document.createElement('input');
+    repetitionPenalty.type = "text";
+    repetitionPenalty.id = "repetition-penalty";
+    repetitionPenalty.name = "repetition-penalty";
+    repetitionPenalty.value = "1";
+    const apiKeyLabel = document.createElement('label');
+    apiKeyLabel.for = "api-key";
+    apiKeyLabel.textContent = "API Key";
+    const apiKey = document.createElement('input');
+    apiKey.type = "password";
+    apiKey.id = "api-key";
+    apiKey.name = "api-key";
+    const apiDelayLabel = document.createElement('label');
+    apiDelayLabel.for = "api-delay";
+    apiDelayLabel.textContent = "API Delay";
+    const apiDelay = document.createElement('input');
+    apiDelay.type = "text";
+    apiDelay.id = "api-delay";
+    apiDelay.name = "api-delay";
+    apiDelay.value = 3000;
+    const modelNameLabel = document.createElement('label');
+    modelNameLabel.for = "model-name";
+    modelNameLabel.textContent = "Model Name";
+    const modelName = document.createElement('input');
+    modelName.type = "text";
+    modelName.id = "model-name";
+    modelName.name = "model-name";
+    modelName.value = "deepseek/deepseek-v3-base:free";
+    samplerOptionMenu.append(topPLabel);
+    samplerOptionMenu.append(topP);
+    samplerOptionMenu.append(topKLabel);
+    samplerOptionMenu.append(topK);
+    samplerOptionMenu.append(repetitionPenaltyLabel);
+    samplerOptionMenu.append(repetitionPenalty);
+    samplerOptionMenu.append(apiKeyLabel);
+    samplerOptionMenu.append(apiKey);
+    samplerOptionMenu.append(apiDelayLabel);
+    samplerOptionMenu.append(apiDelay);
+    samplerOptionMenu.append(modelNameLabel);
+    samplerOptionMenu.append(modelName);
+}
+
 function openaiCompletionsSamplerMenu() {
     baseSamplerMenu();
     const apiUrl = document.getElementById('api-url');
@@ -1315,6 +1390,10 @@ function togetherSamplerMenuToDict() {
     return out;
 }
 
+function openrouterSamplerMenuToDict() {
+    return togetherSamplerMenuToDict();
+}
+    
 function openaiCompletionsSamplerMenuToDict() {
     return togetherSamplerMenuToDict();
 }
@@ -1344,6 +1423,10 @@ function loadTogetherSamplerMenuDict(samplerMenuDict) {
     document.getElementById("api-key").value = samplerMenuDict["apiKey"];
     document.getElementById("api-delay").value = samplerMenuDict["apiDelay"];
     document.getElementById("model-name").value = samplerMenuDict["modelName"];
+}
+
+function loadOpenRouterSamplerMenuDict(samplerMenuDict) {
+    loadTogetherSamplerMenuDict(samplerMenuDict);
 }
 
 function loadOpenAICompletionsSamplerMenuDict(samplerMenuDict) {
@@ -1390,6 +1473,9 @@ function internalSaveSamplerSettings() {
     else if (currentSampler === "together") {
 	samplerSettingsStore["together"] = togetherSamplerMenuToDict();
     }
+    else if (currentSampler == "openrouter") {
+	samplerSettingsStore["openrouter"] = openrouterSamplerMenuToDict();
+    }
     else if (currentSampler === "openai") {
 	samplerSettingsStore["openai"] = openaiCompletionsSamplerMenuToDict();
     }
@@ -1433,6 +1519,12 @@ sampler.addEventListener('change', function() {
 	    loadTogetherSamplerMenuDict(samplerSettingsStore["together"]);
 	}
     }
+    else if (selectedSampler === "openrouter") {
+	openrouterSamplerMenu();
+	if ("openrouter" in samplerSettingsStore) {
+	    loadOpenRouterSamplerMenuDict(samplerSettingsStore["openrouter"]);
+	}
+    }	
     else if (selectedSampler === "openai") {
 	openaiCompletionsSamplerMenu();
 	if ("openai" in samplerSettingsStore) {
