@@ -3,6 +3,7 @@ const path = require('path');
 const { ipcRenderer } = require('electron');
 const DiffMatchPatch = require('diff-match-patch');
 const dmp = new DiffMatchPatch();
+const MiniSearch = require('minisearch');
 
 const settingUseWeave = document.getElementById('use-weave');
 const settingNewTokens = document.getElementById('new-tokens');
@@ -963,7 +964,7 @@ function saveFile() {
 };
 
 function loadFile() {
-  ipcRenderer.invoke('load-file')
+  return ipcRenderer.invoke('load-file')
     .then(data => {
       loomTreeRaw = data.loomTree;
       loomTree = Object.assign(new LoomTree(), loomTreeRaw);

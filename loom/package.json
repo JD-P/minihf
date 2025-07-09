@@ -13,6 +13,7 @@
     "electron": "^27.0.2"
   },
   "dependencies": {
-    "diff-match-patch": "^1.0.5"
+    "diff-match-patch": "^1.0.5",
+    "minisearch": "^7.1.2"
   }
 }
