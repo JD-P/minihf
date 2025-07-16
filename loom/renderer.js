@@ -551,10 +551,7 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, api=
     let calls = api === "openai" ? 1 : tp["output-branches"];
     for (let i = 1; i <= calls; i++) {
 	console.log("Together API called");
-	const promise = delay(apiDelay * i).then(async () => {
-	    let r = await fetch(endpoint, {
-		method: "POST",
-		body: JSON.stringify({
+	const body = {
 		    model: tp["model-name"],
 		    prompt: prompt,
 		    max_tokens: Number(tp["tokens-per-branch"]),
@@ -563,7 +560,15 @@ async function togetherGetResponses({endpoint, prompt, togetherParams = {}, api=
 		    top_p: Number(tp["top-p"]),
 		    top_k: Number(tp["top-k"]),
 		    repetition_penalty: Number(tp["repetition_penalty"]),
-		}),
+		}
+	if (api === "openrouter") {
+	    body["provider"] = {};
+	    body["provider"]["require_parameters"] = true;
+	}
+	const promise = delay(apiDelay * i).then(async () => {
+	    let r = await fetch(endpoint, {
+		method: "POST",
+		body: JSON.stringify(body),
 		headers: {
 		    "accept": "application/json",
 		    "Content-type": "application/json; charset=UTF-8",
