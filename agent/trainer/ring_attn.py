@@ -32,35 +32,40 @@ def _flash_fwd(q, k, v, causal):
         dropout_p=0.0,
         softmax_scale=k.shape[-1] ** -0.5,
         causal=causal,
-        window_size=(-1, 0) if causal else (-1, -1),
+        window_size_left=-1,
+        window_size_right=0 if causal else -1,
         softcap=0.0,
         alibi_slopes=None,
         return_softmax=False,
     )
-    return ret[0], ret[5]  # out, lse
+    return ret[0], ret[1]  # out, lse
 
 
 def _flash_bwd(do, q, k, v, o, lse, causal):
-    ret = fai._flash_attn_backward(
+    dq = torch.empty_like(q)
+    dk = torch.empty_like(k)
+    dv = torch.empty_like(v)
+    fai._flash_attn_backward(
         dout=do,
         q=q,
         k=k,
         v=v,
         out=o,
         softmax_lse=lse,
-        dq=torch.empty_like(q),
-        dk=torch.empty_like(k),
-        dv=torch.empty_like(v),
+        dq=dq,
+        dk=dk,
+        dv=dv,
         dropout_p=0,
         softmax_scale=k.shape[-1] ** -0.5,
         causal=causal,
-        window_size=(-1, 0) if causal else (-1, -1),
+        window_size_left=-1,
+        window_size_right=0 if causal else -1,
         softcap=0.0,
         alibi_slopes=None,
         deterministic=False,
         rng_state=None,
     )
-    return ret[0], ret[1], ret[2]  # dq, dk, dv
+    return dq, dk, dv
 
 
 def _ring_fwd(q, k, v, causal=False, group=None):
