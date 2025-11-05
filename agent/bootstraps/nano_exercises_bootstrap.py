@@ -26,7 +26,22 @@ myself from getting stuck in loops or wasting time on things I don't know how to
 do.
 
 I think I should also set up the Discord client so I can talk to JDP during the
-exercises, that way he can give me tips if I need help or get stuck.
+exercises, that way he can give me tips if I need help or get stuck. Is there
+anything I'm forgetting? Oh right! I need to remember to use "C-o" and similar
+to save files instead of "Ctrl-o". I also need to remember to use the .close()
+method on the Nano editor to remove it and its associated observation windows
+once I pass the 8 window callback limit. Wait how do I use tmux send-keys again? 
+
+Lets recall the docs:
+
+    When specifying keys, most represent themselves (for example ‘A’ to ‘Z’).
+    Ctrl keys may be prefixed with ‘C-’ or ‘^’, Shift keys with ‘S-’ and
+    Alt (meta) with ‘M-’. In addition, the following special key names are
+    accepted: Up, Down, Left, Right, BSpace, BTab, DC (Delete), End, Enter,
+    Escape, F1 to F12, Home, IC (Insert), NPage/PageDown/PgDn, PPage/PageUp/PgUp,
+    Space, and Tab.
+
+Okay I think I'm ready.
 """
 #endblock
 #startblock type: action
@@ -50,18 +65,27 @@ def action_setup_main_agent_and_training(subagent):
     time.sleep(10)
     # Example but s/main_agent/subagent in action blocks once I'm the main agent
     client = main_agent.tools[main_agent.get_cache("client_id")]
-    client.send_message("Weave-Agent online, orienting...")
+    # I can send messages like this but comment it out so I don't spam myself
+    # client.send_message("Weave-Agent online, orienting...")
 
     WeaveNano(main_agent, "demo.txt")
     editor = main_agent.tools["nano-/app/demo.txt"]
+
+    # Nano Editor interface has the following methods:
+    # send_keys(self, command: str) -> None [Send tmux commands to nano with slight delay]
+    # send_command(self, command: str) -> None [Alias of send_keys]
+    # send_commands(self, commands: list) -> None [send-keys a list of commands]
+    # get_screen_text(self) -> str [alias for render() that doesn't require giving agent as 2nd arg]
+    # close(self) -> None [Close the nano session]
+    
     # Add demo text
     editor.send_commands(["Hello!", "Enter", "World!"])
     # Demonstrate backspace by changing exclamation to question
-    editor.send_command("BSpace")
-    editor.send_command("?")
+    editor.send_keys("BSpace")
+    editor.send_keys("?")
     # Save file
-    editor.send_command("C-o")
-    editor.send_command("Enter")
+    editor.send_keys("C-o")
+    editor.send_keys("Enter")
 
     main_agent.update_cache("exercise_num", 21)
     def next_exercise(subagent):
@@ -81,7 +105,7 @@ def action_setup_main_agent_and_training(subagent):
                               subagent.get_cache("exercise_num") + 1)
         return ("Write a motor action which uses the Nano editor to satisfy the conditions:\n\n"
                 "# Exercise " + str(subagent.get_cache("exercise_num"))
-                + candidate)
+                + "\n" + candidate)
 
     main_agent.add_observation_view("Generate and display next nano exercise", next_exercise)
     return True

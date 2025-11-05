@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 from typing import List, Dict, Any
+from argparse import ArgumentParser
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -25,6 +26,7 @@ class EmbeddingProcessor:
         self.model = AutoModelForMaskedLM.from_pretrained(
             "answerdotai/ModernBERT-base",
             attn_implementation="flash_attention_2",
+            dtype=torch.float16,
             low_cpu_mem_usage=True
         ).to(self.device).eval()
         
@@ -45,6 +47,8 @@ class EmbeddingProcessor:
                 return_tensors="pt"
             ).to(self.device)
             
+            if args.placebo:
+                return torch.zeros(len(inputs), 768).tolist()
             outputs = self.model(**inputs, output_hidden_states=True)
             last_hidden = outputs.hidden_states[-1]
             if len(last_hidden.shape) == 2:
@@ -162,6 +166,9 @@ async def shutdown_event():
     processor.shutdown()
 
 if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument("--placebo", action="store_true", help="Whether to actually embed")
+    args = parser.parse_args()
     uvicorn.run(app,
                 host="0.0.0.0",
                 port=int(os.getenv("PORT", 5002)),

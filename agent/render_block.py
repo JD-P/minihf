@@ -100,17 +100,19 @@ def render_block(event_block, tags=True):
             content += f"# {line}\n"
         return (header + "\n" + content + footer)
     elif event_block["type"] == "orientation":
-        metadata = event_block["metadata"]
-        header += f"# Starting new tick "
-        header += f"with block #{metadata['block_index']}\n"
-        header += f"# Current Working Directory: {metadata['working_directory']}\n"
+        if "metadata" in event_block:
+            metadata = event_block["metadata"]
+            header += f"# Starting new tick "
+            header += f"with block #{metadata['block_index']}\n"
+            header += f"# Current Working Directory: {metadata['working_directory']}\n"
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "task-inference":
-        metadata = event_block["metadata"]
-        task_title = f"({metadata['task_id']}) {metadata['task_title']}"
-        task_status = f"({metadata['task_status']}) {metadata['task_explanation']}"
-        header += f"# Current Task: {task_title}\n"
-        header += f"# Task Status: {task_status}\n"
+        if "metadata" in event_block:
+            metadata = event_block["metadata"]
+            task_title = f"({metadata['task_id']}) {metadata['task_title']}"
+            task_status = f"({metadata['task_status']}) {metadata['task_explanation']}"
+            header += f"# Current Task: {task_title}\n"
+            header += f"# Task Status: {task_status}\n"
         return (header + "\n" + event_block["body"] + footer)
     elif event_block["type"] == "task-reminder":
         return (header + "\n" + event_block["body"] + footer)

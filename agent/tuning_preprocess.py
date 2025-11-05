@@ -28,20 +28,20 @@ def to_tokens(combine_fn, row):
 
 # Load dataset
 print("### Loading datasets", file=sys.stderr)
-dataset_1 = load_dataset("Open-Orca/FLAN")
+#dataset_1 = load_dataset("Open-Orca/FLAN")
 dataset_2 = load_dataset("databricks/databricks-dolly-15k")
 dataset_3 = load_dataset(args.dataset)
 
 # Slice the first 150,000 items from dataset_1
-dataset_1_sliced = dataset_1["train"].select(range(150000))
+# dataset_1_sliced = dataset_1["train"].select(range(150000))
 
 # Apply map to the sliced dataset_1 and the other datasets
-dataset_1_sliced = dataset_1_sliced.map(partial(to_tokens, combine_flan))
+#dataset_1_sliced = dataset_1_sliced.map(partial(to_tokens, combine_flan))
 dataset_2 = dataset_2["train"].map(partial(to_tokens, combine_dolly))
 dataset_3 = dataset_3["train"].map(partial(to_tokens, combine_flan))
 
 # Combine datasets
-combined_dataset = concatenate_datasets([dataset_1_sliced, dataset_2, dataset_3])
+combined_dataset = concatenate_datasets([dataset_2, dataset_3])
 
 # Shuffle the combined dataset
 combined_dataset = combined_dataset.shuffle()

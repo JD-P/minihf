@@ -81,12 +81,13 @@ Nano Cheat Sheet:
         self.send_keys(command)
 
     def send_commands(self, commands):
+        """send_keys a list of commands"""
         for command in commands:
             self.send_keys(command)
 
     def get_screen_text(self):
         """Alias for render()"""
-        return render(self.agent)
+        return self.render(self.agent)
 
     def close(self):
         """Close the Nano session"""

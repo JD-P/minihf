@@ -34,13 +34,15 @@ RUN chmod +x /usr/local/bin/geckodriver
 # Cache HuggingFace
 COPY hf_token.txt /app/
 COPY cache_hf.py /app/
-ENV MODEL "weave-agent"
-ENV TOKENIZER "a-m-team/AM-Thinking-v1"
+#ENV MODEL "weave-agent"
+#ENV TOKENIZER "a-m-team/AM-Thinking-v1"
 #ENV TOKENIZER "Qwen/QwQ-32B"
 #ENV MODEL "mistralai/Mistral-Small-3.1-24B-Base-2503"
 #ENV TOKENIZER "mistralai/Mistral-Small-3.1-24B-Base-2503"
 #ENV MODEL "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
-#ENV TOKENIZER "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+ENV TOKENIZER "mistralai/Mistral-Small-3.1-24B-Instruct-2503"
+ENV MODEL "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
+#ENV TOKENIZER "mistralai/Mistral-Small-3.2-24B-Instruct-2506"
 RUN python3 cache_hf.py $TOKENIZER
 RUN rm /app/hf_token.txt
 
