@@ -49,7 +49,7 @@ def read_and_wrap_json_file(file_path, category):
         
         # Wrap the content with category
         wrapped_content = {
-            "trace": content,
+            "trace": json.dumps(content),
             "category": category
         }
         

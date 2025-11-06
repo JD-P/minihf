@@ -4,6 +4,7 @@ import gzip
 import os
 from argparse import ArgumentParser
 import torch
+from datasets import load_dataset
 from render_block import render_block
 
 parser = ArgumentParser()
@@ -20,22 +21,23 @@ def read_traces(file_path):
     categories = []
     
     file_ext = os.path.splitext(file_path)[1].lower()
+
     
     if file_ext == '.gz':
         # Gzipped JSONL format (new format)
         with gzip.open(file_path, 'rt') as infile:
             for line in infile:
                 data = json.loads(line.strip())
-                traces.append(data.get("trace", []))
+                traces.append(json.loads(data.get("trace", [])))
                 categories.append(data.get("category", "unknown"))
-    else:
+    elif file_ext == '.json':
         # Regular JSON format (old format - for backward compatibility)
         with open(file_path) as infile:
             data = json.load(infile)
             # Check if it's the new wrapped format or old direct format
             if isinstance(data, dict) and "trace" in data:
                 # New format but in a single JSON file
-                traces.append(data.get("trace", []))
+                traces.append(json.loads(data.get("trace", [])))
                 categories.append(data.get("category", "unknown"))
             elif isinstance(data, list):
                 # Old format - direct list of events
@@ -43,6 +45,12 @@ def read_traces(file_path):
                 categories.append("legacy")
             else:
                 raise ValueError("Unsupported JSON format")
+    else:
+        dataset = load_dataset(file_path)
+        for row in dataset["train"]:
+            traces.append(json.loads(row["trace"]))
+            categories.append(row["category"]) # good/bad labels for RL or similar
+            
     
     return traces, categories
 
